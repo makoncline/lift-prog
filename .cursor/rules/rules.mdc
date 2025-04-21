@@ -1,0 +1,100 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Core Tech Stack
+
+The following are the primary technologies used in this project:
+
+## Framework
+- Next.js
+- React
+
+## Language & Typing
+- TypeScript
+
+## Backend / Database
+- Prisma (with LibSQL adapter)
+- Turso
+
+## Data Fetching / Caching
+- tRPC
+- TanStack React Query
+
+## Forms & Validation
+- React Hook Form
+- Zod
+
+## Authentication
+- Clerk (@clerk/nextjs)
+
+## Tooling
+- ESLint
+- Prettier
+
+# Types
+- Always prefer type inference; do not explicitly annotate function return types.
+- Use Zod schemas for any data requiring validation and derive types via `z.infer<typeof Schema>`.
+- For tRPC data passed to components, import and use the router's output types, e.g.: `inferProcedureOutput<AppRouter["procedureName"]>`.
+- When possible, use generated types from `@trpc/server` or generated helper types like `RouterOutputs<AppRouter>` for consistency.
+
+
+# Forms
+https://ui.shadcn.com/docs/components/form
+
+
+# Utils
+- Organize utility functions into separate files grouped by functionality.
+  - Name each file `<feature>-utils.ts` (e.g. `error-utils.ts`).
+- Place utils under `src/lib/`.
+- Keep modules focused: each file should export related utilities via named exports.
+- Avoid default exports.
+
+
+## Error Handling
+- Use the `tryCatch` utility to wrap async calls and handle results as a discriminated union.
+- Normalize errors with `getErrorMessage()` and report via `reportError()`.
+- Surface user-facing errors with a toast (`toast.error(message)`).
+- Log errors in development and optionally silence in production.
+
+### Example Component
+
+```tsx
+import { toast } from 'sonner';
+import { trpc } from '~/utils/trpc';
+import { reportError, getErrorMessage } from '~/lib/error-utils';
+
+export function ExampleComponent() {
+  const { data, isLoading } = trpc.example.getData.useQuery(undefined, {
+    onError(error) {
+      const message = getErrorMessage(error);
+      reportError({ message });
+      toast.error(message);
+    },
+  });
+
+  if (isLoading) return <div>Loading...</div>;
+  return <div>{data}</div>;
+}
+```
+
+### Example Async Function
+
+```ts
+import { tryCatch, getErrorMessage, reportError } from '~/lib/error-utils';
+
+/**
+ * Performs a generic asynchronous task and handles errors using tryCatch.
+ */
+export async function performAsyncTask<T>(promise: Promise<T>) {
+  const result = await tryCatch(promise);
+  if (result.error) {
+    const message = getErrorMessage(result.error);
+    reportError({ message });
+    return;
+  }
+  return result.data;
+}
+```
+
