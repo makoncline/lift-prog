@@ -3,6 +3,10 @@ description:
 globs: 
 alwaysApply: true
 ---
+## Rule Extensions
+- If the user requests a specific pattern, approach, or style to be used consistently, ask them whether they'd like to add a new section to this rules file documenting that pattern.
+
+
 # Core Tech Stack
 
 The following are the primary technologies used in this project:
