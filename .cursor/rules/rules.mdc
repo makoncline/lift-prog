@@ -43,6 +43,12 @@ The following are the primary technologies used in this project:
 - For tRPC data passed to components, import and use the router's output types, e.g.: `inferProcedureOutput<AppRouter["procedureName"]>`.
 - When possible, use generated types from `@trpc/server` or generated helper types like `RouterOutputs<AppRouter>` for consistency.
 
+# Components
+- Use shadcn/ui components and patterns
+[components.json](mdc:components.json)
+
+# Typography
+- use [typography.tsx](mdc:src/components/ui/typography.tsx) for all typography
 
 # Forms
 https://ui.shadcn.com/docs/components/form
@@ -61,6 +67,7 @@ https://ui.shadcn.com/docs/components/form
 - Normalize errors with `getErrorMessage()` and report via `reportError()`.
 - Surface user-facing errors with a toast (`toast.error(message)`).
 - Log errors in development and optionally silence in production.
+- [error-utils.ts](mdc:src/lib/error-utils.ts)
 
 ### Example Component
 
