@@ -1,5 +1,6 @@
 "use client";
-import React, { useState } from "react";
+import React, { useReducer, useState, useRef, useEffect } from "react";
+import type { TouchEvent } from "react";
 import { H4 } from "@/components/ui/typography";
 import {
   Table,
@@ -9,8 +10,15 @@ import {
   TableRow,
   TableCell,
 } from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   Keyboard as KeyboardIcon,
@@ -21,33 +29,37 @@ import {
   ChevronDown,
   Check,
   ChevronRight,
+  Trash2,
+  MoreVertical,
+  MessageSquare,
+  Save,
+  Clipboard,
+  CheckCircle,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
+import { RestTimer } from "@/components/RestTimer";
 
-// App constants
-const ONE_REP_MAX_INCREASE_LB = -5; // Pounds to add to estimated 1RM when progressing
-
-// TypeScript interfaces
-interface ExerciseSet {
-  id: number;
-  weight: number | null;
-  reps: number | null;
-  completed: boolean;
-  isWeightExplicitlySet: boolean;
-  isRepsExplicitlySet: boolean;
-  previousWeight: number | null;
-  previousReps: number | null;
-}
-
-interface Exercise {
-  id: number;
-  name: string;
-  sets: ExerciseSet[];
-}
-
-interface PreviousExerciseData {
-  name: string;
-  sets: Array<{ weight: number | null; reps: number | null }>;
-}
+import {
+  initialiseExercises,
+  workoutReducer,
+  displayWeight,
+  displayReps,
+  getPreviousSetData,
+  finalizeWorkout,
+  type Workout,
+  type WorkoutExercise,
+  type WorkoutSet,
+  type ActiveField,
+  type CompletedWorkout,
+  type Note,
+} from "@/lib/workoutLogic";
 
 // Keyboard Container Component
 interface KeyboardContainerProps {
@@ -228,449 +240,255 @@ const successVariants = {
   successLight: "bg-success/10 text-success hover:bg-success/20",
 };
 
+interface PreviousExerciseData {
+  name: string;
+  sets: Array<{
+    weight: number | null;
+    reps: number | null;
+    isWarmup?: boolean;
+  }>;
+}
+
 export default function Workout({
   workoutName = "Today's Workout",
-  exercises = [
+  exercises: previousExercises = [
+    {
+      name: "Squat (Barbell)",
+      sets: [
+        { weight: 45, reps: 20, isWarmup: true },
+        { weight: 135, reps: 8, isWarmup: false },
+        { weight: 135, reps: 8, isWarmup: false },
+      ],
+    },
     {
       name: "Bench Press",
       sets: [
-        { weight: 135, reps: 12 },
-        { weight: 145, reps: 8 },
-        { weight: 155, reps: 6 },
+        { weight: 45, reps: 15, isWarmup: true },
+        { weight: 135, reps: 12, isWarmup: false },
+        { weight: 145, reps: 8, isWarmup: false },
+        { weight: 155, reps: 6, isWarmup: false },
       ],
     },
     {
       name: "Incline Press",
       sets: [
-        { weight: 115, reps: 10 },
-        { weight: 115, reps: 9 },
+        { weight: 45, reps: 15, isWarmup: true },
+        { weight: 115, reps: 10, isWarmup: false },
+        { weight: 115, reps: 9, isWarmup: false },
       ],
     },
   ],
   minReps = 8,
   maxReps = 12,
+  onWorkoutComplete,
 }: {
   workoutName?: string;
   exercises?: PreviousExerciseData[];
   minReps?: number;
   maxReps?: number;
+  onWorkoutComplete?: (workout: CompletedWorkout) => void;
 }) {
-  // Initialize exercises with previous data
-  const createInitialExercises = (): Exercise[] => {
-    return exercises.map((exercise, exerciseIndex) => {
-      // Initialize sets based on previous workout data
-      const sets = exercise.sets.map((prevSet, setIndex) => ({
-        id: setIndex + 1,
-        weight: null,
-        reps: null,
-        completed: false,
-        isWeightExplicitlySet: false,
-        isRepsExplicitlySet: false,
-        previousWeight: prevSet.weight,
-        previousReps: prevSet.reps,
-      }));
+  // Initialize workout state with the reducer
+  const initialState: Workout = {
+    currentExerciseIndex: 0,
+    exercises: initialiseExercises(previousExercises),
+    activeField: { exerciseIndex: null, setIndex: null, field: null },
+    inputValue: "",
+    isFirstInteraction: false,
+    notes: [],
+  };
 
-      return {
-        id: exerciseIndex + 1,
-        name: exercise.name,
-        sets,
-      };
+  const [state, dispatch] = useReducer(workoutReducer, initialState);
+
+  // State for delete confirmation dialog
+  const [deleteDialog, setDeleteDialog] = useState<{
+    isOpen: boolean;
+    setId: number | null;
+    exerciseId: number | null;
+    exerciseName: string;
+    setNumber: number;
+    isWarmup: boolean;
+  }>({
+    isOpen: false,
+    setId: null,
+    exerciseId: null,
+    exerciseName: "",
+    setNumber: 0,
+    isWarmup: false,
+  });
+
+  // State for tracking swipe gestures
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+
+  // Extract current state values for easier access
+  const { exercises, currentExerciseIndex, activeField, inputValue } = state;
+
+  // Current exercise being displayed
+  const currentExercise = exercises[currentExerciseIndex] ?? null;
+
+  // State for showing/hiding notes
+  const [showNotes, setShowNotes] = useState<Record<number, boolean>>({});
+
+  // State for finish workout dialog
+  const [finishDialogOpen, setFinishDialogOpen] = useState(false);
+  const [workoutNotes, setWorkoutNotes] = useState("");
+  const [workoutDuration, setWorkoutDuration] = useState<number | undefined>(
+    undefined,
+  );
+  const [finishedWorkout, setFinishedWorkout] =
+    useState<CompletedWorkout | null>(null);
+
+  // For calculating workout duration
+  const workoutStartTime = useRef(Date.now());
+
+  // State for showing/hiding workout notes
+  const [showWorkoutNotes, setShowWorkoutNotes] = useState(false);
+
+  // Function to update workout notes
+  const updateWorkoutNote = (text: string) => {
+    // For simplicity, we'll just update the first note or create one if it doesn't exist
+    dispatch({
+      type: "ADD_WORKOUT_NOTE",
+      text,
     });
   };
 
-  const [activeExercises, setActiveExercises] = useState<Exercise[]>(
-    createInitialExercises(),
-  );
-  const [currentExerciseIndex, setCurrentExerciseIndex] = useState<number>(0);
-  const [activeField, setActiveField] = useState<{
-    exerciseId: number | null;
-    setId: number | null;
-    field: "weight" | "reps" | null;
-  }>({
-    exerciseId: null,
-    setId: null,
-    field: null,
-  });
-  const [inputValue, setInputValue] = useState<string>("");
-  const [isFirstInteraction, setIsFirstInteraction] = useState<boolean>(false);
-
-  // Current exercise being displayed
-  const currentExercise = activeExercises[currentExerciseIndex] ?? null;
-
-  // Function to calculate the next weight and reps progression
-  const calculateNextProgression = (
-    prevWeight: number | null,
-    prevReps: number | null,
-    min: number = minReps,
-  ): { weight: number | null; reps: number | null } => {
-    // If no previous data, return null values
-    if (prevWeight === null || prevReps === null) {
-      return { weight: prevWeight, reps: prevReps };
+  // Get the current workout note text
+  const getWorkoutNoteText = () => {
+    if (!state.notes || state.notes.length === 0) {
+      return "";
     }
-
-    // If previous reps reached or exceeded the max, increase weight and reset reps
-    if (prevReps >= maxReps) {
-      // 1RM-based progression
-
-      // Calculate estimated 1RM using Brzycki formula: 1RM = weight × (36 / (37 - reps))
-      const estimated1RM = prevWeight * (36 / (37 - prevReps));
-
-      // Increase 1RM by the configured amount for progression
-      const new1RM = estimated1RM + ONE_REP_MAX_INCREASE_LB;
-
-      // Calculate weight for target reps using the formula: weight = 1RM × (37 - targetReps) / 36
-      // Round to nearest 2.5 pounds
-      const newWeight = Math.round((new1RM * (37 - min)) / 36 / 2.5) * 2.5;
-
-      return {
-        weight: newWeight,
-        reps: min, // Reset to minimum reps
-      };
-    }
-
-    // Otherwise, maintain weight and increment reps by 1
-    return {
-      weight: prevWeight,
-      reps: prevReps + 1,
-    };
+    const note = state.notes[0];
+    return note?.text ?? "";
   };
 
-  // Function to get estimated values based on previous set or provided values
-  const getEstimatedValues = (
-    sets: ExerciseSet[],
-    currentSetId: number,
-  ): { weight: number | null; reps: number | null } => {
-    // Find the current set
-    const currentSet = sets.find((set) => set.id === currentSetId)!;
-    if (!currentSet) return { weight: null, reps: null };
+  // Function to toggle note visibility for a specific exercise
+  const toggleNoteVisibility = (exerciseId: number) => {
+    setShowNotes((prev) => ({
+      ...prev,
+      [exerciseId]: !prev[exerciseId],
+    }));
+  };
 
-    // For the first set, use its own previous values with rep progression
-    const firstSet = sets[0];
-    if (firstSet && currentSetId === firstSet.id) {
-      // Use the correct progression logic through calculateNextProgression
-      return calculateNextProgression(
-        currentSet.previousWeight,
-        currentSet.previousReps,
+  // Function to update notes for an exercise
+  const updateExerciseNote = (exerciseId: number, notes: string) => {
+    dispatch({
+      type: "UPDATE_NOTES",
+      exerciseId,
+      notes,
+    });
+  };
+
+  // Display notes for an exercise
+  const getExerciseNoteText = (exercise: WorkoutExercise) => {
+    if (!exercise?.notes || exercise.notes.length === 0) {
+      return "";
+    }
+    const note = exercise.notes[0];
+    return note?.text ?? "";
+  };
+
+  // Delete a set
+  const handleDeleteSet = (setId: number) => {
+    if (!deleteDialog.setId || !deleteDialog.exerciseId) return;
+
+    // Find which exercise contains this set
+    const exerciseIndex = exercises.findIndex(
+      (ex) => ex.id === deleteDialog.exerciseId,
+    );
+
+    if (exerciseIndex !== -1) {
+      const exercise = exercises[exerciseIndex];
+      if (!exercise) return;
+
+      const setIndex = exercise.sets.findIndex(
+        (s) => s.id === deleteDialog.setId,
       );
+
+      if (setIndex !== -1) {
+        dispatch({
+          type: "DELETE_SET",
+          exerciseIndex,
+          setIndex,
+        });
+      }
     }
 
-    // For other sets, cascade from explicitly set values in the current workout
-    // Find the index of the current set
-    const currentIndex = sets.findIndex((set) => set.id === currentSetId);
-    if (currentIndex <= 0) return { weight: null, reps: null };
-
-    // Use the first set's values as the base for estimation
-    if (firstSet) {
-      // Get the current values for the first set (either explicit or estimated)
-      let weightFromFirstSet: number | null = null;
-      let repsFromFirstSet: number | null = null;
-
-      if (firstSet.isWeightExplicitlySet) {
-        weightFromFirstSet = firstSet.weight;
-      } else {
-        // Use first set's estimate if not explicitly set
-        weightFromFirstSet =
-          firstSet.weight ??
-          calculateNextProgression(
-            firstSet.previousWeight,
-            firstSet.previousReps,
-          ).weight;
-      }
-
-      if (firstSet.isRepsExplicitlySet) {
-        repsFromFirstSet = firstSet.reps;
-      } else {
-        // Use first set's estimate if not explicitly set
-        repsFromFirstSet =
-          firstSet.reps ??
-          calculateNextProgression(
-            firstSet.previousWeight,
-            firstSet.previousReps,
-          ).reps;
-      }
-
-      // Start with first set's values
-      let currentWeight: number | null = weightFromFirstSet;
-      let currentReps: number | null = repsFromFirstSet;
-
-      // Then override with any explicitly set values between first set and current set
-      for (let i = 1; i < currentIndex; i++) {
-        const prevSet = sets[i];
-        if (!prevSet) continue;
-
-        if (prevSet.isWeightExplicitlySet) {
-          currentWeight = prevSet.weight;
-        }
-
-        if (prevSet.isRepsExplicitlySet) {
-          currentReps = prevSet.reps;
-        }
-      }
-
-      return { weight: currentWeight, reps: currentReps };
-    }
-
-    // Fallback
-    return { weight: null, reps: null };
+    // Close the dialog
+    setDeleteDialog({
+      isOpen: false,
+      setId: null,
+      exerciseId: null,
+      exerciseName: "",
+      setNumber: 0,
+      isWarmup: false,
+    });
   };
 
+  // Open delete confirmation dialog
+  const openDeleteDialog = (exerciseId: number, setId: number) => {
+    const exercise = exercises.find((ex) => ex.id === exerciseId);
+    if (!exercise) return;
+
+    const set = exercise.sets.find((s) => s.id === setId);
+    if (!set) return;
+
+    // Calculate working set number (count only non-warmup sets)
+    const workingSetNumber =
+      exercise.sets
+        .filter((s) => s.modifier !== "warmup")
+        .findIndex((s) => s.id === setId) + 1;
+
+    setDeleteDialog({
+      isOpen: true,
+      setId,
+      exerciseId,
+      exerciseName: exercise.name,
+      setNumber: workingSetNumber,
+      isWarmup: set.modifier === "warmup",
+    });
+  };
+
+  // Keyboard interaction handler
   const handleKeyPress = (value: string) => {
-    if (
-      activeField.exerciseId === null ||
-      activeField.setId === null ||
-      activeField.field === null ||
-      !currentExercise
-    )
-      return;
-
     if (value === "backspace") {
-      if (isFirstInteraction) {
-        // First interaction with backspace clears the entire value
-        if (activeField.field === "weight" && activeField.setId !== null) {
-          updateWeight(activeField.setId, null, false);
-        } else if (activeField.field === "reps" && activeField.setId !== null) {
-          updateReps(activeField.setId, null, false);
-        }
-        setInputValue("");
-        setIsFirstInteraction(false);
-      } else {
-        // After first interaction, delete one character at a time
-        setInputValue((prev) => {
-          const newValue = prev.slice(0, -1);
-
-          // If input is now empty, set value to null and mark as not explicitly set
-          if (newValue === "") {
-            if (activeField.field === "weight" && activeField.setId !== null) {
-              updateWeight(activeField.setId, null, false);
-            } else if (
-              activeField.field === "reps" &&
-              activeField.setId !== null
-            ) {
-              updateReps(activeField.setId, null, false);
-            }
-            return "";
-          }
-
-          // Update the actual value in the sets array
-          if (activeField.field === "weight" && activeField.setId !== null) {
-            updateWeight(activeField.setId, parseFloat(newValue) || 0);
-          } else if (
-            activeField.field === "reps" &&
-            activeField.setId !== null
-          ) {
-            updateReps(activeField.setId, parseInt(newValue) || 0);
-          }
-
-          return newValue;
-        });
-      }
+      dispatch({ type: "BACKSPACE" });
     } else if (value === "next") {
-      // Different behavior based on active field
-      if (activeField.field === "weight") {
-        // Move from weight field to reps field of the same set
-        setActiveField({
-          exerciseId: activeField.exerciseId,
-          setId: activeField.setId,
-          field: "reps",
-        });
-
-        // Initialize input value with current reps and mark as first interaction
-        const setIndex = currentExercise.sets.findIndex(
-          (s) => s.id === activeField.setId,
-        );
-        const set = currentExercise.sets[setIndex];
-        if (set) {
-          const displayValues = displayValue(set, "reps");
-          if (displayValues.value !== null) {
-            setInputValue(displayValues.value.toString());
-          } else {
-            setInputValue("");
-          }
-        }
-
-        setIsFirstInteraction(true);
-      } else if (activeField.field === "reps") {
-        // Mark the current set as complete
-        toggleCompleted(activeField.setId);
-
-        // Find the next set (if any)
-        const currentIndex = currentExercise.sets.findIndex(
-          (s) => s.id === activeField.setId,
-        );
-        const nextSet = currentExercise.sets[currentIndex + 1];
-
-        if (nextSet) {
-          // Move to the weight field of the next set
-          setActiveField({
-            exerciseId: activeField.exerciseId,
-            setId: nextSet.id,
-            field: "weight",
-          });
-
-          // Initialize input value with next set's display weight and mark as first interaction
-          const displayValues = displayValue(nextSet, "weight");
-          if (displayValues.value !== null) {
-            setInputValue(displayValues.value.toString());
-          } else {
-            setInputValue("");
-          }
-
-          setIsFirstInteraction(true);
-        } else {
-          // If it's the last set, close the keyboard
-          setActiveField({ exerciseId: null, setId: null, field: null });
-        }
-      }
-    } else if (value === "plus" || value === "minus") {
-      // Plus/minus should work regardless of first interaction status
-      if (value === "plus") {
-        // Increment by 2.5 to nearest 2.5
-        if (activeField.field === "weight" && activeField.setId !== null) {
-          const setIndex = currentExercise.sets.findIndex(
-            (s) => s.id === activeField.setId,
-          );
-          const set = currentExercise.sets[setIndex];
-          if (set) {
-            const displayValues = displayValue(set, "weight");
-            const currentWeight =
-              displayValues.value !== null
-                ? parseFloat(displayValues.value.toString())
-                : 0;
-            const nextWeight = Math.ceil(currentWeight / 2.5) * 2.5;
-
-            // Ensure we always increase by at least 2.5
-            const finalWeight =
-              currentWeight === nextWeight ? currentWeight + 2.5 : nextWeight;
-
-            setInputValue(finalWeight.toString());
-            updateWeight(activeField.setId, finalWeight);
-            setIsFirstInteraction(false);
-          }
-        }
-      } else if (value === "minus") {
-        // Decrement by 2.5 to nearest 2.5
-        if (activeField.field === "weight" && activeField.setId !== null) {
-          const setIndex = currentExercise.sets.findIndex(
-            (s) => s.id === activeField.setId,
-          );
-          const set = currentExercise.sets[setIndex];
-          if (set) {
-            const displayValues = displayValue(set, "weight");
-            const currentWeight =
-              displayValues.value !== null
-                ? parseFloat(displayValues.value.toString())
-                : 0;
-            const prevWeight = Math.floor(currentWeight / 2.5) * 2.5;
-            const newWeight = Math.max(
-              0,
-              prevWeight === currentWeight ? prevWeight - 2.5 : prevWeight,
-            );
-
-            setInputValue(newWeight.toString());
-            updateWeight(activeField.setId, newWeight);
-            setIsFirstInteraction(false);
-          }
-        }
-      }
+      dispatch({ type: "NEXT" });
+    } else if (value === "plus") {
+      dispatch({ type: "PLUS_MINUS", sign: 1 });
+    } else if (value === "minus") {
+      dispatch({ type: "PLUS_MINUS", sign: -1 });
     } else if (value === "collapse") {
-      // Collapse keyboard
-      setActiveField({ exerciseId: null, setId: null, field: null });
+      dispatch({ type: "COLLAPSE_KEYBOARD" });
     } else {
-      // Add digit to input (numbers, decimal, etc.)
-      if (isFirstInteraction) {
-        // First interaction clears the input and sets the new value
-        setInputValue(value);
-
-        // Update the actual value in the sets array
-        if (activeField.field === "weight" && activeField.setId !== null) {
-          updateWeight(activeField.setId, parseFloat(value) || 0);
-        } else if (activeField.field === "reps" && activeField.setId !== null) {
-          updateReps(activeField.setId, parseInt(value) || 0);
-        }
-
-        setIsFirstInteraction(false);
-      } else {
-        // After first interaction, append digits normally
-        setInputValue((prev) => {
-          const newValue = prev === "0" ? value : prev + value;
-          // Update the actual value in the sets array
-          if (activeField.field === "weight" && activeField.setId !== null) {
-            updateWeight(activeField.setId, parseFloat(newValue) || 0);
-          } else if (
-            activeField.field === "reps" &&
-            activeField.setId !== null
-          ) {
-            updateReps(activeField.setId, parseInt(newValue) || 0);
-          }
-          return newValue;
-        });
-      }
+      // For digits and decimal point
+      dispatch({ type: "INPUT_DIGIT", value });
     }
   };
 
-  // Function to display value (either explicit or estimated)
-  const displayValue = (set: ExerciseSet, field: "weight" | "reps") => {
-    if (!currentExercise) return { value: null, isEstimated: false };
+  // UI interaction handlers
+  const handleFocus = (
+    exerciseId: number,
+    setId: number,
+    field: "weight" | "reps",
+  ) => {
+    // Find indexes from IDs
+    const exerciseIndex = exercises.findIndex((ex) => ex.id === exerciseId);
+    if (exerciseIndex === -1) return;
 
-    if (field === "weight") {
-      // If weight is explicitly set or the set is completed, show the actual value
-      if (set.isWeightExplicitlySet || set.completed) {
-        return { value: set.weight, isEstimated: false };
-      }
-      // Otherwise show estimated value
-      const estimated = getEstimatedValues(currentExercise.sets, set.id);
-      return { value: estimated.weight, isEstimated: true };
-    } else {
-      // If reps is explicitly set or the set is completed, show the actual value
-      if (set.isRepsExplicitlySet || set.completed) {
-        return { value: set.reps, isEstimated: false };
-      }
-      // Otherwise show estimated value
-      const estimated = getEstimatedValues(currentExercise.sets, set.id);
-      return { value: estimated.reps, isEstimated: true };
-    }
-  };
+    const exercise = exercises[exerciseIndex];
+    if (!exercise) return;
 
-  // Function to add a set to the current exercise
-  const addSet = () => {
-    if (!currentExercise) return;
+    const setIndex = exercise.sets.findIndex((set) => set.id === setId);
+    if (setIndex === -1) return;
 
-    setActiveExercises((prevExercises) => {
-      // Create a copy of the exercises array
-      const updatedExercises = [...prevExercises];
-
-      // Get the current exercise
-      const exercise = updatedExercises[currentExerciseIndex];
-      if (!exercise) return prevExercises;
-
-      // Get index of the new set being added
-      const newSetIndex = exercise.sets.length;
-
-      // Check if this set has a corresponding previous set from previous workout
-      const originalExercise = exercises[currentExerciseIndex];
-      const hasPreviousSetData =
-        originalExercise && newSetIndex < (originalExercise?.sets?.length ?? 0);
-
-      // If there's previous data for this set index, use it
-      // Otherwise, use null to display "-" in the UI
-      const previousData =
-        hasPreviousSetData && originalExercise.sets[newSetIndex]
-          ? originalExercise.sets[newSetIndex]
-          : { weight: null, reps: null };
-
-      // Add the new set to this exercise
-      exercise.sets.push({
-        id: Date.now(),
-        weight: null,
-        reps: null,
-        completed: false,
-        isWeightExplicitlySet: false,
-        isRepsExplicitlySet: false,
-        previousWeight: previousData.weight,
-        previousReps: previousData.reps,
-      });
-
-      return updatedExercises;
+    dispatch({
+      type: "FOCUS_FIELD",
+      exerciseIndex,
+      setIndex,
+      field,
     });
   };
 
@@ -678,291 +496,391 @@ export default function Workout({
   const toggleCompleted = (setId: number) => {
     if (!currentExercise) return;
 
-    setActiveExercises((prevExercises) => {
-      // Create a copy of the exercises array
-      const updatedExercises = [...prevExercises];
-
-      // Get the current exercise
-      const exercise = updatedExercises[currentExerciseIndex];
-      if (!exercise) return prevExercises;
-
-      // Update the specified set
-      exercise.sets = exercise.sets.map((s) => {
-        if (s.id === setId) {
-          // When completing a set, save any estimated values as explicit
-          if (!s.completed) {
-            const estimatedValues = getEstimatedValues(exercise.sets, setId);
-            const estimatedWeight = !s.isWeightExplicitlySet
-              ? estimatedValues.weight
-              : s.weight;
-            const estimatedReps = !s.isRepsExplicitlySet
-              ? estimatedValues.reps
-              : s.reps;
-
-            return {
-              ...s,
-              completed: !s.completed,
-              weight: estimatedWeight,
-              reps: estimatedReps,
-              isWeightExplicitlySet: true,
-              isRepsExplicitlySet: true,
-            };
-          }
-          return { ...s, completed: !s.completed };
-        }
-        return s;
-      });
-
-      return updatedExercises;
-    });
-  };
-
-  // Functions to update weight and reps
-  const updateWeight = (
-    setId: number,
-    value: number | null,
-    isExplicit = true,
-  ) => {
-    if (!currentExercise) return;
-
-    setActiveExercises((prevExercises) => {
-      // Create a copy of the exercises array
-      const updatedExercises = [...prevExercises];
-
-      // Get the current exercise
-      const exercise = updatedExercises[currentExerciseIndex];
-      if (!exercise) return prevExercises;
-
-      // Update the weight for the specified set
-      exercise.sets = exercise.sets.map((s) =>
-        s.id === setId
-          ? { ...s, weight: value, isWeightExplicitlySet: isExplicit }
-          : s,
-      );
-
-      return updatedExercises;
-    });
-  };
-
-  const updateReps = (
-    setId: number,
-    value: number | null,
-    isExplicit = true,
-  ) => {
-    if (!currentExercise) return;
-
-    setActiveExercises((prevExercises) => {
-      // Create a copy of the exercises array
-      const updatedExercises = [...prevExercises];
-
-      // Get the current exercise
-      const exercise = updatedExercises[currentExerciseIndex];
-      if (!exercise) return prevExercises;
-
-      // Update the reps for the specified set
-      exercise.sets = exercise.sets.map((s) =>
-        s.id === setId
-          ? { ...s, reps: value, isRepsExplicitlySet: isExplicit }
-          : s,
-      );
-
-      return updatedExercises;
-    });
-  };
-
-  // UI interaction handlers
-  const handleFocus = (setId: number, field: "weight" | "reps") => {
-    if (!currentExercise) return;
-
-    setActiveField({
-      exerciseId: currentExercise.id,
-      setId,
-      field,
-    });
-
-    // Set initial input value based on the active field and the current display value
     const setIndex = currentExercise.sets.findIndex((s) => s.id === setId);
-    const set = currentExercise.sets[setIndex];
+    if (setIndex === -1) return;
 
-    if (set) {
-      const displayValues = displayValue(set, field);
-      if (displayValues.value !== null) {
-        setInputValue(displayValues.value.toString());
-      } else {
-        setInputValue("");
-      }
-    }
+    dispatch({
+      type: "TOGGLE_COMPLETE",
+      exerciseIndex: currentExerciseIndex,
+      setIndex,
+    });
+  };
 
-    // Mark as first interaction when focusing on a field
-    setIsFirstInteraction(true);
+  // Function to add a set to the current exercise
+  const addSet = () => {
+    if (!currentExercise) return;
+
+    dispatch({
+      type: "ADD_SET",
+      exerciseIndex: currentExerciseIndex,
+    });
   };
 
   // Navigation between exercises
   const goToNextExercise = () => {
-    if (currentExerciseIndex < activeExercises.length - 1) {
-      setCurrentExerciseIndex(currentExerciseIndex + 1);
-      // Close keyboard when switching exercises
-      setActiveField({ exerciseId: null, setId: null, field: null });
-    }
+    dispatch({ type: "NAV_EXERCISE", direction: 1 });
   };
 
   const goToPreviousExercise = () => {
-    if (currentExerciseIndex > 0) {
-      setCurrentExerciseIndex(currentExerciseIndex - 1);
-      // Close keyboard when switching exercises
-      setActiveField({ exerciseId: null, setId: null, field: null });
+    dispatch({ type: "NAV_EXERCISE", direction: -1 });
+  };
+
+  // Swipe gesture handlers
+  const handleTouchStart = (
+    e: TouchEvent<HTMLTableRowElement>,
+    exerciseId: number,
+    setId: number,
+  ) => {
+    if (!e.touches[0]) return;
+    touchStartX.current = e.touches[0].clientX;
+    e.stopPropagation();
+  };
+
+  const handleTouchMove = (
+    e: TouchEvent<HTMLTableRowElement>,
+    exerciseId: number,
+    setId: number,
+  ) => {
+    if (!touchStartX.current || !e.touches[0]) return;
+    touchEndX.current = e.touches[0].clientX;
+    e.stopPropagation();
+  };
+
+  const handleTouchEnd = (
+    e: TouchEvent<HTMLTableRowElement>,
+    exerciseId: number,
+    setId: number,
+  ) => {
+    if (!touchStartX.current || !touchEndX.current) {
+      touchStartX.current = null;
+      touchEndX.current = null;
+      return;
     }
+
+    const swipeDistance = touchStartX.current - touchEndX.current;
+    // If swipe left and distance is significant, open delete dialog
+    if (swipeDistance > 50) {
+      openDeleteDialog(exerciseId, setId);
+    }
+
+    touchStartX.current = null;
+    touchEndX.current = null;
+    e.stopPropagation();
+  };
+
+  // Function to handle workout completion
+  const handleFinishWorkout = () => {
+    // Calculate duration in seconds
+    const duration = Math.floor((Date.now() - workoutStartTime.current) / 1000);
+
+    // Create the finalized workout object - pass undefined for notes since we're using state.notes
+    const completedWorkout = finalizeWorkout(
+      state,
+      workoutName,
+      undefined, // Don't add additional notes from the dialog
+      duration,
+    );
+
+    setFinishedWorkout(completedWorkout);
+
+    // Call the callback if provided
+    if (onWorkoutComplete) {
+      onWorkoutComplete(completedWorkout);
+    }
+
+    // Close the dialog
+    setFinishDialogOpen(false);
+  };
+
+  // Function to copy workout data to clipboard
+  const copyWorkoutToClipboard = () => {
+    if (!finishedWorkout) return;
+
+    navigator.clipboard
+      .writeText(JSON.stringify(finishedWorkout, null, 2))
+      .catch((err) => console.error("Failed to copy to clipboard:", err));
   };
 
   return (
-    <div className="container mx-auto max-w-md p-4 pb-[340px]">
-      <div className="mb-4 flex items-center justify-between">
-        <H4>{workoutName}</H4>
-        <div className="text-muted-foreground text-sm">
-          Exercise {currentExerciseIndex + 1} of {activeExercises.length}
+    <div className="container mx-auto max-w-md p-2 pb-[340px]">
+      <div className="mb-2 flex items-center justify-between">
+        <RestTimer />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setFinishDialogOpen(true)}
+          className="flex items-center gap-1"
+        >
+          <Save className="h-4 w-4" />
+          <span>Finish</span>
+        </Button>
+      </div>
+      <div className="flex flex-col">
+        <div className="mb-2 flex items-center justify-between">
+          <H4>{workoutName}</H4>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => setShowWorkoutNotes(!showWorkoutNotes)}
+              >
+                <MessageSquare className="mr-2 h-4 w-4" />
+                {showWorkoutNotes ? "Hide note" : "Add a note"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+
+        {/* Workout notes text area */}
+        {showWorkoutNotes && (
+          <div className="mb-4">
+            <Textarea
+              placeholder="Add a note about your workout..."
+              className="min-h-[60px] text-sm"
+              value={getWorkoutNoteText()}
+              onChange={(e) => updateWorkoutNote(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
-      {currentExercise && (
-        <>
-          <div className="mb-4 flex items-center justify-between">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToPreviousExercise}
-              disabled={currentExerciseIndex === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-
-            <h2 className="text-xl font-bold">{currentExercise.name}</h2>
-
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToNextExercise}
-              disabled={currentExerciseIndex === activeExercises.length - 1}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+      {exercises.map((exercise, exerciseIndex) => (
+        <div key={exercise.id} className="mb-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-lg font-bold">{exercise.name}</h2>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => toggleNoteVisibility(exercise.id)}
+                >
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  {showNotes[exercise.id] ? "Hide note" : "Add a note"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
-          <div>
-            <Table>
+          {/* Exercise note input */}
+          {showNotes[exercise.id] && (
+            <div className="mb-2">
+              <Textarea
+                placeholder="Add a note about this exercise..."
+                className="min-h-[60px] text-sm"
+                value={getExerciseNoteText(exercise)}
+                onChange={(e) =>
+                  updateExerciseNote(exercise.id, e.target.value)
+                }
+              />
+            </div>
+          )}
+
+          <div className="overflow-hidden">
+            <Table className="w-full table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[10%] px-2 py-2">Set</TableHead>
-                  <TableHead className="w-[25%] px-2 py-2">Previous</TableHead>
-                  <TableHead className="w-[20%] px-2 py-2">Weight</TableHead>
-                  <TableHead className="w-[15%] px-2 py-2">Reps</TableHead>
-                  <TableHead className="w-[10%] px-2 py-2">Done</TableHead>
+                  <TableHead className="w-[10%] px-1 py-1 text-xs">
+                    Set
+                  </TableHead>
+                  <TableHead className="w-[25%] px-1 py-1 text-xs">
+                    Previous
+                  </TableHead>
+                  <TableHead className="w-[20%] px-1 py-1 text-xs">
+                    lbs
+                  </TableHead>
+                  <TableHead className="w-[15%] px-1 py-1 text-xs">
+                    Reps
+                  </TableHead>
+                  <TableHead className="w-[10%] px-1 py-1 text-xs">✓</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {currentExercise.sets.map((set, index) => {
-                  const weightDisplay = displayValue(set, "weight");
-                  const repsDisplay = displayValue(set, "reps");
+                {exercise.sets.map((set, index) => {
+                  const weightValue = displayWeight(
+                    set,
+                    exercise.sets,
+                    index,
+                    exercise,
+                  );
+                  const repsValue = displayReps(
+                    set,
+                    exercise.sets,
+                    index,
+                    exercise,
+                  );
+
+                  // Determine if values are estimated (not explicitly set and not completed)
+                  const isWeightEstimated =
+                    !set.weightExplicit && !set.completed;
+                  const isRepsEstimated = !set.repsExplicit && !set.completed;
+
+                  // Calculate working set number (count only non-warmup sets)
+                  const workingSetNumber =
+                    exercise.sets
+                      .filter((s) => s.modifier !== "warmup")
+                      .findIndex((s) => s.id === set.id) + 1;
 
                   return (
                     <TableRow
                       key={set.id}
-                      className={cn(set.completed && "bg-success/5")}
+                      className={cn(
+                        "relative",
+                        set.completed && "bg-success/5",
+                      )}
+                      onTouchStart={(e) =>
+                        handleTouchStart(e, exercise.id, set.id)
+                      }
+                      onTouchMove={(e) =>
+                        handleTouchMove(e, exercise.id, set.id)
+                      }
+                      onTouchEnd={(e) => handleTouchEnd(e, exercise.id, set.id)}
                     >
-                      <TableCell className="px-2 py-2 text-center">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground px-2 py-2 text-center">
-                        {set.previousWeight && set.previousReps
-                          ? `${set.previousWeight}lb × ${set.previousReps}`
-                          : "-"}
-                      </TableCell>
-                      <TableCell className="px-2 py-2">
+                      <TableCell className="px-1 py-1 text-center">
                         <div
                           className={cn(
-                            "flex h-10 w-full items-center justify-center rounded-md bg-gray-100",
-                            activeField.setId === set.id &&
+                            "flex h-8 w-8 items-center justify-center rounded-md text-sm",
+                            set.modifier === "warmup"
+                              ? "bg-orange-500 text-white"
+                              : "bg-gray-100 text-gray-700",
+                          )}
+                          onClick={() => {
+                            const setIndex = exercise.sets.findIndex(
+                              (s) => s.id === set.id,
+                            );
+                            if (setIndex !== -1) {
+                              dispatch({
+                                type: "TOGGLE_WARMUP",
+                                exerciseIndex,
+                                setIndex,
+                              });
+                            }
+                          }}
+                        >
+                          {set.modifier === "warmup" ? "W" : workingSetNumber}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground px-1 py-1 text-center text-xs">
+                        {(() => {
+                          const prevData = getPreviousSetData(
+                            exercise,
+                            set,
+                            exercise.sets,
+                          );
+                          return prevData.weight && prevData.reps
+                            ? `${prevData.weight}lb × ${prevData.reps}${prevData.weight && set.modifier === "warmup" ? " (W)" : ""}`
+                            : "-";
+                        })()}
+                      </TableCell>
+                      <TableCell className="px-1 py-1">
+                        <div
+                          className={cn(
+                            "flex h-8 w-full items-center justify-center rounded-md bg-gray-100",
+                            activeField.exerciseIndex === exerciseIndex &&
+                              activeField.setIndex === index &&
                               activeField.field === "weight" &&
                               "bg-white ring-2 ring-blue-400",
                           )}
                         >
                           <div
                             className="h-full w-full"
-                            onClick={() => handleFocus(set.id, "weight")}
+                            onClick={() =>
+                              handleFocus(exercise.id, set.id, "weight")
+                            }
                           >
-                            {activeField.setId === set.id &&
+                            {activeField.exerciseIndex === exerciseIndex &&
+                            activeField.setIndex === index &&
                             activeField.field === "weight" ? (
                               <input
                                 type="text"
                                 value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
+                                readOnly
                                 autoFocus
-                                className="h-full w-full rounded bg-transparent px-2 text-center outline-none"
+                                className="h-full w-full rounded bg-transparent px-1 text-center text-sm outline-none"
                               />
                             ) : (
                               <div
                                 className={cn(
-                                  "flex h-full w-full items-center justify-center text-center",
-                                  weightDisplay.isEstimated &&
-                                    !set.completed &&
-                                    "text-muted-foreground",
+                                  "flex h-full w-full items-center justify-center text-center text-sm",
+                                  isWeightEstimated && "text-muted-foreground",
                                 )}
                               >
-                                {weightDisplay.value ?? "-"}
+                                {weightValue ?? "-"}
                               </div>
                             )}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="px-2 py-2">
+                      <TableCell className="px-1 py-1">
                         <div
                           className={cn(
-                            "flex h-10 w-full items-center justify-center rounded-md bg-gray-100",
-                            activeField.setId === set.id &&
+                            "flex h-8 w-full items-center justify-center rounded-md bg-gray-100",
+                            activeField.exerciseIndex === exerciseIndex &&
+                              activeField.setIndex === index &&
                               activeField.field === "reps" &&
                               "bg-white ring-2 ring-blue-400",
                           )}
                         >
                           <div
                             className="h-full w-full"
-                            onClick={() => handleFocus(set.id, "reps")}
+                            onClick={() =>
+                              handleFocus(exercise.id, set.id, "reps")
+                            }
                           >
-                            {activeField.setId === set.id &&
+                            {activeField.exerciseIndex === exerciseIndex &&
+                            activeField.setIndex === index &&
                             activeField.field === "reps" ? (
                               <input
                                 type="text"
                                 value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
+                                readOnly
                                 autoFocus
-                                className="h-full w-full rounded bg-transparent px-2 text-center outline-none"
+                                className="h-full w-full rounded bg-transparent px-1 text-center text-sm outline-none"
                               />
                             ) : (
                               <div
                                 className={cn(
-                                  "flex h-full w-full items-center justify-center text-center",
-                                  repsDisplay.isEstimated &&
-                                    !set.completed &&
-                                    "text-muted-foreground",
+                                  "flex h-full w-full items-center justify-center text-center text-sm",
+                                  isRepsEstimated && "text-muted-foreground",
                                 )}
                               >
-                                {repsDisplay.value ?? "-"}
+                                {repsValue ?? "-"}
                               </div>
                             )}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="px-2 py-2">
+                      <TableCell className="px-1 py-1">
                         <Button
                           size="icon"
                           variant={set.completed ? "default" : "secondary"}
                           className={cn(
-                            "h-10 w-10",
+                            "h-8 w-8",
                             set.completed && "bg-success hover:bg-success/90",
                           )}
-                          onClick={() => toggleCompleted(set.id)}
+                          onClick={() => {
+                            const setIndex = exercise.sets.findIndex(
+                              (s) => s.id === set.id,
+                            );
+                            if (setIndex !== -1) {
+                              dispatch({
+                                type: "TOGGLE_COMPLETE",
+                                exerciseIndex,
+                                setIndex,
+                              });
+                            }
+                          }}
                         >
                           <Check
                             className={cn(
-                              "h-5 w-5",
+                              "h-4 w-4",
                               set.completed
                                 ? "text-success-foreground"
                                 : "text-muted-foreground",
@@ -976,26 +894,209 @@ export default function Workout({
               </TableBody>
             </Table>
           </div>
-          <div className="mt-4 space-y-4">
-            <button
-              className="flex h-12 w-full items-center justify-center rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
-              onClick={addSet}
+          <div className="mt-2 space-y-2">
+            <Button
+              variant="secondary"
+              size="xs"
+              className="text-muted-foreground w-full"
+              onClick={() => {
+                dispatch({
+                  type: "ADD_SET",
+                  exerciseIndex,
+                });
+              }}
             >
               + Add Set
-            </button>
-
-            {currentExerciseIndex < activeExercises.length - 1 && (
-              <Button className="w-full" onClick={goToNextExercise}>
-                Next Exercise
-              </Button>
-            )}
+            </Button>
           </div>
-        </>
-      )}
+        </div>
+      ))}
 
-      {activeField.setId !== null && activeField.field !== null && (
+      {activeField.exerciseIndex !== null && activeField.field !== null && (
         <Keyboard onKeyPress={handleKeyPress} inputType={activeField.field} />
       )}
+
+      {deleteDialog.isOpen && (
+        <Dialog
+          open={deleteDialog.isOpen}
+          onOpenChange={(open) => {
+            if (!open)
+              setDeleteDialog({
+                isOpen: false,
+                setId: null,
+                exerciseId: null,
+                exerciseName: "",
+                setNumber: 0,
+                isWarmup: false,
+              });
+          }}
+        >
+          <DialogContent className="overflow-hidden p-0 sm:max-w-[425px]">
+            <DialogHeader className="p-6 pb-2">
+              <DialogTitle className="text-xl">Delete Set</DialogTitle>
+              <DialogDescription className="mt-2 text-base">
+                Are you sure you want to delete{" "}
+                {deleteDialog.isWarmup
+                  ? "warmup set"
+                  : `set ${deleteDialog.setNumber}`}{" "}
+                from{" "}
+                <span className="font-medium">
+                  &ldquo;{deleteDialog.exerciseName}&rdquo;
+                </span>
+                ?
+              </DialogDescription>
+              <p className="text-muted-foreground mt-2 text-sm">
+                This action cannot be undone.
+              </p>
+            </DialogHeader>
+            <DialogFooter className="bg-muted/20 flex flex-row justify-end gap-3 border-t p-4">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setDeleteDialog({
+                    isOpen: false,
+                    setId: null,
+                    exerciseId: null,
+                    exerciseName: "",
+                    setNumber: 0,
+                    isWarmup: false,
+                  })
+                }
+                className="px-6"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() =>
+                  deleteDialog.setId && handleDeleteSet(deleteDialog.setId)
+                }
+                className="px-6"
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Finish Workout Dialog */}
+      <Dialog open={finishDialogOpen} onOpenChange={setFinishDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Finish Workout</DialogTitle>
+            <DialogDescription>
+              Review and save your completed workout.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {finishedWorkout ? (
+              // Show workout summary if already finished
+              <div className="space-y-4">
+                <div className="bg-muted rounded-md p-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-medium">Workout Saved!</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={copyWorkoutToClipboard}
+                      className="h-8 gap-1"
+                    >
+                      <Clipboard className="h-4 w-4" />
+                      <span>Copy</span>
+                    </Button>
+                  </div>
+
+                  <div className="mt-2 text-sm">
+                    <p>
+                      <span className="font-medium">Duration:</span>{" "}
+                      {formatDuration(finishedWorkout.duration ?? 0)}
+                    </p>
+                    <p>
+                      <span className="font-medium">Exercises:</span>{" "}
+                      {finishedWorkout.exercises.length}
+                    </p>
+                    <p>
+                      <span className="font-medium">Total Sets:</span>{" "}
+                      {finishedWorkout.exercises.reduce(
+                        (acc, ex) => acc + ex.sets.length,
+                        0,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <CheckCircle className="text-success h-12 w-12" />
+                </div>
+              </div>
+            ) : (
+              // Show finish form if not yet finished
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-medium">Workout Summary</h3>
+                  <div className="bg-muted mt-2 space-y-2 rounded-md p-3 text-sm">
+                    <p>
+                      <span className="font-medium">Exercises:</span>{" "}
+                      {
+                        exercises.filter((ex) =>
+                          ex.sets.some((set) => set.completed),
+                        ).length
+                      }
+                    </p>
+                    <p>
+                      <span className="font-medium">Completed Sets:</span>{" "}
+                      {exercises.reduce(
+                        (acc, ex) =>
+                          acc + ex.sets.filter((set) => set.completed).length,
+                        0,
+                      )}
+                    </p>
+                    <p>
+                      <span className="font-medium">Duration:</span>{" "}
+                      {formatDuration(
+                        Math.floor(
+                          (Date.now() - workoutStartTime.current) / 1000,
+                        ),
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            {!finishedWorkout ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setFinishDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleFinishWorkout}>Save Workout</Button>
+              </>
+            ) : (
+              <Button onClick={() => setFinishDialogOpen(false)}>Close</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+// Format seconds to HH:MM:SS or MM:SS format
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
+  } else {
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  }
 }
