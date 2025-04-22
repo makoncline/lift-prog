@@ -37,6 +37,9 @@ The following are the primary technologies used in this project:
 - ESLint
 - Prettier
 
+# File Names
+- fille names should be snake case (ex. alert-dialog.tsx)
+
 # Types
 - Always prefer type inference; do not explicitly annotate function return types.
 - Use Zod schemas for any data requiring validation and derive types via `z.infer<typeof Schema>`.
@@ -44,8 +47,9 @@ The following are the primary technologies used in this project:
 - When possible, use generated types from `@trpc/server` or generated helper types like `RouterOutputs<AppRouter>` for consistency.
 
 # Components
-- Use shadcn/ui components and patterns
-[components.json](mdc:components.json)
+- Use shadcn/ui components and patterns [components.json](mdc:components.json)
+- Reusable custom components should go in /src/components
+- Components and layout specific to a page can go in /src/app/<pagedir>/_components
 
 # Typography
 - use [typography.tsx](mdc:src/components/ui/typography.tsx) for all typography
