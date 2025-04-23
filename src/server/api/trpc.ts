@@ -6,11 +6,29 @@
  * TL;DR - This is where all the tRPC server stuff is created and plugged in. The pieces you will
  * need to use are documented accordingly near the end.
  */
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { db } from "@/server/db";
+import { auth } from "@clerk/nextjs/server";
+
+/**
+ * Interface defining the expected shape of the session object in our context.
+ */
+interface SessionContext {
+  userId: string | null;
+  // Add other session properties if needed later, e.g., orgId, roles
+}
+
+/**
+ * Interface defining the full context object.
+ */
+interface CreateContextOptions {
+  session: SessionContext | null;
+  db: typeof db; // Use the type of the imported db instance
+  headers: Headers;
+}
 
 /**
  * 1. CONTEXT
@@ -24,12 +42,35 @@ import { db } from "@/server/db";
  *
  * @see https://trpc.io/docs/server/context
  */
-export const createTRPCContext = async (opts: { headers: Headers }) => {
+export const createInnerTRPCContext = (opts: {
+  auth: Awaited<ReturnType<typeof auth>>; // Use Awaited return type
+  db: typeof db;
+  headers: Headers;
+}) => {
   return {
-    db,
-    ...opts,
+    db: opts.db,
+    session: {
+      userId: opts.auth.userId, // Extract userId from awaited result
+    },
+    headers: opts.headers,
   };
 };
+
+/**
+ * Creates the full context for incoming requests.
+ */
+export const createTRPCContext = async (opts: { headers: Headers }) => {
+  // <-- Make async
+  const authData = await auth(); // <-- Await auth()
+  return createInnerTRPCContext({
+    auth: authData,
+    db,
+    headers: opts.headers,
+  });
+};
+
+// Export the context type (using Awaited for async function)
+export type Context = Awaited<ReturnType<typeof createTRPCContext>>;
 
 /**
  * 2. INITIALIZATION
@@ -38,7 +79,7 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
  * ZodErrors so that you get typesafety on the frontend if your procedure fails due to validation
  * errors on the backend.
  */
-const t = initTRPC.context<typeof createTRPCContext>().create({
+const t = initTRPC.context<Context>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
     return {
@@ -79,16 +120,18 @@ export const createTRPCRouter = t.router;
  * You can remove this if you don't like it, but it can help catch unwanted waterfalls by simulating
  * network latency that would occur in production but not in local development.
  */
-const timingMiddleware = t.middleware(async ({ next, path }) => {
+const timingMiddleware = t.middleware(async ({ next, path, ctx }) => {
   const start = Date.now();
 
-  if (t._config.isDev) {
+  const isDev = process.env.NODE_ENV === "development";
+
+  if (isDev) {
     // artificial delay in dev
     const waitMs = Math.floor(Math.random() * 400) + 100;
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  const result = await next();
+  const result = await next({ ctx });
 
   const end = Date.now();
   console.log(`[TRPC] ${path} took ${end - start}ms to execute`);
@@ -104,3 +147,26 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
  * are logged in.
  */
 export const publicProcedure = t.procedure.use(timingMiddleware);
+
+/**
+ * Protected (authenticated) procedure
+ *
+ * If you want a query or mutation to ONLY be accessible to logged in users, use this. It verifies
+ * the session is valid and guarantees `ctx.session.userId` is not null.
+ *
+ * @see https://trpc.io/docs/procedures
+ */
+export const protectedProcedure = t.procedure
+  .use(timingMiddleware)
+  .use(({ ctx, next }) => {
+    if (!ctx.session?.userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+    return next({
+      ctx: {
+        ...ctx,
+        db: ctx.db,
+        session: ctx.session,
+      },
+    });
+  });

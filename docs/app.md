@@ -46,3 +46,33 @@ Workouts begin at a minimum of 8 reps per set. If the user successfully complete
 - [ ] Exercise notes
 - [ ] Add/remove warm-up sets
 - [ ] Option for auto rest timer
+
+## Workouts to start
+
+Big 7 - Push
+
+- barbell squat
+  - 2 warmup sets
+  - 3 working sets
+- barbell bench press
+  - 1 warmup sets
+  - 3 working sets
+- Barbell shoulder press
+  - 1 warmup sets
+  - 3 working sets
+- Dips
+  - 3 working sets
+
+Big 7 - Pull
+
+- Barbell Deadlift
+  - 2 warmup sets
+  - 3 working sets
+- Barbell Bent-Over Row
+  - 1 warmup set
+  - 3 working sets
+- Wide Pull-up
+  - 1 warmup set
+  - 3 working sets
+- Face pull
+  - 3 working sets

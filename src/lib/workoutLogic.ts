@@ -12,6 +12,7 @@
 // -----------------------------  Types  ---------------------------------
 
 export type SetModifier = "warmup";
+export type WeightModifier = "bodyweight"; // New type for weight modifier
 
 export interface Note {
   text: string;
@@ -27,6 +28,7 @@ export interface WorkoutSet {
   prevWeight: number | null;
   prevReps: number | null;
   modifier?: SetModifier;
+  weightModifier?: WeightModifier; // Added weight modifier field
 }
 
 export interface WorkoutExercise {
@@ -37,6 +39,7 @@ export interface WorkoutExercise {
     weight: number | null;
     reps: number | null;
     modifier?: SetModifier;
+    weightModifier?: WeightModifier; // Ensure consistency if loading previous data
   }>;
   notes: Note[];
 }
@@ -61,6 +64,7 @@ export interface CompletedSet {
   weight: number | null;
   reps: number | null;
   modifier?: SetModifier;
+  weightModifier?: WeightModifier; // Added to completed set
   order: number;
   completed: boolean;
 }
@@ -120,6 +124,52 @@ export const nextProgression = (
   return { weight: prevWeight, reps: prevReps + 1 };
 };
 
+// ─── add near the other helpers ───────────────────────────────────────────
+function estimateWarmup(
+  set: WorkoutSet,
+  exercise: WorkoutExercise,
+): { weight: number | null; reps: number | null } {
+  const warmupsPrev = exercise.previousSets.filter(
+    (s) => s.modifier === "warmup",
+  );
+  // Get position of set in warmup sets (using index in array instead of ID matching)
+  const warmupSets = exercise.sets.filter((s) => s.modifier === "warmup");
+  const idx = warmupSets.indexOf(set);
+
+  if (idx === -1 || idx >= warmupsPrev.length) {
+    return { weight: null, reps: null };
+  }
+
+  const prev = warmupsPrev[idx];
+  return {
+    weight: prev?.weight ?? null,
+    reps: prev?.reps ?? null,
+  };
+}
+
+function estimateFirstWorking(set: WorkoutSet, exercise: WorkoutExercise) {
+  // Get previous data using position-based approach
+  const prev = getPreviousSetData(exercise, set, exercise.sets);
+  return nextProgression(prev.weight, prev.reps);
+}
+
+function cascadeWorking(
+  setIdx: number,
+  workingSets: WorkoutSet[],
+  base: { weight: number | null; reps: number | null },
+) {
+  let { weight, reps } = base;
+
+  // Use direct array access instead of filtering again
+  for (let i = 0; i < setIdx; i++) {
+    const s = workingSets[i];
+    if (s?.weightExplicit) weight = s.weight;
+    if (s?.repsExplicit) reps = s.reps;
+  }
+
+  return { weight, reps };
+}
+
 /**
  * Get the display (possibly estimated) values for a set.
  * ‣ For first set we apply progression to its own previous values
@@ -129,107 +179,132 @@ export const nextProgression = (
 export const estimateSet = (
   sets: WorkoutSet[],
   setIndex: number,
-  exercise?: WorkoutExercise, // Add exercise parameter to access previous values
+  exercise: WorkoutExercise,
 ): { weight: number | null; reps: number | null } => {
   const set = sets[setIndex];
   if (!set) return { weight: null, reps: null };
 
-  // For warmup sets
+  // If this is a warmup set
   if (set.modifier === "warmup") {
-    // If we have the exercise, use position-based previous values
-    if (exercise) {
-      const prevData = getPreviousSetData(exercise, set, sets);
-      return { weight: prevData.weight, reps: prevData.reps };
-    }
-
-    // Find the previous warmup set with the same index relative to all warmup sets
+    // For warmup sets, find the corresponding warmup in previous data
     const warmupSets = sets.filter((s) => s.modifier === "warmup");
-    const warmupIndex = warmupSets.findIndex((s) => s.id === set.id);
+    const warmupIdx = warmupSets.findIndex((s) => s === set);
 
-    // If this is the first warmup set, use its own previous values
-    if (warmupIndex === 0 || warmupSets.length === 0) {
-      // For warmup sets, we don't apply the progressive overload scheme
-      // Just return the previous values without incrementing
-      return { weight: set.prevWeight, reps: set.prevReps };
+    // Find the corresponding warmup in previous data
+    const prevWarmups = exercise.previousSets.filter(
+      (s) => s.modifier === "warmup",
+    );
+    if (warmupIdx >= 0 && warmupIdx < prevWarmups.length) {
+      const prevWarmup = prevWarmups[warmupIdx];
+      return {
+        weight: prevWarmup?.weight ?? null,
+        reps: prevWarmup?.reps ?? null,
+      };
     }
 
-    // Otherwise use values from the previous warmup set
-    const prevWarmupSet = warmupSets[warmupIndex - 1];
-    if (!prevWarmupSet) {
-      return { weight: set.prevWeight, reps: set.prevReps };
-    }
-
-    let weight = prevWarmupSet.weightExplicit ? prevWarmupSet.weight : null;
-    let reps = prevWarmupSet.repsExplicit ? prevWarmupSet.reps : null;
-
-    // If previous warmup set doesn't have explicit values, use its estimates
-    if (weight === null || reps === null) {
-      const prevEstimates = estimateSet(
-        sets,
-        sets.findIndex((s) => s.id === prevWarmupSet.id),
-        exercise,
-      );
-      weight = weight ?? prevEstimates.weight;
-      reps = reps ?? prevEstimates.reps;
-    }
-
-    return { weight, reps };
+    // Fallback to current set's prev values
+    return {
+      weight: set.prevWeight,
+      reps: set.prevReps,
+    };
   }
 
   // For working sets
-  // Find the first non-warmup set
-  const firstWorkingSetIndex = sets.findIndex((s) => s.modifier !== "warmup");
-  if (firstWorkingSetIndex === -1) return { weight: null, reps: null };
-
-  const firstWorkingSet = sets[firstWorkingSetIndex];
-  if (!firstWorkingSet) return { weight: null, reps: null };
-
-  // If this is the first working set, use progression on its previous values
-  if (set.id === firstWorkingSet.id) {
-    if (exercise) {
-      const prevData = getPreviousSetData(exercise, set, sets);
-      return nextProgression(prevData.weight, prevData.reps);
-    }
-    return nextProgression(set.prevWeight, set.prevReps);
-  }
-
-  // For subsequent working sets, cascade from the first working set
-  let weight: number | null = firstWorkingSet.weightExplicit
-    ? firstWorkingSet.weight
-    : exercise
-      ? nextProgression(
-          getPreviousSetData(exercise, firstWorkingSet, sets).weight,
-          getPreviousSetData(exercise, firstWorkingSet, sets).reps,
-        ).weight
-      : nextProgression(firstWorkingSet.prevWeight, firstWorkingSet.prevReps)
-          .weight;
-
-  let reps: number | null = firstWorkingSet.repsExplicit
-    ? firstWorkingSet.reps
-    : exercise
-      ? nextProgression(
-          getPreviousSetData(exercise, firstWorkingSet, sets).weight,
-          getPreviousSetData(exercise, firstWorkingSet, sets).reps,
-        ).reps
-      : nextProgression(firstWorkingSet.prevWeight, firstWorkingSet.prevReps)
-          .reps;
-
-  // Apply any explicit overrides from working sets (skip warmup sets)
   const workingSets = sets.filter((s) => s.modifier !== "warmup");
-  const currentWorkingIndex = workingSets.findIndex((s) => s.id === set.id);
+  const workingIdx = workingSets.findIndex((s) => s === set);
 
-  for (let i = 0; i < currentWorkingIndex; i++) {
-    const workingSet = workingSets[i];
-    if (!workingSet) continue;
+  if (workingIdx === -1) return { weight: null, reps: null };
 
-    if (workingSet.weightExplicit) weight = workingSet.weight;
-    if (workingSet.repsExplicit) reps = workingSet.reps;
+  // Get previous workout's working sets
+  const prevWorkingSets = exercise.previousSets.filter(
+    (s) => s.modifier !== "warmup",
+  );
+
+  // First working set: apply progression from previous workout
+  if (workingIdx === 0) {
+    const prevFirstWorkingSet = prevWorkingSets[0] ?? {
+      weight: null,
+      reps: null,
+    };
+
+    // Use next progression for first working set if we have previous data
+    const progression = nextProgression(
+      prevFirstWorkingSet.weight,
+      prevFirstWorkingSet.reps,
+    );
+
+    // If progression gives null values (no previous data), fall back to template values
+    return {
+      weight: progression.weight ?? set.prevWeight,
+      reps: progression.reps ?? set.prevReps,
+    };
   }
 
-  return { weight, reps };
+  // For subsequent working sets, cascade from earlier sets in this workout
+  let baseWeight = null;
+  let baseReps = null;
+
+  // First try to get values from the first working set of this workout
+  const firstWorkingSet = workingSets[0];
+  if (firstWorkingSet) {
+    // If first set has explicit values, use them
+    if (firstWorkingSet.weightExplicit) {
+      baseWeight = firstWorkingSet.weight;
+    } else {
+      // Otherwise use estimated values from first working set
+      const firstEstimate = estimateSet(
+        sets,
+        sets.indexOf(firstWorkingSet),
+        exercise,
+      );
+      baseWeight = firstEstimate.weight;
+    }
+
+    if (firstWorkingSet.repsExplicit) {
+      baseReps = firstWorkingSet.reps;
+    } else {
+      const firstEstimate = estimateSet(
+        sets,
+        sets.indexOf(firstWorkingSet),
+        exercise,
+      );
+      baseReps = firstEstimate.reps;
+    }
+  }
+
+  // Then override with any explicit values from earlier sets in the sequence
+  for (let i = 1; i < workingIdx; i++) {
+    const earlierSet = workingSets[i];
+    if (earlierSet?.weightExplicit) {
+      baseWeight = earlierSet.weight;
+    }
+    if (earlierSet?.repsExplicit) {
+      baseReps = earlierSet.reps;
+    }
+  }
+
+  // If we couldn't establish base values from earlier sets,
+  // try using the corresponding set from previous workout
+  if (baseWeight === null || baseReps === null) {
+    const prevWorkingSet = prevWorkingSets[workingIdx];
+    if (prevWorkingSet) {
+      baseWeight ??= prevWorkingSet.weight;
+      baseReps ??= prevWorkingSet.reps;
+    }
+  }
+
+  // Final fallback to the set's own prev values
+  baseWeight ??= set.prevWeight;
+  baseReps ??= set.prevReps;
+
+  return { weight: baseWeight, reps: baseReps };
 };
 
 /** Build initial Exercise[] from prior workout snapshots */
+export type PreviousExerciseData = Parameters<
+  typeof initialiseExercises
+>[0][number];
+
 export const initialiseExercises = (
   previous: {
     name: string;
@@ -237,30 +312,36 @@ export const initialiseExercises = (
       weight: number | null;
       reps: number | null;
       isWarmup?: boolean;
+      modifier?: SetModifier;
+      weightModifier?: WeightModifier;
     }>;
   }[],
 ): WorkoutExercise[] =>
   previous.map((ex, i) => ({
-    id: i + 1,
+    id: i,
     name: ex.name,
-    sets: ex.sets.map((s, idx) => ({
-      id: idx + 1,
-      weight: null,
-      reps: null,
-      completed: false,
-      weightExplicit: false,
-      repsExplicit: false,
-      prevWeight: s.weight,
-      prevReps: s.reps,
-      modifier: s.isWarmup ? "warmup" : undefined,
-    })),
-    // Store previous workout data separately
+    sets: ex.sets.map((s, idx) => {
+      const isPrevBodyweight = s.weightModifier === "bodyweight";
+      return {
+        id: idx,
+        weight: isPrevBodyweight ? s.weight : null,
+        reps: null,
+        completed: false,
+        weightExplicit: false,
+        repsExplicit: false,
+        prevWeight: s.weight,
+        prevReps: s.reps,
+        modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
+        weightModifier: s.weightModifier,
+      };
+    }),
     previousSets: ex.sets.map((s) => ({
       weight: s.weight,
       reps: s.reps,
-      modifier: s.isWarmup ? "warmup" : undefined,
+      modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
+      weightModifier: s.weightModifier,
     })),
-    notes: [], // Initialize with empty notes array
+    notes: [],
   }));
 
 /**
@@ -271,48 +352,68 @@ export const getPreviousSetData = (
   exercise: WorkoutExercise,
   set: WorkoutSet,
   sets: WorkoutSet[],
-): { weight: number | null; reps: number | null } => {
-  // For this function, we need to determine position in a way that's stable
-  // even if other sets are deleted
-
+): {
+  weight: number | null;
+  reps: number | null;
+  weightModifier?: WeightModifier;
+} => {
+  // Use array position instead of ID for more reliable matching
   if (set.modifier === "warmup") {
     // For warmup sets, count position among warmup sets
     const warmupSets = sets.filter((s) => s.modifier === "warmup");
-    const warmupIndex = warmupSets.findIndex((s) => s.id === set.id);
+    const warmupIndex = warmupSets.indexOf(set);
+
+    // Ensure valid index
+    if (warmupIndex === -1) {
+      return { weight: null, reps: null, weightModifier: undefined };
+    }
 
     // Find corresponding warmup set in previous workout
     const prevWarmupSets = exercise.previousSets.filter(
       (s) => s.modifier === "warmup",
     );
-    const prevWarmupSet = prevWarmupSets[warmupIndex];
 
-    if (prevWarmupSet) {
+    if (warmupIndex < prevWarmupSets.length) {
+      const prevWarmupSet = prevWarmupSets[warmupIndex];
+      // Type-safe access
       return {
-        weight: prevWarmupSet.weight,
-        reps: prevWarmupSet.reps,
+        weight: prevWarmupSet?.weight ?? null,
+        reps: prevWarmupSet?.reps ?? null,
+        weightModifier: prevWarmupSet?.weightModifier,
       };
     }
   } else {
     // For working sets, count position among working sets
     const workingSets = sets.filter((s) => s.modifier !== "warmup");
-    const workingIndex = workingSets.findIndex((s) => s.id === set.id);
+    const workingIndex = workingSets.indexOf(set);
+
+    // Ensure valid index
+    if (workingIndex === -1) {
+      return { weight: null, reps: null, weightModifier: undefined };
+    }
 
     // Find corresponding working set in previous workout
     const prevWorkingSets = exercise.previousSets.filter(
       (s) => s.modifier !== "warmup",
     );
-    const prevWorkingSet = prevWorkingSets[workingIndex];
 
-    if (prevWorkingSet) {
+    if (workingIndex < prevWorkingSets.length) {
+      const prevWorkingSet = prevWorkingSets[workingIndex];
+      // Type-safe access
       return {
-        weight: prevWorkingSet.weight,
-        reps: prevWorkingSet.reps,
+        weight: prevWorkingSet?.weight ?? null,
+        reps: prevWorkingSet?.reps ?? null,
+        weightModifier: prevWorkingSet?.weightModifier,
       };
     }
   }
 
-  // Fallback to the values stored in the set (backward compatibility)
-  return { weight: set.prevWeight, reps: set.prevReps };
+  // Fallback to default values
+  return {
+    weight: set.prevWeight,
+    reps: set.prevReps,
+    weightModifier: undefined,
+  };
 };
 
 // ---------------------------  Actions  ---------------------------------
@@ -327,9 +428,11 @@ export type Action =
   | { type: "INPUT_DIGIT"; value: string }
   | { type: "BACKSPACE" }
   | { type: "PLUS_MINUS"; sign: 1 | -1 }
+  | { type: "TOGGLE_SIGN" }
   | { type: "NEXT" }
   | { type: "TOGGLE_COMPLETE"; exerciseIndex: number; setIndex: number }
   | { type: "TOGGLE_WARMUP"; exerciseIndex: number; setIndex: number }
+  | { type: "TOGGLE_BODYWEIGHT" }
   | { type: "DELETE_SET"; exerciseIndex: number; setIndex: number }
   | { type: "ADD_SET"; exerciseIndex: number }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
@@ -341,6 +444,17 @@ export type Action =
 // --------------------------- Reducer -----------------------------------
 
 export const workoutReducer = (state: Workout, action: Action): Workout => {
+  const { activeField, exercises } = state;
+
+  // Helper to get the currently active set, returns null if none active
+  const getActiveSet = (): WorkoutSet | null => {
+    if (activeField.exerciseIndex === null || activeField.setIndex === null) {
+      return null;
+    }
+    const exercise = exercises[activeField.exerciseIndex];
+    return exercise?.sets[activeField.setIndex] ?? null;
+  };
+
   switch (action.type) {
     case "FOCUS_FIELD": {
       const { exerciseIndex, setIndex, field } = action;
@@ -348,49 +462,87 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       if (!ex) return state;
       const set = ex.sets[setIndex];
       if (!set) return state;
-      const display =
-        field === "weight"
-          ? displayWeight(set, ex.sets, setIndex, ex)
-          : displayReps(set, ex.sets, setIndex, ex);
+
+      let initialValue = "";
+      if (field === "weight") {
+        // If bodyweight, show 0 if null, otherwise show the number (could be negative)
+        if (set.weightModifier === "bodyweight") {
+          initialValue = set.weight === null ? "0" : String(set.weight);
+        } else {
+          initialValue = set.weight !== null ? String(set.weight) : "";
+        }
+      } else if (field === "reps") {
+        initialValue = set.reps !== null ? String(set.reps) : "";
+      }
+
       return {
         ...state,
-        activeField: { exerciseIndex, setIndex, field },
-        inputValue: display?.toString() ?? "",
+        activeField: {
+          exerciseIndex,
+          setIndex,
+          field,
+        },
+        inputValue: initialValue,
         isFirstInteraction: true,
       };
     }
 
     case "INPUT_DIGIT": {
-      if (state.activeField.field == null) return state;
+      const activeSet = getActiveSet();
+      if (!activeSet || activeField.field === null) return state;
 
-      // If this is the first interaction, replace the input value instead of appending
-      const newVal = state.isFirstInteraction
-        ? action.value
-        : state.inputValue === "0"
-          ? action.value
-          : state.inputValue + action.value;
+      const currentVal = state.isFirstInteraction ? "" : state.inputValue;
+      let newVal = currentVal;
 
-      return applyInput(state, newVal, false); // Pass false to keep isFirstInteraction=false after input
+      if (action.value === "." && activeField.field === "weight") {
+        if (!currentVal.includes(".")) {
+          newVal = currentVal + ".";
+        }
+      } else {
+        // Append digit
+        newVal = currentVal + action.value;
+      }
+
+      // Limit precision for weights
+      if (activeField.field === "weight") {
+        const parts = newVal.split(".");
+        if (parts[1] && parts[1].length > 1) {
+          // Don't allow more than 1 decimal place for weight
+          return state;
+        }
+      }
+
+      return applyInput(state, newVal);
     }
 
     case "BACKSPACE": {
-      if (state.activeField.field == null) return state;
-
-      // If this is the first interaction, clear the entire value
-      if (state.isFirstInteraction) {
-        return applyInput(state, "", false);
-      }
-
-      // Otherwise delete one character at a time
-      const newVal = state.inputValue.slice(0, -1);
-      return applyInput(state, newVal, false);
+      if (!getActiveSet()) return state;
+      const currentVal = state.inputValue;
+      const newVal = currentVal.length > 0 ? currentVal.slice(0, -1) : "";
+      return applyInput(state, newVal, true); // Treat backspace as first interaction if clears field
     }
 
     case "PLUS_MINUS": {
-      if (state.activeField.field !== "weight") return state;
-      const cur = parseFloat(state.inputValue || "0");
-      const next = roundToStep(cur + action.sign * WEIGHT_STEP);
-      return applyInput(state, next.toString(), false);
+      const activeSet = getActiveSet();
+      // Now only applies to weight field, and only increments/decrements
+      if (!activeSet || activeField.field !== "weight") return state;
+
+      const currentVal = parseFloat(state.inputValue) || 0;
+      const sign = action.sign;
+      const step = sign * WEIGHT_STEP;
+      const newVal = String(roundToStep(currentVal + step));
+      return applyInput(state, newVal, true);
+    }
+
+    case "TOGGLE_SIGN": {
+      const activeSet = getActiveSet();
+      // Only applies to weight field
+      if (!activeSet || activeField.field !== "weight") return state;
+
+      const currentVal = parseFloat(state.inputValue) || 0;
+      // Simply multiply by -1 to toggle sign
+      const newVal = String(currentVal * -1);
+      return applyInput(state, newVal, true);
     }
 
     case "NEXT": {
@@ -444,6 +596,68 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return { ...state, exercises: newExercises };
     }
 
+    case "TOGGLE_BODYWEIGHT": {
+      const { exerciseIndex, setIndex, field } = activeField;
+      if (exerciseIndex === null || setIndex === null || field !== "weight") {
+        return state; // Can only toggle BW when weight field is active
+      }
+      const activeSet = getActiveSet();
+      if (!activeSet) return state;
+
+      const newWeightModifier =
+        activeSet.weightModifier === "bodyweight" ? undefined : "bodyweight";
+
+      let weightToSet = activeSet.weight;
+      // If toggling BW OFF and weight is negative, make it positive
+      if (
+        newWeightModifier === undefined &&
+        weightToSet !== null &&
+        weightToSet < 0
+      ) {
+        weightToSet = Math.abs(weightToSet);
+      }
+      // If toggling BW ON, reset weight to 0
+      else if (newWeightModifier === "bodyweight") {
+        weightToSet = 0;
+      }
+
+      const newSet: WorkoutSet = {
+        ...activeSet,
+        weightModifier: newWeightModifier,
+        weight: weightToSet,
+        weightExplicit: true,
+        // Do NOT clear the set modifier (warmup)
+      };
+
+      const newExercises = replaceSet(
+        exercises,
+        exerciseIndex,
+        setIndex,
+        newSet,
+      );
+
+      // Determine inputValue based on the *new* state of the set
+      let newInputValue = "";
+      if (newSet.weightModifier === "bodyweight") {
+        newInputValue = String(newSet.weight ?? 0); // Show the number for BW input
+      } else {
+        newInputValue = String(newSet.weight ?? ""); // Show number or empty otherwise
+      }
+
+      // Log the state *after* the update for this specific set
+      console.log(
+        "[Reducer: TOGGLE_BODYWEIGHT] Updated set:",
+        newExercises[exerciseIndex]?.sets[setIndex],
+      );
+
+      return {
+        ...state,
+        exercises: newExercises,
+        inputValue: newInputValue,
+        isFirstInteraction: true,
+      };
+    }
+
     case "DELETE_SET": {
       const { exerciseIndex, setIndex } = action;
       const ex = state.exercises[exerciseIndex];
@@ -481,7 +695,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         reps: null,
       };
       const newSet: WorkoutSet = {
-        id: Date.now(),
+        id: exPrev.sets.length,
         weight: null,
         reps: null,
         completed: false,
@@ -624,8 +838,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return { ...state, exercises: newExercises };
     }
 
-    default:
+    default: {
+      // https://github.com/typescript-eslint/typescript-eslint/issues/6100
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const exhaustiveCheck: never = action;
       return state;
+    }
   }
 };
 
@@ -660,20 +878,47 @@ export const displayWeight = (
   sets: WorkoutSet[],
   idx: number,
   exercise?: WorkoutExercise,
-): number | null =>
-  set.weightExplicit || set.completed
-    ? set.weight
-    : estimateSet(sets, idx, exercise).weight;
+): number | null => {
+  // If bodyweight modifier is active, ALWAYS return the current set's weight value
+  if (set.weightModifier === "bodyweight") {
+    return set.weight;
+  }
+
+  // Return explicit/completed weight
+  if (set.weightExplicit || set.completed) return set.weight;
+
+  // Need exercise to estimate
+  if (!exercise) return null;
+
+  try {
+    // Get estimated weight with error handling
+    return estimateSet(sets, idx, exercise).weight;
+  } catch (error) {
+    console.error("Error estimating weight:", error);
+    return null;
+  }
+};
 
 export const displayReps = (
   set: WorkoutSet,
   sets: WorkoutSet[],
   idx: number,
   exercise?: WorkoutExercise,
-): number | null =>
-  set.repsExplicit || set.completed
-    ? set.reps
-    : estimateSet(sets, idx, exercise).reps;
+): number | null => {
+  // Return explicit/completed reps
+  if (set.repsExplicit || set.completed) return set.reps;
+
+  // Need exercise to estimate
+  if (!exercise) return null;
+
+  try {
+    // Get estimated reps with error handling
+    return estimateSet(sets, idx, exercise).reps;
+  } catch (error) {
+    console.error("Error estimating reps:", error);
+    return null;
+  }
+};
 
 // Centralised helper so every input mutation goes through same path
 const applyInput = (
@@ -681,9 +926,10 @@ const applyInput = (
   newVal: string,
   isFirstInteraction = false,
 ): Workout => {
-  const { exerciseIndex, setIndex, field } = state.activeField;
+  const { activeField, exercises } = state;
+  const { exerciseIndex, setIndex, field } = activeField;
   if (exerciseIndex == null || setIndex == null || field == null) return state;
-  const ex = state.exercises[exerciseIndex];
+  const ex = exercises[exerciseIndex];
   if (!ex) return state;
   const set = ex.sets[setIndex];
   if (!set) return state;
@@ -699,7 +945,7 @@ const applyInput = (
     [`${field}Explicit`]: true,
   };
   const newExercises = replaceSet(
-    state.exercises,
+    exercises,
     exerciseIndex,
     setIndex,
     updatedSet,
@@ -714,12 +960,13 @@ const applyInput = (
 
 // Handle "Next" navigation (weight ➔ reps ➔ next set/close)
 const handleNext = (state: Workout): Workout => {
-  const { exerciseIndex, setIndex, field } = state.activeField;
+  const { activeField, exercises } = state;
+  const { exerciseIndex, setIndex, field } = activeField;
   if (exerciseIndex == null || setIndex == null || field == null) return state;
 
   if (field === "weight") {
     // When moving from weight to reps, get the current rep value (explicit or estimated)
-    const ex = state.exercises[exerciseIndex];
+    const ex = exercises[exerciseIndex];
     if (!ex) return state;
     const set = ex.sets[setIndex];
     if (!set) return state;
@@ -776,39 +1023,37 @@ const handleNext = (state: Workout): Workout => {
 export function finalizeWorkout(
   state: Workout,
   workoutName: string,
-  notes?: string,
+  workoutNotesText?: string,
   duration?: number,
 ): CompletedWorkout {
-  const now = new Date();
+  const completedExercises: CompletedExercise[] = state.exercises
+    .map((ex) => {
+      const completedSets: CompletedSet[] = ex.sets.map((set, index) => ({
+        weight: set.weight,
+        reps: set.reps,
+        modifier: set.modifier,
+        weightModifier: set.weightModifier, // Include weight modifier
+        order: index + 1,
+        completed: set.completed,
+      }));
+      // Filter out exercises with no completed sets? Maybe not, keep all attempted.
+      // .filter(set => set.completed);
 
-  // Create a note from the provided notes string if available
-  const workoutNotes: Note[] = notes
-    ? [
-        {
-          text: notes,
-        },
-      ]
-    : [];
+      return {
+        id: String(ex.id), // Assuming id is number, convert to string if needed
+        name: ex.name,
+        sets: completedSets,
+        notes: ex.notes, // Keep exercise notes
+      };
+    })
+    // Optionally filter exercises that had no sets attempted/completed
+    .filter((ex) => ex.sets.length > 0);
 
   return {
     name: workoutName,
-    date: now.toISOString(),
-    notes: [...state.notes, ...workoutNotes],
-    duration,
-    exercises: state.exercises
-      .map((exercise) => ({
-        name: exercise.name,
-        notes: exercise.notes,
-        sets: exercise.sets
-          .filter((set) => set.completed)
-          .map((set, index) => ({
-            weight: set.weight,
-            reps: set.reps,
-            completed: set.completed,
-            order: index,
-            modifier: set.modifier,
-          })),
-      }))
-      .filter((exercise) => exercise.sets.length > 0), // Only include exercises with completed sets
+    date: new Date().toISOString(),
+    duration: duration,
+    notes: workoutNotesText ? [{ text: workoutNotesText }] : [], // Use provided workout notes
+    exercises: completedExercises,
   };
 }

@@ -1,6 +1,9 @@
 "use client";
 import React, { useReducer, useState, useRef, useEffect } from "react";
 import type { TouchEvent } from "react";
+import { useRouter } from "next/navigation";
+import { useUser } from "@clerk/nextjs";
+import { toast } from "sonner";
 import { H4 } from "@/components/ui/typography";
 import {
   Table,
@@ -35,6 +38,8 @@ import {
   Save,
   Clipboard,
   CheckCircle,
+  Loader2,
+  User,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -59,7 +64,10 @@ import {
   type ActiveField,
   type CompletedWorkout,
   type Note,
+  type WeightModifier,
+  type SetModifier,
 } from "@/lib/workoutLogic";
+import { api } from "@/trpc/react";
 
 // Keyboard Container Component
 interface KeyboardContainerProps {
@@ -88,6 +96,8 @@ interface KeyboardButtonProps {
   className?: string;
   gridArea: string;
   variant?: "default" | "outline" | "primary";
+  isActive?: boolean;
+  disabled?: boolean;
 }
 
 const KeyboardButton = ({
@@ -97,6 +107,8 @@ const KeyboardButton = ({
   className,
   gridArea,
   variant = "outline",
+  isActive = false,
+  disabled = false,
 }: KeyboardButtonProps) => {
   return (
     <div className="h-full w-full" style={{ gridArea }}>
@@ -105,9 +117,12 @@ const KeyboardButton = ({
         className={cn(
           "h-full w-full",
           variant === "primary" && "bg-primary hover:bg-primary/90",
+          isActive &&
+            "ring-primary ring-offset-background ring-2 ring-offset-2",
           className,
         )}
         onClick={() => onKeyPress(value)}
+        disabled={disabled}
       >
         {children}
       </Button>
@@ -119,10 +134,14 @@ const KeyboardButton = ({
 const Keyboard = ({
   onKeyPress,
   inputType,
+  activeSetWeightModifier,
 }: {
   onKeyPress: (value: string) => void;
   inputType: "weight" | "reps";
+  activeSetWeightModifier?: WeightModifier;
 }) => {
+  const isBwActive = activeSetWeightModifier === "bodyweight";
+
   return (
     <KeyboardContainer>
       <div
@@ -133,7 +152,7 @@ const Keyboard = ({
           gridTemplateAreas: `
             "btn1  btn2  btn3  collapse"
             "btn4  btn5  btn6  minus-plus"
-            "btn7  btn8  btn9  empty"
+            "btn7  btn8  btn9  bw-sign"
             "decimal btn0 backspace next"
           `,
           height: "300px",
@@ -214,8 +233,34 @@ const Keyboard = ({
           </KeyboardButton>
         </div>
 
-        {/* Empty slot */}
-        <div style={{ gridArea: "empty" }}></div>
+        {/* Combined BW and Sign Toggle buttons (conditional) */}
+        {inputType === "weight" ? (
+          <div
+            className="grid grid-cols-2 gap-2"
+            style={{ gridArea: "bw-sign" }}
+          >
+            {/* Bodyweight button */}
+            <KeyboardButton
+              onKeyPress={onKeyPress}
+              value="bw"
+              gridArea=""
+              isActive={isBwActive}
+            >
+              BW
+            </KeyboardButton>
+            {/* Sign Toggle button */}
+            <KeyboardButton
+              onKeyPress={onKeyPress}
+              value="toggle-sign"
+              gridArea=""
+              disabled={!isBwActive}
+            >
+              +/-
+            </KeyboardButton>
+          </div>
+        ) : (
+          <div style={{ gridArea: "bw-sign" }}></div>
+        )}
 
         {/* Next button */}
         <KeyboardButton
@@ -232,24 +277,19 @@ const Keyboard = ({
   );
 };
 
-// Add success class variants for Tailwind
-const successVariants = {
-  outline:
-    "border-success/20 text-success hover:bg-success/10 hover:text-success",
-  success: "bg-success text-success-foreground hover:bg-success/90",
-  successLight: "bg-success/10 text-success hover:bg-success/20",
-};
-
+// Type definition for data structure expected from previous workouts or templates
 interface PreviousExerciseData {
   name: string;
   sets: Array<{
     weight: number | null;
     reps: number | null;
-    isWarmup?: boolean;
+    isWarmup?: boolean; // Keep for potential backward compatibility if templates use it
+    modifier?: SetModifier; // Explicitly use SetModifier type
+    weightModifier?: WeightModifier | null; // Add weightModifier (allow null from DB)
   }>;
 }
 
-export default function Workout({
+export default function WorkoutComponent({
   workoutName = "Today's Workout",
   exercises: previousExercises = [
     {
@@ -280,18 +320,27 @@ export default function Workout({
   ],
   minReps = 8,
   maxReps = 12,
-  onWorkoutComplete,
 }: {
   workoutName?: string;
   exercises?: PreviousExerciseData[];
   minReps?: number;
   maxReps?: number;
-  onWorkoutComplete?: (workout: CompletedWorkout) => void;
 }) {
+  const router = useRouter();
+  const { user, isLoaded: isUserLoaded } = useUser();
+
   // Initialize workout state with the reducer
   const initialState: Workout = {
     currentExerciseIndex: 0,
-    exercises: initialiseExercises(previousExercises),
+    exercises: initialiseExercises(
+      (previousExercises ?? []).map((ex) => ({
+        ...ex,
+        sets: ex.sets.map((set) => ({
+          ...set,
+          weightModifier: set.weightModifier ?? undefined,
+        })),
+      })),
+    ),
     activeField: { exerciseIndex: null, setIndex: null, field: null },
     inputValue: "",
     isFirstInteraction: false,
@@ -332,10 +381,6 @@ export default function Workout({
 
   // State for finish workout dialog
   const [finishDialogOpen, setFinishDialogOpen] = useState(false);
-  const [workoutNotes, setWorkoutNotes] = useState("");
-  const [workoutDuration, setWorkoutDuration] = useState<number | undefined>(
-    undefined,
-  );
   const [finishedWorkout, setFinishedWorkout] =
     useState<CompletedWorkout | null>(null);
 
@@ -345,55 +390,45 @@ export default function Workout({
   // State for showing/hiding workout notes
   const [showWorkoutNotes, setShowWorkoutNotes] = useState(false);
 
+  // State for showing debug data
+  const [showDebugData, setShowDebugData] = useState(false);
+
+  // tRPC Mutation for saving the workout
+  const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
+    onSuccess: (data) => {
+      toast.success("Workout saved successfully!");
+    },
+    onError: (error) => {
+      console.error("Failed to save workout:", error);
+      toast.error(`Error saving workout: ${error.message}`);
+      setFinishedWorkout(null);
+    },
+  });
+
   // Function to update workout notes
   const updateWorkoutNote = (text: string) => {
-    // For simplicity, we'll just update the first note or create one if it doesn't exist
-    dispatch({
-      type: "ADD_WORKOUT_NOTE",
-      text,
-    });
+    dispatch({ type: "ADD_WORKOUT_NOTE", text });
   };
 
-  // Get the current workout note text
   const getWorkoutNoteText = () => {
-    if (!state.notes || state.notes.length === 0) {
-      return "";
-    }
-    const note = state.notes[0];
-    return note?.text ?? "";
+    return state.notes[0]?.text ?? "";
   };
 
-  // Function to toggle note visibility for a specific exercise
   const toggleNoteVisibility = (exerciseId: number) => {
-    setShowNotes((prev) => ({
-      ...prev,
-      [exerciseId]: !prev[exerciseId],
-    }));
+    setShowNotes((prev) => ({ ...prev, [exerciseId]: !prev[exerciseId] }));
   };
 
-  // Function to update notes for an exercise
   const updateExerciseNote = (exerciseId: number, notes: string) => {
-    dispatch({
-      type: "UPDATE_NOTES",
-      exerciseId,
-      notes,
-    });
+    dispatch({ type: "UPDATE_NOTES", exerciseId, notes });
   };
 
-  // Display notes for an exercise
   const getExerciseNoteText = (exercise: WorkoutExercise) => {
-    if (!exercise?.notes || exercise.notes.length === 0) {
-      return "";
-    }
-    const note = exercise.notes[0];
-    return note?.text ?? "";
+    return exercise.notes[0]?.text ?? "";
   };
 
-  // Delete a set
   const handleDeleteSet = (setId: number) => {
     if (!deleteDialog.setId || !deleteDialog.exerciseId) return;
 
-    // Find which exercise contains this set
     const exerciseIndex = exercises.findIndex(
       (ex) => ex.id === deleteDialog.exerciseId,
     );
@@ -415,7 +450,6 @@ export default function Workout({
       }
     }
 
-    // Close the dialog
     setDeleteDialog({
       isOpen: false,
       setId: null,
@@ -426,7 +460,6 @@ export default function Workout({
     });
   };
 
-  // Open delete confirmation dialog
   const openDeleteDialog = (exerciseId: number, setId: number) => {
     const exercise = exercises.find((ex) => ex.id === exerciseId);
     if (!exercise) return;
@@ -434,7 +467,6 @@ export default function Workout({
     const set = exercise.sets.find((s) => s.id === setId);
     if (!set) return;
 
-    // Calculate working set number (count only non-warmup sets)
     const workingSetNumber =
       exercise.sets
         .filter((s) => s.modifier !== "warmup")
@@ -450,7 +482,17 @@ export default function Workout({
     });
   };
 
-  // Keyboard interaction handler
+  // Helper to get the currently active set for passing to Keyboard
+  const getActiveSet = React.useCallback((): WorkoutSet | null => {
+    if (activeField.exerciseIndex === null || activeField.setIndex === null) {
+      return null;
+    }
+    const exercise = exercises[activeField.exerciseIndex];
+    return exercise?.sets[activeField.setIndex] ?? null;
+  }, [activeField.exerciseIndex, activeField.setIndex, exercises]);
+
+  const activeSet = getActiveSet();
+
   const handleKeyPress = (value: string) => {
     if (value === "backspace") {
       dispatch({ type: "BACKSPACE" });
@@ -462,19 +504,24 @@ export default function Workout({
       dispatch({ type: "PLUS_MINUS", sign: -1 });
     } else if (value === "collapse") {
       dispatch({ type: "COLLAPSE_KEYBOARD" });
+    } else if (value === "bw") {
+      if (state.activeField.field === "weight") {
+        dispatch({ type: "TOGGLE_BODYWEIGHT" });
+      }
+    } else if (value === "toggle-sign") {
+      if (state.activeField.field === "weight") {
+        dispatch({ type: "TOGGLE_SIGN" });
+      }
     } else {
-      // For digits and decimal point
       dispatch({ type: "INPUT_DIGIT", value });
     }
   };
 
-  // UI interaction handlers
   const handleFocus = (
     exerciseId: number,
     setId: number,
     field: "weight" | "reps",
   ) => {
-    // Find indexes from IDs
     const exerciseIndex = exercises.findIndex((ex) => ex.id === exerciseId);
     if (exerciseIndex === -1) return;
 
@@ -568,28 +615,54 @@ export default function Workout({
     e.stopPropagation();
   };
 
-  // Function to handle workout completion
+  // Updated function to handle workout completion and save data
   const handleFinishWorkout = () => {
-    // Calculate duration in seconds
+    if (!user || !isUserLoaded) {
+      toast.error("User not loaded. Cannot save workout.");
+      return;
+    }
+
     const duration = Math.floor((Date.now() - workoutStartTime.current) / 1000);
 
-    // Create the finalized workout object - pass undefined for notes since we're using state.notes
-    const completedWorkout = finalizeWorkout(
+    const finalWorkoutData = finalizeWorkout(
       state,
-      workoutName,
-      undefined, // Don't add additional notes from the dialog
+      workoutName ?? "Workout",
+      getWorkoutNoteText(),
       duration,
     );
 
-    setFinishedWorkout(completedWorkout);
+    setFinishedWorkout(finalWorkoutData);
 
-    // Call the callback if provided
-    if (onWorkoutComplete) {
-      onWorkoutComplete(completedWorkout);
-    }
+    // Prepare data for mutation, ensuring types match Zod schema
+    const mutationInput = {
+      userId: user.id,
+      name: finalWorkoutData.name,
+      completedAt: new Date(),
+      notes:
+        finalWorkoutData.notes.length > 0
+          ? finalWorkoutData.notes[0]?.text
+          : undefined,
+      exercises: finalWorkoutData.exercises.map((ex, exIndex) => ({
+        name: ex.name,
+        order: exIndex,
+        notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
+        sets: ex.sets.map((set, setIndex) => ({
+          order: setIndex,
+          weight: set.weight,
+          reps: set.reps,
+          modifier: set.modifier ?? null,
+          weightModifier: set.weightModifier ?? null,
+          completed: set.completed,
+        })),
+      })),
+    };
 
-    // Close the dialog
-    setFinishDialogOpen(false);
+    // Call the tRPC mutation
+    console.log(
+      "[WorkoutComponent] Data sent to saveWorkout mutation:",
+      JSON.stringify(mutationInput, null, 2),
+    );
+    saveWorkoutMutation.mutate(mutationInput);
   };
 
   // Function to copy workout data to clipboard
@@ -730,10 +803,13 @@ export default function Workout({
 
                   return (
                     <TableRow
-                      key={set.id}
+                      key={index}
                       className={cn(
                         "relative",
                         set.completed && "bg-success/5",
+                        // Add distinct background for bodyweight sets
+                        set.weightModifier === "bodyweight" &&
+                          "bg-blue-100/30 dark:bg-blue-900/20",
                       )}
                       onTouchStart={(e) =>
                         handleTouchStart(e, exercise.id, set.id)
@@ -774,9 +850,44 @@ export default function Workout({
                             set,
                             exercise.sets,
                           );
-                          return prevData.weight && prevData.reps
-                            ? `${prevData.weight}lb × ${prevData.reps}${prevData.weight && set.modifier === "warmup" ? " (W)" : ""}`
-                            : "-";
+
+                          // Handle case where previous data doesn't exist
+                          if (
+                            prevData.weight === null ||
+                            prevData.reps === null
+                          ) {
+                            return "-";
+                          }
+
+                          // Format based on weightModifier
+                          let formattedWeight:
+                            | React.ReactNode
+                            | string
+                            | number = "";
+                          if (prevData.weightModifier === "bodyweight") {
+                            formattedWeight = (
+                              <span className="inline-flex items-center gap-0.5">
+                                {" "}
+                                {/* Inline flex for icon+sign+value */}
+                                <User className="h-2.5 w-2.5 flex-shrink-0" />{" "}
+                                {/* Slightly smaller icon */}
+                                <span className="font-medium">
+                                  {prevData.weight >= 0 ? "+" : "-"}
+                                </span>
+                                <span>{Math.abs(prevData.weight)}</span>
+                              </span>
+                            );
+                          } else {
+                            formattedWeight = `${prevData.weight}lb`;
+                          }
+
+                          // Combine weight, reps, and warmup indicator
+                          return (
+                            <>
+                              {formattedWeight} × {prevData.reps}
+                              {set.modifier === "warmup" ? " (W)" : ""}
+                            </>
+                          );
                         })()}
                       </TableCell>
                       <TableCell className="px-1 py-1">
@@ -787,33 +898,74 @@ export default function Workout({
                               activeField.setIndex === index &&
                               activeField.field === "weight" &&
                               "bg-white ring-2 ring-blue-400",
+                            set.weightModifier === "bodyweight" &&
+                              "border-input border",
                           )}
                         >
                           <div
-                            className="h-full w-full"
+                            className="flex h-full w-full items-center justify-center gap-1 px-1"
                             onClick={() =>
                               handleFocus(exercise.id, set.id, "weight")
                             }
                           >
+                            {/* 1. Icon (Conditional) */}
+                            {set.weightModifier === "bodyweight" && (
+                              <User className="text-muted-foreground h-3 w-3 flex-shrink-0" />
+                            )}
+
+                            {/* 2. Sign (Conditional) */}
+                            {set.weightModifier === "bodyweight" && (
+                              <span className="text-muted-foreground flex-shrink-0 text-sm font-medium">
+                                {
+                                  activeField.exerciseIndex === exerciseIndex &&
+                                  activeField.setIndex === index &&
+                                  activeField.field === "weight"
+                                    ? (parseFloat(inputValue) || 0) >= 0
+                                      ? "+"
+                                      : "-" // Use inputValue if focused
+                                    : (weightValue ?? 0) >= 0
+                                      ? "+"
+                                      : "-" // Use weightValue if not focused
+                                }
+                              </span>
+                            )}
+
+                            {/* 3. Value (Input OR Span) */}
                             {activeField.exerciseIndex === exerciseIndex &&
                             activeField.setIndex === index &&
                             activeField.field === "weight" ? (
+                              // Focused: Render Input
                               <input
                                 type="text"
-                                value={inputValue}
+                                value={
+                                  set.weightModifier === "bodyweight"
+                                    ? String(
+                                        Math.abs(parseFloat(inputValue) || 0),
+                                      )
+                                    : inputValue
+                                }
                                 readOnly
                                 autoFocus
-                                className="h-full w-full rounded bg-transparent px-1 text-center text-sm outline-none"
+                                // Explicitly set inline-block and auto width
+                                className="inline-block h-full w-auto rounded bg-transparent text-center text-sm outline-none"
+                                // Optional: Add a small size attribute for visual hint, though CSS controls actual width
+                                size={inputValue.length + 1}
                               />
                             ) : (
-                              <div
+                              // Not Focused: Render Span
+                              <span
                                 className={cn(
-                                  "flex h-full w-full items-center justify-center text-center text-sm",
-                                  isWeightEstimated && "text-muted-foreground",
+                                  "w-auto",
+                                  // Apply dimming if not completed AND not explicit
+                                  !set.completed &&
+                                    !set.weightExplicit &&
+                                    "text-muted-foreground",
                                 )}
                               >
-                                {weightValue ?? "-"}
-                              </div>
+                                {set.weightModifier === "bodyweight"
+                                  ? String(Math.abs(weightValue ?? 0))
+                                  : (weightValue ?? "-")}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -913,7 +1065,11 @@ export default function Workout({
       ))}
 
       {activeField.exerciseIndex !== null && activeField.field !== null && (
-        <Keyboard onKeyPress={handleKeyPress} inputType={activeField.field} />
+        <Keyboard
+          onKeyPress={handleKeyPress}
+          inputType={activeField.field}
+          activeSetWeightModifier={activeSet?.weightModifier}
+        />
       )}
 
       {deleteDialog.isOpen && (
@@ -981,18 +1137,35 @@ export default function Workout({
       )}
 
       {/* Finish Workout Dialog */}
-      <Dialog open={finishDialogOpen} onOpenChange={setFinishDialogOpen}>
+      <Dialog
+        open={finishDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !saveWorkoutMutation.isPending) {
+            setFinishDialogOpen(false);
+            setFinishedWorkout(null);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Finish Workout</DialogTitle>
             <DialogDescription>
-              Review and save your completed workout.
+              {saveWorkoutMutation.isPending
+                ? "Saving your workout..."
+                : finishedWorkout
+                  ? "Workout Saved!"
+                  : "Review and save your completed workout."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {finishedWorkout ? (
-              // Show workout summary if already finished
+            {saveWorkoutMutation.isPending && (
+              <div className="flex items-center justify-center space-x-2">
+                <Loader2 className="h-6 w-6 animate-spin" />
+                <span>Saving...</span>
+              </div>
+            )}
+            {!saveWorkoutMutation.isPending && finishedWorkout && (
               <div className="space-y-4">
                 <div className="bg-muted rounded-md p-4">
                   <div className="flex items-center justify-between">
@@ -1031,8 +1204,8 @@ export default function Workout({
                   <CheckCircle className="text-success h-12 w-12" />
                 </div>
               </div>
-            ) : (
-              // Show finish form if not yet finished
+            )}
+            {!saveWorkoutMutation.isPending && !finishedWorkout && (
               <div className="space-y-4">
                 <div>
                   <h3 className="text-sm font-medium">Workout Summary</h3>
@@ -1068,35 +1241,86 @@ export default function Workout({
           </div>
 
           <DialogFooter>
-            {!finishedWorkout ? (
+            {saveWorkoutMutation.isPending ? (
+              // Saving State
+              <Button disabled className="w-full">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </Button>
+            ) : finishedWorkout ? (
+              // Success State
+              <Button
+                onClick={() => {
+                  setFinishDialogOpen(false);
+                  setFinishedWorkout(null); // Reset summary state
+                  router.push("/"); // <-- Navigate to home page
+                }}
+                className="w-full"
+              >
+                Done
+              </Button>
+            ) : (
+              // Initial/Error State
               <>
                 <Button
                   variant="outline"
                   onClick={() => setFinishDialogOpen(false)}
+                  disabled={saveWorkoutMutation.isPending}
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleFinishWorkout}>Save Workout</Button>
+                <Button
+                  onClick={handleFinishWorkout}
+                  disabled={saveWorkoutMutation.isPending}
+                >
+                  Save Workout
+                </Button>
               </>
-            ) : (
-              <Button onClick={() => setFinishDialogOpen(false)}>Close</Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Debug Panel - For development purposes */}
+      <div className="mt-8 rounded-md border border-gray-300 p-2">
+        <div
+          className="flex cursor-pointer items-center justify-between p-2"
+          onClick={() => setShowDebugData(!showDebugData)}
+        >
+          <h3 className="text-sm font-semibold">Debug Data</h3>
+          <ChevronDown
+            className={`h-4 w-4 transform transition-transform ${showDebugData ? "rotate-180" : ""}`}
+          />
+        </div>
+
+        {showDebugData && (
+          <div className="mt-2 max-h-[500px] overflow-auto">
+            <pre className="text-xs break-words whitespace-pre-wrap">
+              {JSON.stringify(
+                {
+                  state,
+                  finishedWorkout,
+                  initialExercises: previousExercises,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // Format seconds to HH:MM:SS or MM:SS format
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
-  } else {
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+function formatDuration(sec: number) {
+  // falls back for older browsers
+  if ((Intl as any).DurationFormat) {
+    const df = new (Intl as any).DurationFormat("en-US");
+    return df.format({ seconds: sec });
   }
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
