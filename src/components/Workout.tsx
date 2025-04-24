@@ -25,14 +25,11 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Keyboard as KeyboardIcon,
-  ChevronLeft,
   Plus,
   Minus,
   Delete,
   ChevronDown,
   Check,
-  ChevronRight,
-  Trash2,
   MoreVertical,
   MessageSquare,
   Save,
@@ -246,7 +243,7 @@ const Keyboard = ({
               gridArea=""
               isActive={isBwActive}
             >
-              BW
+              <User size={24} />
             </KeyboardButton>
             {/* Sign Toggle button */}
             <KeyboardButton
@@ -291,40 +288,10 @@ interface PreviousExerciseData {
 
 export default function WorkoutComponent({
   workoutName = "Today's Workout",
-  exercises: previousExercises = [
-    {
-      name: "Squat (Barbell)",
-      sets: [
-        { weight: 45, reps: 20, isWarmup: true },
-        { weight: 135, reps: 8, isWarmup: false },
-        { weight: 135, reps: 8, isWarmup: false },
-      ],
-    },
-    {
-      name: "Bench Press",
-      sets: [
-        { weight: 45, reps: 15, isWarmup: true },
-        { weight: 135, reps: 12, isWarmup: false },
-        { weight: 145, reps: 8, isWarmup: false },
-        { weight: 155, reps: 6, isWarmup: false },
-      ],
-    },
-    {
-      name: "Incline Press",
-      sets: [
-        { weight: 45, reps: 15, isWarmup: true },
-        { weight: 115, reps: 10, isWarmup: false },
-        { weight: 115, reps: 9, isWarmup: false },
-      ],
-    },
-  ],
-  minReps = 8,
-  maxReps = 12,
+  exercises: previousExercises,
 }: {
   workoutName?: string;
   exercises?: PreviousExerciseData[];
-  minReps?: number;
-  maxReps?: number;
 }) {
   const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
@@ -427,7 +394,7 @@ export default function WorkoutComponent({
   };
 
   const handleDeleteSet = (setId: number) => {
-    if (!deleteDialog.setId || !deleteDialog.exerciseId) return;
+    if (deleteDialog.setId === null || deleteDialog.exerciseId === null) return;
 
     const exerciseIndex = exercises.findIndex(
       (ex) => ex.id === deleteDialog.exerciseId,
@@ -1124,10 +1091,13 @@ export default function WorkoutComponent({
               </Button>
               <Button
                 variant="destructive"
-                onClick={() =>
-                  deleteDialog.setId && handleDeleteSet(deleteDialog.setId)
-                }
+                onClick={() => {
+                  if (deleteDialog.setId !== null) {
+                    handleDeleteSet(deleteDialog.setId.toString());
+                  }
+                }}
                 className="px-6"
+                disabled={deleteDialog.setId === null}
               >
                 Delete
               </Button>

@@ -69,12 +69,10 @@ export default function HomePage() {
   };
 
   const handleSelectTemplate = (templateId: string) => {
-    console.log(`Selected template: ${templateId}`);
     router.push(`/workout?templateId=${templateId}`);
   };
 
   const handleSelectRecent = (workoutId: number) => {
-    console.log(`Selected recent workout: ${workoutId}`);
     // Navigate to workout page, initializing based on the selected workout ID
     router.push(`/workout?basedOn=${workoutId}`);
   };

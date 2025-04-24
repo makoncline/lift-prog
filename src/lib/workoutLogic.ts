@@ -644,12 +644,6 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         newInputValue = String(newSet.weight ?? ""); // Show number or empty otherwise
       }
 
-      // Log the state *after* the update for this specific set
-      console.log(
-        "[Reducer: TOGGLE_BODYWEIGHT] Updated set:",
-        newExercises[exerciseIndex]?.sets[setIndex],
-      );
-
       return {
         ...state,
         exercises: newExercises,

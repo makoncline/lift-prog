@@ -44,13 +44,6 @@ export function RestTimer({ className }: RestTimerProps) {
   // Audio notification ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize audio on client-side only
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      audioRef.current = new Audio("/sounds/timer-complete.mp3");
-    }
-  }, []);
-
   // Check notification permission on mount
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -210,6 +203,12 @@ export function RestTimer({ className }: RestTimerProps) {
 
   return (
     <>
+      <audio
+        ref={audioRef}
+        src="/sounds/timer-complete.mp3"
+        preload="auto"
+        hidden
+      />
       <Button
         variant={
           timerRunning ? "default" : timerCompleted ? "destructive" : "outline"

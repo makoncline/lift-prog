@@ -7,6 +7,7 @@ import {
   Plus,
   Minus,
   Delete,
+  User,
 } from "lucide-react";
 import { type WeightModifier } from "@/lib/workoutLogic";
 
@@ -189,7 +190,7 @@ export function NumericKeyboard({
               gridArea=""
               isActive={isBwActive}
             >
-              BW
+              <User size={24} />
             </KeyboardButton>
             {/* Sign toggle button */}
             <KeyboardButton
