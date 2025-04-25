@@ -80,7 +80,7 @@ const KeyboardContainer = ({ children, className }: KeyboardContainerProps) => {
   return (
     <div
       className={cn(
-        "bg-background border-border fixed right-0 bottom-0 left-0 border-t p-4",
+        "bg-background border-border fixed right-0 bottom-0 left-0 mx-auto max-w-md border-t p-4",
         className,
       )}
     >
