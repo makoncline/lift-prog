@@ -8,8 +8,8 @@ Workouts begin at a minimum of 8 reps per set. If the user successfully complete
 
 ## Feature Roadmap
 
-- [ ] Predefined workout template: Push and Pull
-- [ ] Exercise and set management
+- [x] Predefined workout template: Push and Pull (hardcoded for now)
+- [x] Exercise and set management
   - [x]     init with same number of sets as last time the exercise was done in a workout
   - [x]     if no previous workout data exists, initialize with one default set
   - [x]     show the previous workout weight x reps for each set
@@ -25,27 +25,29 @@ Workouts begin at a minimum of 8 reps per set. If the user successfully complete
   - [x]     After completing the last set, the keyboard should close
   - [x]     display "-" when values are null/undefined
   - [x]     visually distinguish between explicitly set values and estimated values
-- [ ] Rep progression scheme (8 → 12 reps)
-- [ ] Automatic weight adjustment after max reps
-- [ ] User interface for tracking workouts and progress
-- [ ] Persistent workout history
-- [ ] Edit weight and reps of each set while doing workout
-- [ ] Option to skip a set
-- [ ] Option to add a set
+- [x] Rep progression scheme (8 → 12 reps)
+- [x] Automatic weight adjustment after max reps
+- [x] User interface for tracking workouts and progress
+- [x] Persistent workout history
+- [x] Edit weight and reps of each set while doing workout
+- [x] Option to delete a set
+- [x] Option to add a set
 - [ ] Add an exercise to a workout
 - [ ] Select difficulty of a set
 - [ ] - and − to increment reps
 - [ ] Input weight by selecting bar type and plates per side
-- [ ] - and − to increment weight by 2.5
+- [x] - and − to increment weight by 2.5
 - [ ] Calculate weight by doing addition
-- [ ] Option for body weight
-- [ ] Option for body weight plus and minus modifications
-- [ ] Option to repeat same number of reps next workout
-- [ ] Workout timer
-- [ ] Workout notes
-- [ ] Exercise notes
+- [x] Option for body weight
+- [x] Option for body weight plus and minus modifications
+- [x] Option to repeat same number of reps next workout
+- [x] Workout timer
+- [x] Workout notes
+- [x] Exercise notes
 - [ ] Add/remove warm-up sets
 - [ ] Option for auto rest timer
+- [ ] weight estimates should include body weight
+- [ ] edit workout name, completion time, duration
 
 ## Workouts to start
 

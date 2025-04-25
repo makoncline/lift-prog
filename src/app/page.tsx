@@ -34,8 +34,31 @@ import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
 interface RecentWorkoutItem {
   id: number;
   name: string;
-  completedAt: Date | null; // completedAt can be null theoretically, though query filters
+  completedAt: Date | null;
+  startedAt: Date;
 }
+
+// Helper function to format date and time
+const formatDateTime = (date: Date): { dateStr: string; timeStr: string } => {
+  // Format date as MM/DD/YY
+  const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${String(date.getFullYear()).slice(2)}`;
+
+  // Format time as h:MMam/pm
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const period = hours >= 12 ? "pm" : "am";
+  const displayHours = hours % 12 || 12; // Convert 0 to 12 for 12am
+
+  const timeStr = `${displayHours}:${minutes}${period}`;
+
+  return { dateStr, timeStr };
+};
+
+// Calculate workout duration in minutes
+const calculateDuration = (startDate: Date, endDate: Date): number => {
+  const durationMs = endDate.getTime() - startDate.getTime();
+  return Math.round(durationMs / (1000 * 60)); // Convert ms to minutes
+};
 
 export default function HomePage() {
   // Renamed component
@@ -120,11 +143,31 @@ export default function HomePage() {
           ) : recentWorkoutsQuery.data &&
             recentWorkoutsQuery.data.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {recentWorkoutsQuery.data.map((workout: RecentWorkoutItem) => (
+              {recentWorkoutsQuery.data.map((workout) => (
                 <Card key={workout.id}>
-                  <CardHeader>
+                  <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
-                      <CardTitle>{workout.name}</CardTitle>
+                      <div className="space-y-1">
+                        {workout.completedAt && (
+                          <p className="text-muted-foreground text-sm font-medium">
+                            {
+                              formatDateTime(new Date(workout.completedAt))
+                                .dateStr
+                            }{" "}
+                            @{" "}
+                            {
+                              formatDateTime(new Date(workout.completedAt))
+                                .timeStr
+                            }
+                          </p>
+                        )}
+                        <CardTitle>{workout.name}</CardTitle>
+                        <p className="text-muted-foreground text-sm">
+                          {workout.completedAt
+                            ? `${calculateDuration(new Date(workout.startedAt), new Date(workout.completedAt))} mins`
+                            : "In progress"}
+                        </p>
+                      </div>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -135,16 +178,7 @@ export default function HomePage() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <P className="text-muted-foreground text-sm">
-                      Completed on:{" "}
-                      {workout.completedAt
-                        ? new Date(workout.completedAt).toLocaleDateString()
-                        : "N/A"}
-                    </P>
-                    {/* TODO: Maybe show exercise count later */}
-                  </CardContent>
-                  <CardFooter>
+                  <CardFooter className="pt-2">
                     <Button
                       variant="outline"
                       onClick={() => handleSelectRecent(workout.id)}

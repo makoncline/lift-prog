@@ -26,6 +26,7 @@ const CompletedWorkoutSchema = z.object({
   name: z.string(),
   notes: z.string().optional(),
   completedAt: z.date(),
+  startedAt: z.date(),
   exercises: z.array(CompletedExerciseSchema),
 });
 
@@ -33,7 +34,7 @@ export const workoutRouter = createTRPCRouter({
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
     .mutation(async ({ ctx, input }) => {
-      const { userId, name, exercises, notes, completedAt } = input;
+      const { userId, name, exercises, notes, completedAt, startedAt } = input;
       const prisma = ctx.db; // Use prisma client from context
 
       if (ctx.session?.userId !== userId) {
@@ -66,6 +67,7 @@ export const workoutRouter = createTRPCRouter({
             name: name,
             notes: notes,
             completedAt: completedAt,
+            startedAt: startedAt,
           },
         });
 
@@ -130,6 +132,7 @@ export const workoutRouter = createTRPCRouter({
           id: true,
           name: true,
           completedAt: true,
+          startedAt: true, // Add startedAt to calculate duration
         },
         orderBy: {
           completedAt: "desc",

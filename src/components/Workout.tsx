@@ -370,12 +370,42 @@ export default function WorkoutComponent({
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editableName, setEditableName] = useState(workoutName);
+  const [editableDate, setEditableDate] = useState(() => {
+    const now = new Date();
+    return now.toISOString().split("T")[0]; // YYYY-MM-DD format
+  });
+  const [editableTime, setEditableTime] = useState(() => {
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  });
+  const [editableDuration, setEditableDuration] = useState<string>("60");
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Handle workout name update
   const handleWorkoutNameUpdate = () => {
     if (editableName.trim()) {
+      // Update state name
       dispatch({ type: "UPDATE_WORKOUT_NAME", name: editableName });
+
+      // Calculate and update start time based on duration
+      if (editableDuration && editableDate && editableTime) {
+        const durationMs = parseInt(editableDuration, 10) * 60 * 1000;
+        const completionDate = getCompletionDate();
+
+        // Set the start time to completion time minus duration
+        const startTime = completionDate.getTime() - durationMs;
+
+        // Update the current workout start time for duration calculations
+        workoutStartTime.current = startTime;
+
+        console.log(`[Workout] Updated workout timing:
+          Completion Date: ${completionDate.toISOString()}
+          Duration: ${editableDuration} minutes
+          Calculated Start: ${new Date(startTime).toISOString()}`);
+      }
+
       setIsEditingName(false);
     } else {
       setEditableName(state.name);
@@ -681,21 +711,34 @@ export default function WorkoutComponent({
       return;
     }
 
-    const duration = Math.floor((Date.now() - workoutStartTime.current) / 1000);
+    // Calculate duration from input or use elapsed time
+    const durationInSeconds = editableDuration
+      ? parseInt(editableDuration, 10) * 60
+      : Math.floor((Date.now() - workoutStartTime.current) / 1000);
 
     const finalWorkoutData = finalizeWorkout(
       state,
       getWorkoutNoteText(),
-      duration,
+      durationInSeconds,
     );
 
     setFinishedWorkout(finalWorkoutData);
+
+    // Create completion date from date and time inputs
+    const completionDate = getCompletionDate();
+
+    // Calculate the proper start time by subtracting duration from completion time
+    // This ensures the duration is correctly represented in the database
+    const startTime = new Date(
+      completionDate.getTime() - durationInSeconds * 1000,
+    );
 
     // Prepare data for mutation, ensuring types match Zod schema
     const mutationInput = {
       userId: user.id,
       name: finalWorkoutData.name,
-      completedAt: new Date(),
+      completedAt: completionDate,
+      startedAt: startTime, // Add startedAt to the mutation input
       notes:
         finalWorkoutData.notes.length > 0
           ? finalWorkoutData.notes[0]?.text
@@ -732,6 +775,29 @@ export default function WorkoutComponent({
       .catch((err) => console.error("Failed to copy to clipboard:", err));
   };
 
+  // Create completion date from date and time inputs
+  const getCompletionDate = () => {
+    let completionDate = new Date();
+    if (editableDate) {
+      // Parse date components with fallbacks
+      const dateComponents = editableDate
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      const timeComponents = editableTime
+        .split(":")
+        .map((n) => parseInt(n, 10));
+
+      const year = dateComponents[0] ?? completionDate.getFullYear();
+      const month = dateComponents[1] ?? 1;
+      const day = dateComponents[2] ?? 1;
+      const hours = timeComponents[0] ?? 0;
+      const minutes = timeComponents[1] ?? 0;
+
+      completionDate = new Date(year, month - 1, day, hours, minutes);
+    }
+    return completionDate;
+  };
+
   return (
     <div className="container mx-auto max-w-md p-2 pb-[340px]">
       {showRestore && !autoRestore && (
@@ -758,19 +824,74 @@ export default function WorkoutComponent({
       <div className="flex flex-col">
         <div className="mb-2 flex items-center justify-between">
           {isEditingName ? (
-            <div className="flex w-full max-w-[240px] items-center gap-2">
-              <Input
-                ref={nameInputRef}
-                value={editableName}
-                onChange={(e) => setEditableName(e.target.value)}
-                onBlur={handleWorkoutNameUpdate}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleWorkoutNameUpdate();
-                  }
-                }}
-                className="h-9"
-              />
+            <div className="flex w-full flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Input
+                  ref={nameInputRef}
+                  value={editableName}
+                  onChange={(e) => setEditableName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleWorkoutNameUpdate();
+                    }
+                  }}
+                  className="h-9"
+                  placeholder="Workout name"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-2"
+                  onClick={() => setIsEditingName(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label htmlFor="date" className="text-xs font-medium">
+                    Date
+                  </label>
+                  <Input
+                    id="date"
+                    type="date"
+                    value={editableDate}
+                    onChange={(e) => setEditableDate(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="time" className="text-xs font-medium">
+                    Time
+                  </label>
+                  <Input
+                    id="time"
+                    type="time"
+                    value={editableTime}
+                    onChange={(e) => setEditableTime(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="duration" className="text-xs font-medium">
+                  Duration (minutes)
+                </label>
+                <Input
+                  id="duration"
+                  type="number"
+                  value={editableDuration}
+                  onChange={(e) => setEditableDuration(e.target.value)}
+                  className="h-9"
+                  min="1"
+                  step="1"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={handleWorkoutNameUpdate}>
+                  Save Details
+                </Button>
+              </div>
             </div>
           ) : (
             <div
@@ -1274,6 +1395,22 @@ export default function WorkoutComponent({
                       {formatDuration(finishedWorkout.duration ?? 0)}
                     </p>
                     <p>
+                      <span className="font-medium">Start:</span>{" "}
+                      {(() => {
+                        const completionDate = new Date(finishedWorkout.date);
+                        const durationMs =
+                          (finishedWorkout.duration ?? 0) * 1000;
+                        const startTime = new Date(
+                          completionDate.getTime() - durationMs,
+                        );
+                        return `${startTime.toLocaleDateString()} ${startTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+                      })()}
+                    </p>
+                    <p>
+                      <span className="font-medium">Finish:</span>{" "}
+                      {`${new Date(finishedWorkout.date).toLocaleDateString()} ${new Date(finishedWorkout.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                    </p>
+                    <p>
                       <span className="font-medium">Exercises:</span>{" "}
                       {finishedWorkout.exercises.length}
                     </p>
@@ -1316,11 +1453,33 @@ export default function WorkoutComponent({
                     <p>
                       <span className="font-medium">Duration:</span>{" "}
                       {formatDuration(
-                        Math.floor(
-                          (Date.now() - workoutStartTime.current) / 1000,
-                        ),
+                        editableDuration
+                          ? parseInt(editableDuration, 10) * 60
+                          : Math.floor(
+                              (Date.now() - workoutStartTime.current) / 1000,
+                            ),
                       )}
                     </p>
+                    {editableDate && (
+                      <>
+                        <p>
+                          <span className="font-medium">Start:</span>{" "}
+                          {(() => {
+                            const completionDate = getCompletionDate();
+                            const durationMs =
+                              parseInt(editableDuration || "0", 10) * 60 * 1000;
+                            const startTime = new Date(
+                              completionDate.getTime() - durationMs,
+                            );
+                            return `${startTime.toLocaleDateString()} ${startTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+                          })()}
+                        </p>
+                        <p>
+                          <span className="font-medium">Finish:</span>{" "}
+                          {`${getCompletionDate().toLocaleDateString()} ${getCompletionDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
