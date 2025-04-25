@@ -397,6 +397,7 @@ export type Action =
   | { type: "ADD_EXERCISE_NOTE"; exerciseId: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
   | { type: "UPDATE_NOTES"; exerciseId: number; notes: string }
+  | { type: "UPDATE_WORKOUT_NAME"; name: string }
   | { type: "REPLACE_STATE"; state: Workout };
 
 // --------------------------- Reducer -----------------------------------
@@ -416,6 +417,11 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
   switch (action.type) {
     case "REPLACE_STATE":
       return action.state;
+    case "UPDATE_WORKOUT_NAME":
+      return {
+        ...state,
+        name: action.name,
+      };
     case "FOCUS_FIELD": {
       const { exerciseIndex, setIndex, field } = action;
       const ex = state.exercises[exerciseIndex];
@@ -975,7 +981,6 @@ const handleNext = (state: Workout): Workout => {
  */
 export function finalizeWorkout(
   state: Workout,
-  workoutName: string,
   workoutNotesText?: string,
   duration?: number,
 ): CompletedWorkout {
@@ -1003,7 +1008,7 @@ export function finalizeWorkout(
     .filter((ex) => ex.sets.length > 0);
 
   return {
-    name: workoutName,
+    name: state.name,
     date: new Date().toISOString(),
     duration: duration,
     notes: workoutNotesText ? [{ text: workoutNotesText }] : [], // Use provided workout notes

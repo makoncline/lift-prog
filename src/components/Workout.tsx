@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   Keyboard as KeyboardIcon,
@@ -37,6 +38,7 @@ import {
   CheckCircle,
   Loader2,
   User,
+  Edit2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -366,6 +368,32 @@ export default function WorkoutComponent({
 
   const [state, dispatch] = useReducer(workoutReducer, initialState);
   const [showRestore, setShowRestore] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editableName, setEditableName] = useState(workoutName);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Handle workout name update
+  const handleWorkoutNameUpdate = () => {
+    if (editableName.trim()) {
+      dispatch({ type: "UPDATE_WORKOUT_NAME", name: editableName });
+      setIsEditingName(false);
+    } else {
+      setEditableName(state.name);
+      setIsEditingName(false);
+    }
+  };
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (isEditingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+    }
+  }, [isEditingName]);
+
+  // Additional useEffect to update editable name when workoutName prop changes
+  useEffect(() => {
+    setEditableName(workoutName);
+  }, [workoutName]);
 
   // Handle restoring workout from localStorage
   const handleRestore = () => {
@@ -657,7 +685,6 @@ export default function WorkoutComponent({
 
     const finalWorkoutData = finalizeWorkout(
       state,
-      workoutName ?? "Workout",
       getWorkoutNoteText(),
       duration,
     );
@@ -730,7 +757,30 @@ export default function WorkoutComponent({
       </div>
       <div className="flex flex-col">
         <div className="mb-2 flex items-center justify-between">
-          <H4>{workoutName}</H4>
+          {isEditingName ? (
+            <div className="flex w-full max-w-[240px] items-center gap-2">
+              <Input
+                ref={nameInputRef}
+                value={editableName}
+                onChange={(e) => setEditableName(e.target.value)}
+                onBlur={handleWorkoutNameUpdate}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleWorkoutNameUpdate();
+                  }
+                }}
+                className="h-9"
+              />
+            </div>
+          ) : (
+            <div
+              className="flex cursor-pointer items-center gap-1.5"
+              onClick={() => setIsEditingName(true)}
+            >
+              <H4>{state.name}</H4>
+              <Edit2 className="text-muted-foreground h-3.5 w-3.5" />
+            </div>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8">
