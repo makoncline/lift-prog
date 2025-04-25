@@ -142,10 +142,10 @@ export default function HomePage() {
             </P>
           ) : recentWorkoutsQuery.data &&
             recentWorkoutsQuery.data.length > 0 ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-3">
               {recentWorkoutsQuery.data.map((workout) => (
-                <Card key={workout.id}>
-                  <CardHeader className="pb-2">
+                <Card key={workout.id} className="w-full gap-0">
+                  <CardHeader className="">
                     <div className="flex items-center justify-between">
                       <div className="space-y-1">
                         {workout.completedAt && (
@@ -170,21 +170,22 @@ export default function HomePage() {
                       </div>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="sm"
                         onClick={() => setDeleteWorkoutId(workout.id)}
-                        className="text-destructive hover:bg-destructive/10 h-8 w-8"
+                        className="text-destructive hover:bg-destructive/10 gap-1 text-xs"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardFooter className="pt-2">
+                  <CardFooter className="">
                     <Button
                       variant="outline"
                       onClick={() => handleSelectRecent(workout.id)}
                       className="w-full"
                     >
-                      Start Based on This
+                      Progress On
                     </Button>
                   </CardFooter>
                 </Card>
@@ -240,10 +241,7 @@ export default function HomePage() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleDeleteWorkout}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
+              <AlertDialogAction onClick={handleDeleteWorkout}>
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>
