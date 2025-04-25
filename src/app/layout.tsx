@@ -15,6 +15,7 @@ import { TRPCReactProvider } from "@/trpc/react";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "next-themes";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Lift Prog",
@@ -60,14 +61,17 @@ export default function RootLayout({
               disableTransitionOnChange
             >
               <main className="mx-auto flex w-full max-w-md flex-grow flex-col">
-                <header className="flex h-16 items-center justify-end gap-4 p-4">
-                  <SignedOut>
-                    <SignInButton />
-                    <SignUpButton />
-                  </SignedOut>
-                  <SignedIn>
-                    <UserButton />
-                  </SignedIn>
+                <header className="flex h-16 items-center justify-between gap-4 p-4">
+                  <Link href="/">Home</Link>
+                  <div>
+                    <SignedOut>
+                      <SignInButton />
+                      <SignUpButton />
+                    </SignedOut>
+                    <SignedIn>
+                      <UserButton />
+                    </SignedIn>
+                  </div>
                 </header>
                 {children}
               </main>
