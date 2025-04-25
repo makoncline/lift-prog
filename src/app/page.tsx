@@ -124,7 +124,7 @@ export default function HomePage() {
       <div className="container mx-auto max-w-2xl py-8">
         <div className="mb-8 flex items-center gap-3">
           <Dumbbell className="h-8 w-8" />
-          <H2>Start a New Workout</H2>
+          <H2>Start a Workout</H2>
         </div>
 
         {/* Section 1: Continue Previous Workout */}
@@ -181,11 +181,11 @@ export default function HomePage() {
                   </CardHeader>
                   <CardFooter className="">
                     <Button
-                      variant="outline"
+                      size="sm"
                       onClick={() => handleSelectRecent(workout.id)}
                       className="w-full"
                     >
-                      Progress On
+                      Progress
                     </Button>
                   </CardFooter>
                 </Card>
@@ -199,24 +199,24 @@ export default function HomePage() {
         {/* Section 2: Start from Template */}
         <section>
           <H3 className="mb-4 border-b pb-2">Start from a Template</H3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-3">
             {workoutTemplates.map((template) => (
-              <Card key={template.id}>
-                <CardHeader>
+              <Card key={template.id} className="w-full gap-2">
+                <CardHeader className="">
                   <CardTitle>{template.name}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <ul className="text-muted-foreground list-disc pl-5 text-sm">
-                    {template.exercises.slice(0, 3).map((ex) => (
+                    {template.exercises.map((ex) => (
                       <li key={ex.name}>{ex.name}</li>
                     ))}
-                    {template.exercises.length > 3 && <li>...and more</li>}
                   </ul>
                 </CardContent>
-                <CardFooter>
+                <CardFooter className="">
                   <Button
                     onClick={() => handleSelectTemplate(template.id)}
                     className="w-full"
+                    size="sm"
                   >
                     Start {template.name}
                   </Button>
