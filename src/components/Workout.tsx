@@ -42,7 +42,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,9 +57,7 @@ import {
   type Workout,
   type WorkoutExercise,
   type WorkoutSet,
-  type ActiveField,
   type CompletedWorkout,
-  type Note,
   type WeightModifier,
   type SetModifier,
 } from "@/lib/workoutLogic";
@@ -342,8 +339,6 @@ export default function WorkoutComponent({
 }: WorkoutProps) {
   const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
-  const formRef = useRef<HTMLFormElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Initialize workout state with the reducer
   const initialState: Workout = {
@@ -452,10 +447,7 @@ export default function WorkoutComponent({
   const touchEndX = useRef<number | null>(null);
 
   // Extract current state values for easier access
-  const { exercises, currentExerciseIndex, activeField, inputValue } = state;
-
-  // Current exercise being displayed
-  const currentExercise = exercises[currentExerciseIndex] ?? null;
+  const { exercises, activeField, inputValue } = state;
 
   // State for showing/hiding notes
   const [showNotes, setShowNotes] = useState<Record<number, boolean>>({});
@@ -476,7 +468,7 @@ export default function WorkoutComponent({
 
   // tRPC Mutation for saving the workout
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (_data) => {
       toast.success("Workout saved successfully!");
       localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
     },
@@ -619,55 +611,14 @@ export default function WorkoutComponent({
     });
   };
 
-  // Function to toggle set completion for the current exercise
-  const toggleCompleted = (setId: number) => {
-    if (!currentExercise) return;
-
-    const setIndex = currentExercise.sets.findIndex((s) => s.id === setId);
-    if (setIndex === -1) return;
-
-    dispatch({
-      type: "TOGGLE_COMPLETE",
-      exerciseIndex: currentExerciseIndex,
-      setIndex,
-    });
-  };
-
-  // Function to add a set to the current exercise
-  const addSet = () => {
-    if (!currentExercise) return;
-
-    dispatch({
-      type: "ADD_SET",
-      exerciseIndex: currentExerciseIndex,
-    });
-  };
-
-  // Navigation between exercises
-  const goToNextExercise = () => {
-    dispatch({ type: "NAV_EXERCISE", direction: 1 });
-  };
-
-  const goToPreviousExercise = () => {
-    dispatch({ type: "NAV_EXERCISE", direction: -1 });
-  };
-
   // Swipe gesture handlers
-  const handleTouchStart = (
-    e: TouchEvent<HTMLTableRowElement>,
-    exerciseId: number,
-    setId: number,
-  ) => {
+  const handleTouchStart = (e: TouchEvent<HTMLTableRowElement>) => {
     if (!e.touches[0]) return;
     touchStartX.current = e.touches[0].clientX;
     e.stopPropagation();
   };
 
-  const handleTouchMove = (
-    e: TouchEvent<HTMLTableRowElement>,
-    exerciseId: number,
-    setId: number,
-  ) => {
+  const handleTouchMove = (e: TouchEvent<HTMLTableRowElement>) => {
     if (!touchStartX.current || !e.touches[0]) return;
     touchEndX.current = e.touches[0].clientX;
     e.stopPropagation();
@@ -880,8 +831,6 @@ export default function WorkoutComponent({
                   );
 
                   // Determine if values are estimated (not explicitly set and not completed)
-                  const isWeightEstimated =
-                    !set.weightExplicit && !set.completed;
                   const isRepsEstimated = !set.repsExplicit && !set.completed;
 
                   // Calculate working set number (count only non-warmup sets)
@@ -900,12 +849,8 @@ export default function WorkoutComponent({
                         set.weightModifier === "bodyweight" &&
                           "bg-blue-100/30 dark:bg-blue-900/20",
                       )}
-                      onTouchStart={(e) =>
-                        handleTouchStart(e, exercise.id, set.id)
-                      }
-                      onTouchMove={(e) =>
-                        handleTouchMove(e, exercise.id, set.id)
-                      }
+                      onTouchStart={(e) => handleTouchStart(e)}
+                      onTouchMove={(e) => handleTouchMove(e)}
                       onTouchEnd={(e) => handleTouchEnd(e, exercise.id, set.id)}
                     >
                       <TableCell className="px-1 py-1 text-center">

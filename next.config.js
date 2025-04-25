@@ -3,20 +3,11 @@
  * for Docker builds.
  */
 import "./src/env.js";
-import withPWA from "next-pwa";
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  // Your existing config can go here
   reactStrictMode: true, // Assuming you want this
+  // Removed the nested PWA config
 };
 
-const pwaConfig = withPWA({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
-});
-
-// @ts-expect-error - Known type conflict with next-pwa
-export default pwaConfig(nextConfig);
+export default nextConfig;

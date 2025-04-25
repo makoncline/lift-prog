@@ -127,52 +127,6 @@ export const nextProgression = (
   return { weight: prevWeight, reps: prevReps + 1 };
 };
 
-// ─── add near the other helpers ───────────────────────────────────────────
-function estimateWarmup(
-  set: WorkoutSet,
-  exercise: WorkoutExercise,
-): { weight: number | null; reps: number | null } {
-  const warmupsPrev = exercise.previousSets.filter(
-    (s) => s.modifier === "warmup",
-  );
-  // Get position of set in warmup sets (using index in array instead of ID matching)
-  const warmupSets = exercise.sets.filter((s) => s.modifier === "warmup");
-  const idx = warmupSets.indexOf(set);
-
-  if (idx === -1 || idx >= warmupsPrev.length) {
-    return { weight: null, reps: null };
-  }
-
-  const prev = warmupsPrev[idx];
-  return {
-    weight: prev?.weight ?? null,
-    reps: prev?.reps ?? null,
-  };
-}
-
-function estimateFirstWorking(set: WorkoutSet, exercise: WorkoutExercise) {
-  // Get previous data using position-based approach
-  const prev = getPreviousSetData(exercise, set, exercise.sets);
-  return nextProgression(prev.weight, prev.reps);
-}
-
-function cascadeWorking(
-  setIdx: number,
-  workingSets: WorkoutSet[],
-  base: { weight: number | null; reps: number | null },
-) {
-  let { weight, reps } = base;
-
-  // Use direct array access instead of filtering again
-  for (let i = 0; i < setIdx; i++) {
-    const s = workingSets[i];
-    if (s?.weightExplicit) weight = s.weight;
-    if (s?.repsExplicit) reps = s.reps;
-  }
-
-  return { weight, reps };
-}
-
 /**
  * Get the display (possibly estimated) values for a set.
  * ‣ For first set we apply progression to its own previous values
@@ -795,7 +749,6 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       // Create a new note if text is provided
       let updatedNotes = [...exercise.notes];
       if (notes) {
-        const now = new Date().toISOString();
         // Check if there's already a note, update it instead of adding a new one
         if (updatedNotes.length > 0) {
           const existingNote = updatedNotes[0];

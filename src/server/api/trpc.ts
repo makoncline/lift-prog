@@ -14,23 +14,6 @@ import { db } from "@/server/db";
 import { auth } from "@clerk/nextjs/server";
 
 /**
- * Interface defining the expected shape of the session object in our context.
- */
-interface SessionContext {
-  userId: string | null;
-  // Add other session properties if needed later, e.g., orgId, roles
-}
-
-/**
- * Interface defining the full context object.
- */
-interface CreateContextOptions {
-  session: SessionContext | null;
-  db: typeof db; // Use the type of the imported db instance
-  headers: Headers;
-}
-
-/**
  * 1. CONTEXT
  *
  * This section defines the "contexts" that are available in the backend API.

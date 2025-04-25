@@ -4,7 +4,6 @@ import {
   protectedProcedure,
   publicProcedure,
 } from "@/server/api/trpc";
-import { db } from "@/server/db";
 
 export const exerciseRouter = createTRPCRouter({
   // Procedure to list all exercises

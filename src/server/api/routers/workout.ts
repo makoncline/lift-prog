@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
-import { db } from "@/server/db";
 import { TRPCError } from "@trpc/server";
 import { Modifier, WeightModifier } from "@prisma/client";
 

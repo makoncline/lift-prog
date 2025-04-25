@@ -1,6 +1,5 @@
 import "@/styles/globals.css";
 
-import { type Metadata } from "next";
 import { Geist } from "next/font/google";
 import {
   ClerkProvider,
@@ -16,25 +15,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "next-themes";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-
-export const metadata: Metadata = {
-  title: "Lift Prog",
-  description: "Track your workouts effectively.",
-  manifest: "/manifest.webmanifest",
-  themeColor: "#ffffff",
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "Lift Prog",
-  },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-  },
-};
+import { Button } from "@/components/ui/button";
 
 const geist = Geist({
   subsets: ["latin"],
@@ -47,7 +28,9 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" className={`${geist.variable}`} suppressHydrationWarning>
-        <head>{/* Manifest link handled by next-pwa */}</head>
+        <head>
+          <meta name="apple-mobile-web-app-title" content="Lift" />
+        </head>
         <body
           className={cn(
             "bg-background flex min-h-screen flex-col font-sans antialiased",
@@ -63,10 +46,14 @@ export default function RootLayout({
               <main className="mx-auto flex w-full max-w-md flex-grow flex-col">
                 <header className="flex h-16 items-center justify-between gap-4 p-4">
                   <Link href="/">Home</Link>
-                  <div>
+                  <div className="flex gap-2">
                     <SignedOut>
-                      <SignInButton />
-                      <SignUpButton />
+                      <Button asChild variant="outline">
+                        <SignInButton />
+                      </Button>
+                      <Button asChild variant="outline">
+                        <SignUpButton />
+                      </Button>
                     </SignedOut>
                     <SignedIn>
                       <UserButton />
