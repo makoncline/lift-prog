@@ -18,4 +18,5 @@ const pwaConfig = withPWA({
   disable: process.env.NODE_ENV === "development",
 });
 
+// @ts-expect-error - Known type conflict with next-pwa
 export default pwaConfig(nextConfig);
