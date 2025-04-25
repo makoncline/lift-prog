@@ -65,6 +65,10 @@ import {
   type SetModifier,
 } from "@/lib/workoutLogic";
 import { api } from "@/trpc/react";
+import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants"; // Import the constant
+
+// TODO: Replace with a more robust ID generation method if needed
+const generateId = () => Math.random().toString(36).substring(2, 15);
 
 // Keyboard Container Component
 interface KeyboardContainerProps {
@@ -286,35 +290,145 @@ interface PreviousExerciseData {
   }>;
 }
 
-export default function WorkoutComponent({
-  workoutName = "Today's Workout",
-  exercises: previousExercises,
-}: {
+function safelyParseWorkoutState(jsonString: string | null): Workout | null {
+  if (!jsonString) return null;
+  try {
+    // Parse as unknown first to avoid direct any assignment
+    const parsed = JSON.parse(jsonString) as unknown;
+
+    // Type guard function to validate if the parsed object is a Workout
+    function isWorkout(obj: unknown): obj is Workout {
+      return (
+        typeof obj === "object" &&
+        obj !== null &&
+        "exercises" in obj &&
+        Array.isArray((obj as Record<string, unknown>).exercises) &&
+        "currentExerciseIndex" in obj &&
+        typeof (obj as Record<string, unknown>).currentExerciseIndex ===
+          "number" &&
+        "activeField" in obj &&
+        "inputValue" in obj &&
+        typeof (obj as Record<string, unknown>).inputValue === "string"
+      );
+    }
+
+    // Apply the type guard
+    if (isWorkout(parsed)) {
+      return parsed;
+    }
+
+    console.error("Parsed workout state is missing expected properties");
+    return null;
+  } catch (error) {
+    console.error("Failed to parse workout state from localStorage:", error);
+    return null;
+  }
+}
+
+// Component props type
+type WorkoutProps = {
   workoutName?: string;
   exercises?: PreviousExerciseData[];
-}) {
+  autoRestore?: boolean;
+  onInitialSave?: () => void;
+};
+
+// Main Workout component
+export default function WorkoutComponent({
+  workoutName = "Today's Workout",
+  exercises: initialExercises = [],
+  autoRestore = false,
+  onInitialSave,
+}: WorkoutProps) {
   const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
+  const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Initialize workout state with the reducer
   const initialState: Workout = {
     currentExerciseIndex: 0,
     exercises: initialiseExercises(
-      (previousExercises ?? []).map((ex) => ({
+      (initialExercises ?? []).map((ex) => ({
         ...ex,
         sets: ex.sets.map((set) => ({
           ...set,
+          // Handle potential null weightModifier from input
           weightModifier: set.weightModifier ?? undefined,
+          id: generateId(),
         })),
       })),
     ),
+    notes: [], // Initialize notes as an empty array
+    startTime: Date.now(),
+    name: workoutName,
+    isInProgress: true,
+    // Add missing initial state fields
     activeField: { exerciseIndex: null, setIndex: null, field: null },
     inputValue: "",
     isFirstInteraction: false,
-    notes: [],
   };
 
   const [state, dispatch] = useReducer(workoutReducer, initialState);
+  const [showRestore, setShowRestore] = useState(false);
+
+  // Handle restoring workout from localStorage
+  const handleRestore = () => {
+    const stored = localStorage.getItem(LOCAL_STORAGE_WORKOUT_KEY);
+    const parsedState = safelyParseWorkoutState(stored);
+    if (parsedState) {
+      dispatch({ type: "REPLACE_STATE", state: parsedState });
+      setShowRestore(false);
+    } else {
+      // Handle case where parsing failed or storage was unexpectedly empty
+      toast.error(
+        "Failed to restore progress. Stored data might be corrupted.",
+      );
+      localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY); // Clean up corrupted data
+      setShowRestore(false);
+    }
+  };
+
+  // Load saved workout from localStorage if available
+  useEffect(() => {
+    const savedWorkout = localStorage.getItem(LOCAL_STORAGE_WORKOUT_KEY);
+    console.log(
+      "[Workout] Initial localStorage check:",
+      savedWorkout ? "Found workout data" : "No saved workout",
+      { autoRestore },
+    );
+
+    if (savedWorkout) {
+      if (autoRestore) {
+        // Auto-restore the workout if specified
+        console.log("[Workout] Auto-restoring workout from localStorage");
+        handleRestore();
+      } else {
+        // Show restore prompt if not auto-restoring
+        console.log("[Workout] Showing restore button");
+        setShowRestore(true);
+      }
+    }
+  }, [autoRestore]);
+
+  // Save workout to localStorage whenever it changes
+  useEffect(() => {
+    // Only save if the workout is in progress (has exercises)
+    if (state.exercises.length > 0) {
+      console.log(
+        "[Workout] Saving workout to localStorage",
+        state.exercises.length,
+        "exercises",
+      );
+      localStorage.setItem(LOCAL_STORAGE_WORKOUT_KEY, JSON.stringify(state));
+
+      // Signal that we've saved initial state, if callback exists
+      if (onInitialSave && initialExercises.length > 0) {
+        console.log("[Workout] Calling onInitialSave callback");
+        onInitialSave();
+      }
+    }
+  }, [state, onInitialSave, initialExercises.length]);
 
   // State for delete confirmation dialog
   const [deleteDialog, setDeleteDialog] = useState<{
@@ -364,6 +478,7 @@ export default function WorkoutComponent({
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
     onSuccess: (data) => {
       toast.success("Workout saved successfully!");
+      localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
     },
     onError: (error) => {
       console.error("Failed to save workout:", error);
@@ -404,9 +519,7 @@ export default function WorkoutComponent({
       const exercise = exercises[exerciseIndex];
       if (!exercise) return;
 
-      const setIndex = exercise.sets.findIndex(
-        (s) => s.id === deleteDialog.setId,
-      );
+      const setIndex = exercise.sets.findIndex((s) => s.id === setId);
 
       if (setIndex !== -1) {
         dispatch({
@@ -643,17 +756,26 @@ export default function WorkoutComponent({
 
   return (
     <div className="container mx-auto max-w-md p-2 pb-[340px]">
+      {showRestore && !autoRestore && (
+        <div className="mb-2">
+          <Button size="sm" variant="outline" onClick={handleRestore}>
+            Restore Progress
+          </Button>
+        </div>
+      )}
       <div className="mb-2 flex items-center justify-between">
         <RestTimer />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setFinishDialogOpen(true)}
-          className="flex items-center gap-1"
-        >
-          <Save className="h-4 w-4" />
-          <span>Finish</span>
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFinishDialogOpen(true)}
+            className="flex items-center gap-1"
+          >
+            <Save className="h-4 w-4" />
+            <span>Finish</span>
+          </Button>
+        </div>
       </div>
       <div className="flex flex-col">
         <div className="mb-2 flex items-center justify-between">
@@ -1093,7 +1215,7 @@ export default function WorkoutComponent({
                 variant="destructive"
                 onClick={() => {
                   if (deleteDialog.setId !== null) {
-                    handleDeleteSet(deleteDialog.setId.toString());
+                    handleDeleteSet(deleteDialog.setId);
                   }
                 }}
                 className="px-6"
@@ -1270,7 +1392,7 @@ export default function WorkoutComponent({
                 {
                   state,
                   finishedWorkout,
-                  initialExercises: previousExercises,
+                  initialExercises: initialExercises,
                 },
                 null,
                 2,
@@ -1283,14 +1405,13 @@ export default function WorkoutComponent({
   );
 }
 
-// Format seconds to HH:MM:SS or MM:SS format
-function formatDuration(sec: number) {
-  // falls back for older browsers
-  if ((Intl as any).DurationFormat) {
-    const df = new (Intl as any).DurationFormat("en-US");
-    return df.format({ seconds: sec });
+// Format seconds to MM:SS format (simple version)
+function formatDuration(sec: number): string {
+  if (isNaN(sec) || sec < 0) {
+    return "0:00";
   }
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }

@@ -57,6 +57,9 @@ export interface Workout {
   inputValue: string; // mirrors the on‑screen keyboard
   isFirstInteraction: boolean; // tracks whether this is the first key press after focusing
   notes: Note[];
+  startTime: number; // Added startTime
+  name: string; // Added workout name
+  isInProgress: boolean; // Added to track if workout is active
 }
 
 // Types for finalized workouts
@@ -439,7 +442,8 @@ export type Action =
   | { type: "COLLAPSE_KEYBOARD" }
   | { type: "ADD_EXERCISE_NOTE"; exerciseId: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
-  | { type: "UPDATE_NOTES"; exerciseId: number; notes: string };
+  | { type: "UPDATE_NOTES"; exerciseId: number; notes: string }
+  | { type: "REPLACE_STATE"; state: Workout };
 
 // --------------------------- Reducer -----------------------------------
 
@@ -456,6 +460,8 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
   };
 
   switch (action.type) {
+    case "REPLACE_STATE":
+      return action.state;
     case "FOCUS_FIELD": {
       const { exerciseIndex, setIndex, field } = action;
       const ex = state.exercises[exerciseIndex];
