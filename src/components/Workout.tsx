@@ -25,9 +25,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-  Keyboard as KeyboardIcon,
-  Plus,
-  Minus,
   Delete,
   ChevronDown,
   Check,
@@ -40,6 +37,7 @@ import {
   User,
   Edit2,
 } from "lucide-react";
+import { WeightKeyboard, RepsKeyboard } from "@/components/WorkoutKeyboard";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,226 +66,6 @@ import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants"; // Import the const
 
 // TODO: Replace with a more robust ID generation method if needed
 const generateId = () => Math.random().toString(36).substring(2, 15);
-
-// Keyboard Container Component
-interface KeyboardContainerProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-const KeyboardContainer = ({ children, className }: KeyboardContainerProps) => {
-  return (
-    <div
-      className={cn(
-        "bg-background border-border fixed right-0 bottom-0 left-0 mx-auto max-w-md border-t p-4",
-        "pb-[calc(1rem+env(safe-area-inset-bottom,0))]", // Add padding for safe area at bottom
-        className,
-      )}
-      style={{ touchAction: "manipulation" }} // Prevent browser zooming
-    >
-      {children}
-    </div>
-  );
-};
-
-// KeyboardButton component for all buttons
-interface KeyboardButtonProps {
-  onKeyPress: (value: string) => void;
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-  gridArea: string;
-  variant?: "default" | "outline" | "primary";
-  isActive?: boolean;
-  disabled?: boolean;
-}
-
-const KeyboardButton = ({
-  onKeyPress,
-  value,
-  children,
-  className,
-  gridArea,
-  variant = "outline",
-  isActive = false,
-  disabled = false,
-}: KeyboardButtonProps) => {
-  // Add handler to prevent default behavior
-  const handleClick = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    if (!disabled) {
-      onKeyPress(value);
-    }
-  };
-
-  return (
-    <div className="h-full w-full" style={{ gridArea }}>
-      <Button
-        variant={variant === "primary" ? "default" : "outline"}
-        className={cn(
-          "h-full w-full text-base", // Increase text size to 16px with text-base
-          variant === "primary" && "bg-primary hover:bg-primary/90",
-          isActive &&
-            "ring-primary ring-offset-background ring-2 ring-offset-2",
-          className,
-        )}
-        onClick={handleClick}
-        onTouchStart={(e) => e.stopPropagation()}
-        disabled={disabled}
-      >
-        {children}
-      </Button>
-    </div>
-  );
-};
-
-// Main Keyboard Grid Component
-const Keyboard = ({
-  onKeyPress,
-  inputType,
-  activeSetWeightModifier,
-}: {
-  onKeyPress: (value: string) => void;
-  inputType: "weight" | "reps";
-  activeSetWeightModifier?: WeightModifier;
-}) => {
-  const isBwActive = activeSetWeightModifier === "bodyweight";
-
-  return (
-    <KeyboardContainer>
-      <div
-        className="grid gap-2"
-        style={{
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gridTemplateRows: "repeat(4, 1fr)",
-          gridTemplateAreas: `
-            "btn1  btn2  btn3  collapse"
-            "btn4  btn5  btn6  minus-plus"
-            "btn7  btn8  btn9  bw-sign"
-            "decimal btn0 backspace next"
-          `,
-          height: "280px", // Slightly reduced height to avoid URL bar overlap
-          touchAction: "manipulation", // Prevent browser zooming
-        }}
-      >
-        {/* Number buttons */}
-        <KeyboardButton onKeyPress={onKeyPress} value="1" gridArea="btn1">
-          1
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="2" gridArea="btn2">
-          2
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="3" gridArea="btn3">
-          3
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="4" gridArea="btn4">
-          4
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="5" gridArea="btn5">
-          5
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="6" gridArea="btn6">
-          6
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="7" gridArea="btn7">
-          7
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="8" gridArea="btn8">
-          8
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="9" gridArea="btn9">
-          9
-        </KeyboardButton>
-        <KeyboardButton onKeyPress={onKeyPress} value="0" gridArea="btn0">
-          0
-        </KeyboardButton>
-
-        {/* Decimal button (conditional) */}
-        {inputType === "weight" ? (
-          <KeyboardButton onKeyPress={onKeyPress} value="." gridArea="decimal">
-            .
-          </KeyboardButton>
-        ) : (
-          <div style={{ gridArea: "decimal" }}></div>
-        )}
-
-        {/* Backspace button */}
-        <KeyboardButton
-          onKeyPress={onKeyPress}
-          value="backspace"
-          gridArea="backspace"
-        >
-          <Delete size={24} />
-        </KeyboardButton>
-
-        {/* Collapse button */}
-        <KeyboardButton
-          onKeyPress={onKeyPress}
-          value="collapse"
-          gridArea="collapse"
-        >
-          <div className="flex flex-col items-center">
-            <KeyboardIcon size={24} />
-            <ChevronDown size={16} />
-          </div>
-        </KeyboardButton>
-
-        {/* Plus/Minus buttons in one grid area */}
-        <div
-          className="grid grid-cols-2 gap-2"
-          style={{ gridArea: "minus-plus" }}
-        >
-          <KeyboardButton onKeyPress={onKeyPress} value="minus" gridArea="">
-            <Minus size={24} />
-          </KeyboardButton>
-          <KeyboardButton onKeyPress={onKeyPress} value="plus" gridArea="">
-            <Plus size={24} />
-          </KeyboardButton>
-        </div>
-
-        {/* Combined BW and Sign Toggle buttons (conditional) */}
-        {inputType === "weight" ? (
-          <div
-            className="grid grid-cols-2 gap-2"
-            style={{ gridArea: "bw-sign" }}
-          >
-            {/* Bodyweight button */}
-            <KeyboardButton
-              onKeyPress={onKeyPress}
-              value="bw"
-              gridArea=""
-              isActive={isBwActive}
-            >
-              <User size={24} />
-            </KeyboardButton>
-            {/* Sign Toggle button */}
-            <KeyboardButton
-              onKeyPress={onKeyPress}
-              value="toggle-sign"
-              gridArea=""
-              disabled={!isBwActive}
-            >
-              +/-
-            </KeyboardButton>
-          </div>
-        ) : (
-          <div style={{ gridArea: "bw-sign" }}></div>
-        )}
-
-        {/* Next button */}
-        <KeyboardButton
-          onKeyPress={onKeyPress}
-          value="next"
-          gridArea="next"
-          variant="primary"
-          className="text-2xl"
-        >
-          Next
-        </KeyboardButton>
-      </div>
-    </KeyboardContainer>
-  );
-};
 
 // Type definition for data structure expected from previous workouts or templates
 interface PreviousExerciseData {
@@ -812,7 +590,7 @@ export default function WorkoutComponent({
 
   return (
     <div
-      className="container mx-auto max-w-md p-2 pb-[340px]"
+      className="container mx-auto max-w-md p-2 pb-[200px]"
       style={{ touchAction: "pan-x pan-y" }}
     >
       {showRestore && !autoRestore && (
@@ -1284,13 +1062,16 @@ export default function WorkoutComponent({
         </div>
       ))}
 
-      {activeField.exerciseIndex !== null && activeField.field !== null && (
-        <Keyboard
-          onKeyPress={handleKeyPress}
-          inputType={activeField.field}
-          activeSetWeightModifier={activeSet?.weightModifier}
-        />
-      )}
+      {activeField.exerciseIndex !== null &&
+        activeField.field !== null &&
+        (activeField.field === "weight" ? (
+          <WeightKeyboard
+            onKeyPress={handleKeyPress}
+            activeSetWeightModifier={activeSet?.weightModifier}
+          />
+        ) : (
+          <RepsKeyboard onKeyPress={handleKeyPress} />
+        ))}
 
       {deleteDialog.isOpen && (
         <Dialog
