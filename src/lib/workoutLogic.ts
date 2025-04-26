@@ -116,15 +116,28 @@ export const roundToStep = (value: number, step = WEIGHT_STEP): number =>
 export const nextProgression = (
   prevWeight: number | null,
   prevReps: number | null,
-): { weight: number | null; reps: number | null } => {
+  prevWeightModifier?: WeightModifier,
+): {
+  weight: number | null;
+  reps: number | null;
+  weightModifier?: WeightModifier;
+} => {
   if (prevWeight == null || prevReps == null)
-    return { weight: null, reps: null };
+    return { weight: null, reps: null, weightModifier: prevWeightModifier };
   if (prevReps >= MAX_REPS) {
     const new1RM = estimate1RM(prevWeight, prevReps) + ONE_RM_INCREMENT;
     const targetWeight = roundToStep((new1RM * (37 - MIN_REPS)) / 36);
-    return { weight: targetWeight, reps: MIN_REPS };
+    return {
+      weight: targetWeight,
+      reps: MIN_REPS,
+      weightModifier: prevWeightModifier,
+    };
   }
-  return { weight: prevWeight, reps: prevReps + 1 };
+  return {
+    weight: prevWeight,
+    reps: prevReps + 1,
+    weightModifier: prevWeightModifier,
+  };
 };
 
 /**
@@ -137,9 +150,13 @@ export const estimateSet = (
   sets: WorkoutSet[],
   setIndex: number,
   exercise: WorkoutExercise,
-): { weight: number | null; reps: number | null } => {
+): {
+  weight: number | null;
+  reps: number | null;
+  weightModifier?: WeightModifier;
+} => {
   const set = sets[setIndex];
-  if (!set) return { weight: null, reps: null };
+  if (!set) return { weight: null, reps: null, weightModifier: undefined };
 
   // If this is a warmup set
   if (set.modifier === "warmup") {
@@ -156,6 +173,7 @@ export const estimateSet = (
       return {
         weight: prevWarmup?.weight ?? null,
         reps: prevWarmup?.reps ?? null,
+        weightModifier: prevWarmup?.weightModifier,
       };
     }
 
@@ -163,6 +181,7 @@ export const estimateSet = (
     return {
       weight: set.prevWeight,
       reps: set.prevReps,
+      weightModifier: set.weightModifier,
     };
   }
 
@@ -170,36 +189,79 @@ export const estimateSet = (
   const workingSets = sets.filter((s) => s.modifier !== "warmup");
   const workingIdx = workingSets.findIndex((s) => s === set);
 
-  if (workingIdx === -1) return { weight: null, reps: null };
+  if (workingIdx === -1)
+    return { weight: null, reps: null, weightModifier: undefined };
 
-  // Get previous workout's working sets
-  const prevWorkingSets = exercise.previousSets.filter(
-    (s) => s.modifier !== "warmup",
-  );
+  // SIMPLIFIED APPROACH: For any set after the first, directly inherit from the previous set
+  if (workingIdx > 0) {
+    // Get the previous working set
+    const previousWorkingSet = workingSets[workingIdx - 1];
 
-  // First working set: apply progression from previous workout
+    // If the previous set has explicit values, use them as our base
+    if (previousWorkingSet) {
+      const baseWeight = previousWorkingSet.weightExplicit
+        ? previousWorkingSet.weight
+        : null;
+      const baseReps = previousWorkingSet.repsExplicit
+        ? previousWorkingSet.reps
+        : null;
+
+      // ALWAYS inherit the weightModifier from the previous set if we're not the first working set
+      const baseWeightModifier = previousWorkingSet.weightModifier;
+
+      // If previous set doesn't have explicit values, fall back to estimation
+      if (baseWeight === null || baseReps === null) {
+        // Find the previous set's index in the original sets array
+        const prevSetIndex = sets.findIndex((s) => s === previousWorkingSet);
+        if (prevSetIndex !== -1) {
+          const prevEstimate = estimateSet(sets, prevSetIndex, exercise);
+
+          return {
+            weight: baseWeight ?? prevEstimate.weight ?? set.prevWeight,
+            reps: baseReps ?? prevEstimate.reps ?? set.prevReps,
+            weightModifier: baseWeightModifier,
+          };
+        }
+      }
+
+      // Direct inheritance from previous set
+      return {
+        weight: baseWeight ?? set.prevWeight,
+        reps: baseReps ?? set.prevReps,
+        weightModifier: baseWeightModifier,
+      };
+    }
+  }
+
+  // First working set - use progression from previous workout
   if (workingIdx === 0) {
-    const prevFirstWorkingSet = prevWorkingSets[0] ?? {
+    const prevFirstWorkingSet = exercise.previousSets.find(
+      (s) => s.modifier !== "warmup",
+    ) ?? {
       weight: null,
       reps: null,
+      weightModifier: undefined,
     };
 
     // Use next progression for first working set if we have previous data
     const progression = nextProgression(
       prevFirstWorkingSet.weight,
       prevFirstWorkingSet.reps,
+      prevFirstWorkingSet.weightModifier,
     );
 
     // If progression gives null values (no previous data), fall back to template values
     return {
       weight: progression.weight ?? set.prevWeight,
       reps: progression.reps ?? set.prevReps,
+      weightModifier: progression.weightModifier ?? set.weightModifier,
     };
   }
 
   // For subsequent working sets, cascade from earlier sets in this workout
   let baseWeight = null;
   let baseReps = null;
+  let baseWeightModifier: WeightModifier | undefined = undefined;
 
   // First try to get values from the first working set of this workout
   const firstWorkingSet = workingSets[0];
@@ -207,6 +269,7 @@ export const estimateSet = (
     // If first set has explicit values, use them
     if (firstWorkingSet.weightExplicit) {
       baseWeight = firstWorkingSet.weight;
+      baseWeightModifier = firstWorkingSet.weightModifier;
     } else {
       // Otherwise use estimated values from first working set
       const firstEstimate = estimateSet(
@@ -215,6 +278,7 @@ export const estimateSet = (
         exercise,
       );
       baseWeight = firstEstimate.weight;
+      baseWeightModifier = firstEstimate.weightModifier;
     }
 
     if (firstWorkingSet.repsExplicit) {
@@ -234,27 +298,84 @@ export const estimateSet = (
     const earlierSet = workingSets[i];
     if (earlierSet?.weightExplicit) {
       baseWeight = earlierSet.weight;
+      baseWeightModifier = earlierSet.weightModifier;
     }
     if (earlierSet?.repsExplicit) {
       baseReps = earlierSet.reps;
     }
   }
 
+  // Specifically check for the first working set's weightModifier
+  // If the user has explicitly removed a bodyweight modifier from the first set,
+  // that removal should cascade to all subsequent sets
+  const firstWorkingSetIdx = workingSets.findIndex((s) => s !== undefined);
+  if (firstWorkingSetIdx !== -1) {
+    const firstSet = workingSets[firstWorkingSetIdx];
+    if (firstSet?.weightExplicit) {
+      // If the first set had its modifier explicitly removed, cascade that removal
+      baseWeightModifier = firstSet.weightModifier;
+    }
+  }
+
   // If we couldn't establish base values from earlier sets,
   // try using the corresponding set from previous workout
   if (baseWeight === null || baseReps === null) {
-    const prevWorkingSet = prevWorkingSets[workingIdx];
+    const prevWorkingSet = exercise.previousSets.filter(
+      (s) => s.modifier !== "warmup",
+    )[workingIdx];
     if (prevWorkingSet) {
       baseWeight ??= prevWorkingSet.weight;
       baseReps ??= prevWorkingSet.reps;
+      baseWeightModifier ??= prevWorkingSet.weightModifier;
     }
   }
 
   // Final fallback to the set's own prev values
   baseWeight ??= set.prevWeight;
   baseReps ??= set.prevReps;
+  baseWeightModifier ??= set.weightModifier;
 
-  return { weight: baseWeight, reps: baseReps };
+  // Special handling for weight values with bodyweight modifier
+  // If we're cascading a bodyweight modifier and weight is null/0, look for a better value
+  if (
+    baseWeightModifier === "bodyweight" &&
+    (baseWeight === null || baseWeight === 0)
+  ) {
+    // First, check previous working sets from this workout for a better bodyweight value
+    for (let i = 0; i < workingIdx; i++) {
+      const earlierSet = workingSets[i];
+      if (
+        earlierSet?.weightModifier === "bodyweight" &&
+        earlierSet?.weight !== null &&
+        earlierSet?.weight !== 0
+      ) {
+        baseWeight = earlierSet.weight;
+        break;
+      }
+    }
+
+    // If still no value, check the previous workout's bodyweight values
+    if (baseWeight === null || baseWeight === 0) {
+      for (const prevSet of exercise.previousSets.filter(
+        (s) => s.modifier !== "warmup",
+      )) {
+        if (
+          prevSet.weightModifier === "bodyweight" &&
+          prevSet.weight !== null &&
+          prevSet.weight !== 0
+        ) {
+          baseWeight = prevSet.weight;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    weight: baseWeight,
+    reps: baseReps,
+    weightModifier: baseWeightModifier,
+  };
 };
 
 /** Build initial Exercise[] from prior workout snapshots */
@@ -838,11 +959,6 @@ export const displayWeight = (
   idx: number,
   exercise?: WorkoutExercise,
 ): number | null => {
-  // If bodyweight modifier is active, ALWAYS return the current set's weight value
-  if (set.weightModifier === "bodyweight") {
-    return set.weight;
-  }
-
   // Return explicit/completed weight
   if (set.weightExplicit || set.completed) return set.weight;
 
@@ -851,7 +967,48 @@ export const displayWeight = (
 
   try {
     // Get estimated weight with error handling
-    return estimateSet(sets, idx, exercise).weight;
+    const estimate = estimateSet(sets, idx, exercise);
+
+    // ALWAYS update the set's weightModifier based on the estimate
+    // This ensures we cascade both adding and removing bodyweight modifier
+    set.weightModifier = estimate.weightModifier;
+
+    // If this is a bodyweight exercise but has no weight value yet,
+    // try to find a better weight from other bodyweight sets
+    if (
+      estimate.weightModifier === "bodyweight" &&
+      (estimate.weight === null || estimate.weight === 0)
+    ) {
+      // First, check if there's a working set above this one that has a bodyweight value
+      const workingSets = sets.filter((s) => s.modifier !== "warmup");
+      const currentSetIdx = workingSets.findIndex((s) => s === set);
+
+      if (currentSetIdx > 0) {
+        // Look at the previous working set if it has bodyweight
+        const prevSet = workingSets[currentSetIdx - 1];
+        if (
+          prevSet?.weightModifier === "bodyweight" &&
+          prevSet.weight !== null &&
+          prevSet.weight !== 0
+        ) {
+          return prevSet.weight;
+        }
+      }
+
+      // As a fallback, check any completed bodyweight set
+      for (const otherSet of sets) {
+        if (
+          otherSet.weightModifier === "bodyweight" &&
+          otherSet.weight !== null &&
+          otherSet.weight !== 0 &&
+          otherSet.completed
+        ) {
+          return otherSet.weight;
+        }
+      }
+    }
+
+    return estimate.weight;
   } catch (error) {
     console.error("Error estimating weight:", error);
     return null;
