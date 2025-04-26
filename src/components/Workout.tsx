@@ -80,8 +80,10 @@ const KeyboardContainer = ({ children, className }: KeyboardContainerProps) => {
     <div
       className={cn(
         "bg-background border-border fixed right-0 bottom-0 left-0 mx-auto max-w-md border-t p-4",
+        "pb-[calc(1rem+env(safe-area-inset-bottom,0))]", // Add padding for safe area at bottom
         className,
       )}
+      style={{ touchAction: "manipulation" }} // Prevent browser zooming
     >
       {children}
     </div>
@@ -110,18 +112,27 @@ const KeyboardButton = ({
   isActive = false,
   disabled = false,
 }: KeyboardButtonProps) => {
+  // Add handler to prevent default behavior
+  const handleClick = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    if (!disabled) {
+      onKeyPress(value);
+    }
+  };
+
   return (
     <div className="h-full w-full" style={{ gridArea }}>
       <Button
         variant={variant === "primary" ? "default" : "outline"}
         className={cn(
-          "h-full w-full",
+          "h-full w-full text-base", // Increase text size to 16px with text-base
           variant === "primary" && "bg-primary hover:bg-primary/90",
           isActive &&
             "ring-primary ring-offset-background ring-2 ring-offset-2",
           className,
         )}
-        onClick={() => onKeyPress(value)}
+        onClick={handleClick}
+        onTouchStart={(e) => e.stopPropagation()}
         disabled={disabled}
       >
         {children}
@@ -155,7 +166,8 @@ const Keyboard = ({
             "btn7  btn8  btn9  bw-sign"
             "decimal btn0 backspace next"
           `,
-          height: "300px",
+          height: "280px", // Slightly reduced height to avoid URL bar overlap
+          touchAction: "manipulation", // Prevent browser zooming
         }}
       >
         {/* Number buttons */}
@@ -799,7 +811,10 @@ export default function WorkoutComponent({
   };
 
   return (
-    <div className="container mx-auto max-w-md p-2 pb-[340px]">
+    <div
+      className="container mx-auto max-w-md p-2 pb-[340px]"
+      style={{ touchAction: "pan-x pan-y" }}
+    >
       {showRestore && !autoRestore && (
         <div className="mb-2">
           <Button size="sm" variant="outline" onClick={handleRestore}>

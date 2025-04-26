@@ -159,6 +159,27 @@ function WorkoutInitializer() {
 }
 
 export default function WorkoutPage() {
+  // Add useEffect for viewport meta tag
+  useEffect(() => {
+    // Create or update the viewport meta tag
+    let metaViewport = document.querySelector('meta[name="viewport"]');
+
+    if (!metaViewport) {
+      metaViewport = document.createElement("meta");
+      metaViewport.setAttribute("name", "viewport");
+      document.head.appendChild(metaViewport);
+    }
+
+    metaViewport.setAttribute(
+      "content",
+      "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no",
+    );
+
+    return () => {
+      // Optional cleanup if needed
+    };
+  }, []);
+
   return (
     <div className="container mx-auto max-w-md p-2">
       <Suspense fallback={<LoadingState />}>
