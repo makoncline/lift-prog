@@ -124,7 +124,7 @@ type WorkoutProps = {
 
 // Main Workout component
 export default function WorkoutComponent({
-  workoutName = "Today's Workout",
+  workoutName = "",
   exercises: initialExercises = [],
   autoRestore = false,
   onInitialSave,
@@ -148,7 +148,7 @@ export default function WorkoutComponent({
     ),
     notes: [], // Initialize notes as an empty array
     startTime: Date.now(),
-    name: workoutName,
+    name: workoutName || "Workout", // Fallback to "Workout" if no name provided
     isInProgress: true,
     // Add missing initial state fields
     activeField: { exerciseIndex: null, setIndex: null, field: null },
@@ -159,7 +159,7 @@ export default function WorkoutComponent({
   const [state, dispatch] = useReducer(workoutReducer, initialState);
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
-  const [editableName, setEditableName] = useState(workoutName);
+  const [editableName, setEditableName] = useState(state.name);
   const [editableDate, setEditableDate] = useState(() => {
     const now = new Date();
     return now.toISOString().split("T")[0]; // YYYY-MM-DD format
@@ -173,11 +173,19 @@ export default function WorkoutComponent({
   const [editableDuration, setEditableDuration] = useState<string>("60");
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  // Handle workout name update
+  // Update the useEffect that deals with workoutName prop changes
+  useEffect(() => {
+    // Directly use the workoutName without modification or prefix
+    if (workoutName) {
+      dispatch({ type: "UPDATE_WORKOUT_NAME", name: workoutName });
+    }
+  }, [workoutName]);
+
+  // Update the handleWorkoutNameUpdate function to not add any prefixes
   const handleWorkoutNameUpdate = () => {
     if (editableName.trim()) {
-      // Update state name
-      dispatch({ type: "UPDATE_WORKOUT_NAME", name: editableName });
+      // Update state name with exactly what user entered without any prefix
+      dispatch({ type: "UPDATE_WORKOUT_NAME", name: editableName.trim() });
 
       // Calculate and update start time based on duration
       if (editableDuration && editableDate && editableTime) {
@@ -210,10 +218,10 @@ export default function WorkoutComponent({
     }
   }, [isEditingName]);
 
-  // Additional useEffect to update editable name when workoutName prop changes
+  // Update editable name when state name changes
   useEffect(() => {
-    setEditableName(workoutName);
-  }, [workoutName]);
+    setEditableName(state.name);
+  }, [state.name]);
 
   // Handle restoring workout from localStorage
   const handleRestore = () => {

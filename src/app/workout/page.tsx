@@ -110,7 +110,7 @@ function WorkoutInitializer() {
     if (workoutDetailsQuery.data) {
       return (
         <WorkoutComponent
-          workoutName={`Continuing: ${workoutDetailsQuery.data.workoutName}`}
+          workoutName={workoutDetailsQuery.data.workoutName}
           exercises={workoutDetailsQuery.data.exercises}
           onInitialSave={onInitialSave}
         />
