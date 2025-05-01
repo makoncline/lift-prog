@@ -24,6 +24,9 @@ const presetTimers = [
   { label: "3:00", seconds: 180 },
 ];
 
+const TIMER_END_KEY = "rest_timer_end";
+const TIMER_DURATION_KEY = "rest_timer_duration";
+
 export function RestTimer({ className }: RestTimerProps) {
   // Dialog state
   const [open, setOpen] = useState(false);
@@ -44,12 +47,101 @@ export function RestTimer({ className }: RestTimerProps) {
   // Audio notification ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Check notification permission on mount
+  // Check notification permission and existing timer on mount
   useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotificationPermission(Notification.permission);
+    if (typeof window !== "undefined") {
+      if ("Notification" in window) {
+        setNotificationPermission(Notification.permission);
+      }
+
+      // Check if there's an active timer from localStorage
+      const endTimeStr = localStorage.getItem(TIMER_END_KEY);
+      const durationStr = localStorage.getItem(TIMER_DURATION_KEY);
+
+      if (endTimeStr && durationStr) {
+        const endTime = parseInt(endTimeStr, 10);
+        const duration = parseInt(durationStr, 10);
+        const now = Date.now();
+
+        if (endTime > now) {
+          // Resume timer
+          setTotalSeconds(duration);
+          setSecondsLeft(Math.ceil((endTime - now) / 1000));
+          setTimerRunning(true);
+          setMode("running");
+          startTimerInterval();
+        } else if (now - endTime < 60000) {
+          // If ended less than a minute ago
+          // Timer completed while app was closed
+          setTimerCompleted(true);
+          clearStoredTimer();
+        } else {
+          // Old timer data, clear it
+          clearStoredTimer();
+        }
+      }
     }
+
+    // Clean up on unmount
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
   }, []);
+
+  // Save timer state to localStorage
+  const saveTimerState = (endTime: number, duration: number) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(TIMER_END_KEY, endTime.toString());
+      localStorage.setItem(TIMER_DURATION_KEY, duration.toString());
+    }
+  };
+
+  // Clear stored timer
+  const clearStoredTimer = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(TIMER_END_KEY);
+      localStorage.removeItem(TIMER_DURATION_KEY);
+    }
+  };
+
+  // Start timer interval for UI updates
+  const startTimerInterval = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    // Update UI every 500ms
+    timerRef.current = setInterval(() => {
+      const endTimeStr = localStorage.getItem(TIMER_END_KEY);
+      if (!endTimeStr) {
+        clearInterval(timerRef.current!);
+        return;
+      }
+
+      const endTime = parseInt(endTimeStr, 10);
+      const now = Date.now();
+      const remaining = endTime - now;
+
+      if (remaining <= 0) {
+        // Timer complete
+        setSecondsLeft(0);
+        setTimerRunning(false);
+        setTimerCompleted(true);
+        clearStoredTimer();
+        clearInterval(timerRef.current!);
+        notifyTimerComplete();
+
+        // If dialog is open, reset to select mode
+        if (open) {
+          setMode("select");
+        }
+      } else {
+        setSecondsLeft(Math.ceil(remaining / 1000));
+      }
+    }, 500);
+  };
 
   // Request notification permission
   const requestNotificationPermission = async () => {
@@ -90,12 +182,19 @@ export function RestTimer({ className }: RestTimerProps) {
 
   // Play sound function
   const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch((err) => {
-        console.error("Failed to play audio:", err);
-      });
-    }
+    // Sound is disabled to prevent interrupting background audio (e.g., Spotify)
+    // when timer notifications occur on mobile devices.
+    // If sound notification is needed in the future, consider implementing
+    // a user toggle or using a less disruptive audio approach.
+    return;
+
+    // Original implementation:
+    // if (audioRef.current) {
+    //   audioRef.current.currentTime = 0;
+    //   audioRef.current.play().catch((err) => {
+    //     console.error("Failed to play audio:", err);
+    //   });
+    // }
   };
 
   // Play sound and vibrate function
@@ -122,13 +221,18 @@ export function RestTimer({ className }: RestTimerProps) {
 
   // Get progress percentage
   const getProgress = (): number => {
-    if (totalSeconds === 0) return 0;
-    return ((totalSeconds - secondsLeft) / totalSeconds) * 100;
+    if (totalSeconds === 0 || !timerRunning) return 0;
+    const elapsed = totalSeconds - secondsLeft;
+    return (elapsed / totalSeconds) * 100;
   };
 
   // Start the timer with the selected duration
   const startTimer = (seconds: number) => {
-    clearTimerInterval();
+    // Stop any existing timer
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     // Request notification permission when starting a timer
     if (notificationPermission === "default") {
@@ -137,54 +241,59 @@ export function RestTimer({ className }: RestTimerProps) {
       });
     }
 
+    const now = Date.now();
+    const endTime = now + seconds * 1000;
+
+    // Save timer in localStorage
+    saveTimerState(endTime, seconds);
+
+    // Update component state
     setTotalSeconds(seconds);
     setSecondsLeft(seconds);
     setTimerRunning(true);
     setTimerCompleted(false);
     setMode("running");
 
-    timerRef.current = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          // Timer finished
-          clearTimerInterval();
-          setTimerRunning(false);
-          setTimerCompleted(true);
-          notifyTimerComplete();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    // Start the interval for UI updates
+    startTimerInterval();
   };
 
   // Add or subtract time
   const adjustTime = (seconds: number) => {
-    setSecondsLeft((prev) => Math.max(1, prev + seconds));
+    const endTimeStr = localStorage.getItem(TIMER_END_KEY);
+    if (!endTimeStr) return; // No active timer
+
+    const endTime = parseInt(endTimeStr, 10);
+    const newEndTime = endTime + seconds * 1000;
+    const now = Date.now();
+
+    // Ensure we don't go below 1 second
+    if (newEndTime <= now + 1000) {
+      return;
+    }
+
+    // Update stored end time
+    saveTimerState(newEndTime, totalSeconds);
+
+    // Update local state with new remaining time
+    const newRemaining = Math.ceil((newEndTime - now) / 1000);
+    setSecondsLeft(newRemaining);
   };
 
   // Skip the timer
   const skipTimer = () => {
-    clearTimerInterval();
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    clearStoredTimer();
     setTimerRunning(false);
     setTimerCompleted(false);
     setSecondsLeft(0);
     setMode("select");
     setOpen(false);
   };
-
-  // Clean up interval on unmount
-  const clearTimerInterval = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  // Cleanup on component unmount
-  useEffect(() => {
-    return () => clearTimerInterval();
-  }, []);
 
   // When the dialog closes, don't reset the timer if it's running
   const handleOpenChange = (isOpen: boolean) => {
@@ -195,9 +304,12 @@ export function RestTimer({ className }: RestTimerProps) {
       setMode("running");
     }
 
-    // If we're closing the dialog and no timer is running, reset to selection mode
+    // If we're closing the dialog and no timer is running or completed, reset to selection mode
     if (!isOpen && !timerRunning) {
       setMode("select");
+      if (timerCompleted) {
+        setTimerCompleted(false);
+      }
     }
   };
 
