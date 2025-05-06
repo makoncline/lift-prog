@@ -1,3 +1,5 @@
+"use client";
+
 import React, { forwardRef, type JSX } from "react";
 import { cn } from "@/lib/utils";
 

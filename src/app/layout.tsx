@@ -1,3 +1,5 @@
+"use client";
+
 import "@/styles/globals.css";
 
 import { Geist } from "next/font/google";
