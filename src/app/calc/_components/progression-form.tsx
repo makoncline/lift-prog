@@ -32,12 +32,14 @@ const progressionSchema = z.object({
   currentReps: z
     .number()
     .int("Reps must be a whole number.")
-    .positive("Reps must be positive."),
-  currentWeight: z.number().positive("Weight must be positive."),
+    .positive("Reps must be positive.")
+    .nullable(),
+  currentWeight: z.number().positive("Weight must be positive.").nullable(),
   nextReps: z
     .number()
     .int("Reps must be a whole number.")
-    .positive("Reps must be positive."),
+    .positive("Reps must be positive.")
+    .nullable(),
 });
 
 type ProgressionFormData = z.infer<typeof progressionSchema>;
@@ -57,12 +59,12 @@ interface ProjectionRow {
 }
 
 export default function ProgressionForm() {
-  // Form setup with simplified schema
+  // Form setup with schema
   const form = useForm<ProgressionFormData>({
     resolver: zodResolver(progressionSchema),
     defaultValues: {
       currentReps: 12,
-      currentWeight: 135,
+      currentWeight: null,
       nextReps: 8,
     },
     mode: "onChange",
@@ -84,7 +86,9 @@ export default function ProgressionForm() {
       currentWeight !== undefined &&
       currentWeight !== null &&
       currentReps !== undefined &&
-      nextReps !== undefined
+      currentReps !== null &&
+      nextReps !== undefined &&
+      nextReps !== null
     ) {
       // Calculate current 1RM
       const current1RM = estimate1RM(currentWeight, currentReps);
@@ -95,9 +99,9 @@ export default function ProgressionForm() {
         ? calculateEquivalentWeight(current1RM, nextReps)
         : null;
 
-      // Only set the adjusted weight if it's null (first calculation)
-      // Don't override user adjustments
-      if (adjustedWeight === null && equivalentWeight !== null) {
+      // Always update the adjusted weight when inputs change
+      // This ensures it resets on any input change
+      if (equivalentWeight !== null) {
         setAdjustedWeight(equivalentWeight);
       }
 
@@ -161,7 +165,7 @@ export default function ProgressionForm() {
   const calculatePercentChange = (
     current1RM: number | null,
     adjustedWeight: number | null,
-    nextReps: number,
+    nextReps: number | null,
   ): number | null => {
     if (!current1RM || !adjustedWeight || !nextReps) return null;
 
@@ -207,13 +211,17 @@ export default function ProgressionForm() {
                         step="2.5"
                         placeholder="e.g., 135"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(
-                            e.target.value === ""
-                              ? null
-                              : parseFloat(e.target.value),
-                          )
-                        }
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === "") {
+                            field.onChange(null);
+                          } else {
+                            const parsedValue = parseFloat(value);
+                            if (!isNaN(parsedValue)) {
+                              field.onChange(parsedValue);
+                            }
+                          }
+                        }}
                         value={field.value ?? ""}
                       />
                     </FormControl>
@@ -232,13 +240,17 @@ export default function ProgressionForm() {
                         type="number"
                         placeholder="e.g., 12"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(
-                            e.target.value === ""
-                              ? undefined
-                              : parseInt(e.target.value),
-                          )
-                        }
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === "") {
+                            field.onChange(null);
+                          } else {
+                            const parsedValue = parseInt(value);
+                            if (!isNaN(parsedValue)) {
+                              field.onChange(parsedValue);
+                            }
+                          }
+                        }}
                         value={field.value ?? ""}
                       />
                     </FormControl>
@@ -260,13 +272,17 @@ export default function ProgressionForm() {
                       type="number"
                       placeholder="e.g., 8"
                       {...field}
-                      onChange={(e) =>
-                        field.onChange(
-                          e.target.value === ""
-                            ? undefined
-                            : parseInt(e.target.value),
-                        )
-                      }
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === "") {
+                          field.onChange(null);
+                        } else {
+                          const parsedValue = parseInt(value);
+                          if (!isNaN(parsedValue)) {
+                            field.onChange(parsedValue);
+                          }
+                        }
+                      }}
                       value={field.value ?? ""}
                     />
                   </FormControl>
