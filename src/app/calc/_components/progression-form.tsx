@@ -74,6 +74,10 @@ export default function ProgressionForm() {
   const [calculationResult, setCalculationResult] =
     useState<CalculationResult | null>(null);
   const [projectionData, setProjectionData] = useState<ProjectionRow[]>([]);
+  const [isUserAdjusted, setIsUserAdjusted] = useState(false);
+  const [prevEquivalentWeight, setPrevEquivalentWeight] = useState<
+    number | null
+  >(null);
 
   // Watch for form value changes
   const currentWeight = form.watch("currentWeight");
@@ -99,17 +103,30 @@ export default function ProgressionForm() {
         ? calculateEquivalentWeight(current1RM, nextReps)
         : null;
 
-      // Always update the adjusted weight when inputs change
-      // This ensures it resets on any input change
-      if (equivalentWeight !== null) {
+      // Only update the adjusted weight if not manually adjusted by the user
+      // or if it's the first calculation (adjustedWeight is null)
+      if (
+        equivalentWeight !== null &&
+        (adjustedWeight === null || !isUserAdjusted)
+      ) {
         setAdjustedWeight(equivalentWeight);
+      }
+
+      // If form inputs change, mark user adjustments as reset
+      if (equivalentWeight !== prevEquivalentWeight) {
+        setPrevEquivalentWeight(equivalentWeight);
+        // Reset user adjustment flag when inputs change significantly
+        setIsUserAdjusted(false);
       }
 
       // Calculate new 1RM and percent change based on adjusted weight
       const newResult = {
         current1RM,
         equivalentWeight, // Use the properly stepped value
-        new1RM: adjustedWeight ? estimate1RM(adjustedWeight, nextReps) : null,
+        new1RM:
+          adjustedWeight !== null && nextReps !== null
+            ? estimate1RM(adjustedWeight, nextReps)
+            : null,
         percentChange: calculatePercentChange(
           current1RM,
           adjustedWeight,
@@ -120,7 +137,11 @@ export default function ProgressionForm() {
       setCalculationResult(newResult);
 
       // Generate projection data for the table
-      if (adjustedWeight !== null && nextReps && currentReps) {
+      if (
+        adjustedWeight !== null &&
+        nextReps !== null &&
+        currentReps !== null
+      ) {
         const projData: ProjectionRow[] = [];
         const current1RM = estimate1RM(currentWeight, currentReps);
 
@@ -150,7 +171,14 @@ export default function ProgressionForm() {
       setCalculationResult(null);
       setProjectionData([]);
     }
-  }, [currentWeight, currentReps, nextReps, adjustedWeight]);
+  }, [
+    currentWeight,
+    currentReps,
+    nextReps,
+    adjustedWeight,
+    prevEquivalentWeight,
+    isUserAdjusted,
+  ]);
 
   // Function to calculate the weight needed for a given 1RM and rep count
   const calculateEquivalentWeight = (
@@ -175,11 +203,19 @@ export default function ProgressionForm() {
 
   // Handle weight adjustment buttons
   const handleAdjustWeight = (increment: number) => {
+    console.log(
+      "Adjusting weight, current:",
+      adjustedWeight,
+      "increment:",
+      increment,
+    );
     setAdjustedWeight((prev) => {
       if (prev === null) return null;
       const newWeight = Math.max(0, prev + increment);
+      console.log("New weight calculated:", newWeight);
       return newWeight;
     });
+    setIsUserAdjusted(true);
   };
 
   // Reset adjusted weight to original calculated weight
@@ -189,6 +225,7 @@ export default function ProgressionForm() {
       calculationResult?.equivalentWeight !== undefined
     ) {
       setAdjustedWeight(calculationResult.equivalentWeight);
+      setIsUserAdjusted(false);
     }
   };
 
