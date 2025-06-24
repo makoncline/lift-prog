@@ -47,7 +47,10 @@ export default function RootLayout({
             >
               <main className="mx-auto flex w-full max-w-md flex-grow flex-col">
                 <header className="flex h-16 items-center justify-between gap-4 p-4">
-                  <Link href="/">Home</Link>
+                  <div className="flex gap-4">
+                    <Link href="/">Home</Link>
+                    <Link href="/calc">Calculator</Link>
+                  </div>
                   <div className="flex gap-2">
                     <SignedOut>
                       <Button asChild variant="outline">
