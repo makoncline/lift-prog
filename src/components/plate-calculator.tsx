@@ -35,7 +35,7 @@ const BAR_OPTIONS = [
   { weight: 33, kg: 15, label: "Women's Bar (15kg / 33 lbs)" },
 ];
 
-const DEFAULT_BAR = BAR_OPTIONS[0];
+const DEFAULT_BAR = BAR_OPTIONS[0]!;
 
 // Plate colors and sizes for visualization
 const PLATE_CONFIG = {
@@ -66,9 +66,9 @@ interface BarbellVisualizationProps {
 
 function BarbellVisualization({
   plates,
-  totalWeight,
+  totalWeight: _totalWeight,
   barWeight,
-  barLabel,
+  barLabel: _barLabel,
 }: BarbellVisualizationProps) {
   // Create array of individual plates for right side only
   const rightPlates: number[] = [];
@@ -141,7 +141,7 @@ export function PlateCalculator({
       setTargetWeight(defaultWeight);
       setInputValue(defaultWeight.toString());
     }
-  }, [defaultWeight]);
+  }, [defaultWeight, targetWeight]);
 
   // Calculate plate breakdown
   const calculatePlates = (weight: number): PlateBreakdown => {
