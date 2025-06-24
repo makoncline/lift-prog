@@ -25,7 +25,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-  Delete,
   ChevronDown,
   Check,
   MoreVertical,
@@ -36,6 +35,7 @@ import {
   Loader2,
   User,
   Edit2,
+  RotateCcw,
 } from "lucide-react";
 import { WeightKeyboard, RepsKeyboard } from "@/components/WorkoutKeyboard";
 import {
@@ -161,17 +161,12 @@ export default function WorkoutComponent({
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editableName, setEditableName] = useState(state.name);
-  const [editableDate, setEditableDate] = useState(() => {
-    const now = new Date();
-    return now.toISOString().split("T")[0]; // YYYY-MM-DD format
-  });
-  const [editableTime, setEditableTime] = useState(() => {
-    const now = new Date();
-    const hours = String(now.getHours()).padStart(2, "0");
-    const minutes = String(now.getMinutes()).padStart(2, "0");
-    return `${hours}:${minutes}`;
-  });
-  const [editableDuration, setEditableDuration] = useState<string>("60");
+  // Finish dialog state for date/time/duration editing
+  const [finishDialogDate, setFinishDialogDate] = useState<string>("");
+  const [finishDialogStartTime, setFinishDialogStartTime] =
+    useState<string>("");
+  const [finishDialogEndTime, setFinishDialogEndTime] = useState<string>("");
+  const [finishDialogDuration, setFinishDialogDuration] = useState<string>("");
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Update the useEffect that deals with workoutName prop changes
@@ -182,29 +177,11 @@ export default function WorkoutComponent({
     }
   }, [workoutName]);
 
-  // Update the handleWorkoutNameUpdate function to not add any prefixes
+  // Update the handleWorkoutNameUpdate function to only handle name changes
   const handleWorkoutNameUpdate = () => {
     if (editableName.trim()) {
       // Update state name with exactly what user entered without any prefix
       dispatch({ type: "UPDATE_WORKOUT_NAME", name: editableName.trim() });
-
-      // Calculate and update start time based on duration
-      if (editableDuration && editableDate && editableTime) {
-        const durationMs = parseInt(editableDuration, 10) * 60 * 1000;
-        const completionDate = getCompletionDate();
-
-        // Set the start time to completion time minus duration
-        const startTime = completionDate.getTime() - durationMs;
-
-        // Update the current workout start time for duration calculations
-        workoutStartTime.current = startTime;
-
-        console.log(`[Workout] Updated workout timing:
-          Completion Date: ${completionDate.toISOString()}
-          Duration: ${editableDuration} minutes
-          Calculated Start: ${new Date(startTime).toISOString()}`);
-      }
-
       setIsEditingName(false);
     } else {
       setEditableName(state.name);
@@ -503,6 +480,88 @@ export default function WorkoutComponent({
     e.stopPropagation();
   };
 
+  // Initialize finish dialog values when dialog opens
+  const initializeFinishDialogValues = () => {
+    const now = new Date();
+    const workoutStart = new Date(workoutStartTime.current);
+
+    setFinishDialogDate(now.toISOString().split("T")[0]!);
+
+    // Set end time to now
+    const endHours = String(now.getHours()).padStart(2, "0");
+    const endMinutes = String(now.getMinutes()).padStart(2, "0");
+    setFinishDialogEndTime(`${endHours}:${endMinutes}`);
+
+    // Set start time based on workout start
+    const startHours = String(workoutStart.getHours()).padStart(2, "0");
+    const startMinutes = String(workoutStart.getMinutes()).padStart(2, "0");
+    setFinishDialogStartTime(`${startHours}:${startMinutes}`);
+
+    // Calculate actual duration from workout start time
+    const durationInSeconds = Math.floor(
+      (Date.now() - workoutStartTime.current) / 1000,
+    );
+    const durationInMinutes = Math.max(1, Math.round(durationInSeconds / 60)); // At least 1 minute
+    setFinishDialogDuration(durationInMinutes.toString());
+  };
+
+  // Calculate duration when start or end time changes
+  const calculateDurationFromTimes = (startTime: string, endTime: string) => {
+    if (!startTime || !endTime) return;
+
+    const [startHours = 0, startMinutes = 0] = startTime.split(":").map(Number);
+    const [endHours = 0, endMinutes = 0] = endTime.split(":").map(Number);
+
+    const startTotalMinutes = startHours * 60 + startMinutes;
+    const endTotalMinutes = endHours * 60 + endMinutes;
+
+    let durationMinutes = endTotalMinutes - startTotalMinutes;
+
+    // Handle case where workout crosses midnight (very rare but possible)
+    if (durationMinutes < 0) {
+      durationMinutes += 24 * 60; // Add 24 hours
+    }
+
+    setFinishDialogDuration(Math.max(1, durationMinutes).toString());
+  };
+
+  // Calculate start time when duration changes (based on end time)
+  const calculateStartFromDuration = (durationStr: string) => {
+    if (!durationStr || !finishDialogEndTime) return;
+
+    const durationMinutes = parseInt(durationStr, 10);
+    if (isNaN(durationMinutes) || durationMinutes < 1) return;
+
+    const [endHours = 0, endMinutes = 0] = finishDialogEndTime
+      .split(":")
+      .map(Number);
+    const endTotalMinutes = endHours * 60 + endMinutes;
+
+    let startTotalMinutes = endTotalMinutes - durationMinutes;
+
+    // Handle case where start time would be before midnight
+    if (startTotalMinutes < 0) {
+      startTotalMinutes += 24 * 60; // Add 24 hours (previous day)
+    }
+
+    const startHours = Math.floor(startTotalMinutes / 60) % 24;
+    const startMinutes = startTotalMinutes % 60;
+
+    const formattedStartTime = `${String(startHours).padStart(2, "0")}:${String(startMinutes).padStart(2, "0")}`;
+    setFinishDialogStartTime(formattedStartTime);
+  };
+
+  // Set end time to current time
+  const setEndTimeToNow = () => {
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const nowTime = `${hours}:${minutes}`;
+
+    setFinishDialogEndTime(nowTime);
+    calculateDurationFromTimes(finishDialogStartTime, nowTime);
+  };
+
   // Updated function to handle workout completion and save data
   const handleFinishWorkout = () => {
     if (!user || !isUserLoaded) {
@@ -511,8 +570,8 @@ export default function WorkoutComponent({
     }
 
     // Calculate duration from input or use elapsed time
-    const durationInSeconds = editableDuration
-      ? parseInt(editableDuration, 10) * 60
+    const durationInSeconds = finishDialogDuration
+      ? parseInt(finishDialogDuration, 10) * 60
       : Math.floor((Date.now() - workoutStartTime.current) / 1000);
 
     const finalWorkoutData = finalizeWorkout(
@@ -574,17 +633,17 @@ export default function WorkoutComponent({
       .catch((err) => console.error("Failed to copy to clipboard:", err));
   };
 
-  // Create completion date from date and time inputs
+  // Create completion date from finish dialog date and end time inputs
   const getCompletionDate = () => {
     let completionDate = new Date();
-    if (editableDate) {
+    if (finishDialogDate) {
       // Parse date components with fallbacks
-      const dateComponents = editableDate
+      const dateComponents = finishDialogDate
         .split("-")
-        .map((n) => parseInt(n, 10));
-      const timeComponents = editableTime
+        .map((n: string) => parseInt(n, 10));
+      const timeComponents = finishDialogEndTime
         .split(":")
-        .map((n) => parseInt(n, 10));
+        .map((n: string) => parseInt(n, 10));
 
       const year = dateComponents[0] ?? completionDate.getFullYear();
       const month = dateComponents[1] ?? 1;
@@ -618,7 +677,10 @@ export default function WorkoutComponent({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setFinishDialogOpen(true)}
+            onClick={() => {
+              initializeFinishDialogValues();
+              setFinishDialogOpen(true);
+            }}
             className="flex items-center gap-1"
           >
             <Save className="h-4 w-4" />
@@ -652,49 +714,9 @@ export default function WorkoutComponent({
                   Cancel
                 </Button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label htmlFor="date" className="text-xs font-medium">
-                    Date
-                  </label>
-                  <Input
-                    id="date"
-                    type="date"
-                    value={editableDate}
-                    onChange={(e) => setEditableDate(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label htmlFor="time" className="text-xs font-medium">
-                    Time
-                  </label>
-                  <Input
-                    id="time"
-                    type="time"
-                    value={editableTime}
-                    onChange={(e) => setEditableTime(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label htmlFor="duration" className="text-xs font-medium">
-                  Duration (minutes)
-                </label>
-                <Input
-                  id="duration"
-                  type="number"
-                  value={editableDuration}
-                  onChange={(e) => setEditableDuration(e.target.value)}
-                  className="h-9"
-                  min="1"
-                  step="1"
-                />
-              </div>
               <div className="flex justify-end">
                 <Button size="sm" onClick={handleWorkoutNameUpdate}>
-                  Save Details
+                  Save Name
                 </Button>
               </div>
             </div>
@@ -1159,6 +1181,11 @@ export default function WorkoutComponent({
           if (!open && !saveWorkoutMutation.isPending) {
             setFinishDialogOpen(false);
             setFinishedWorkout(null);
+            // Reset finish dialog values when dialog is closed
+            setFinishDialogDate("");
+            setFinishDialogStartTime("");
+            setFinishDialogEndTime("");
+            setFinishDialogDuration("");
           }
         }}
       >
@@ -1166,22 +1193,14 @@ export default function WorkoutComponent({
           <DialogHeader>
             <DialogTitle>Finish Workout</DialogTitle>
             <DialogDescription>
-              {saveWorkoutMutation.isPending
-                ? "Saving your workout..."
-                : finishedWorkout
-                  ? "Workout Saved!"
-                  : "Review and save your completed workout."}
+              {finishedWorkout
+                ? "Workout Saved!"
+                : "Review and save your completed workout."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {saveWorkoutMutation.isPending && (
-              <div className="flex items-center justify-center space-x-2">
-                <Loader2 className="h-6 w-6 animate-spin" />
-                <span>Saving...</span>
-              </div>
-            )}
-            {!saveWorkoutMutation.isPending && finishedWorkout && (
+            {finishedWorkout && (
               <div className="space-y-4">
                 <div className="bg-muted rounded-md p-4">
                   <div className="flex items-center justify-between">
@@ -1237,7 +1256,7 @@ export default function WorkoutComponent({
                 </div>
               </div>
             )}
-            {!saveWorkoutMutation.isPending && !finishedWorkout && (
+            {!finishedWorkout && (
               <div className="space-y-4">
                 <div>
                   <h3 className="text-sm font-medium">Workout Summary</h3>
@@ -1258,36 +1277,108 @@ export default function WorkoutComponent({
                         0,
                       )}
                     </p>
-                    <p>
-                      <span className="font-medium">Duration:</span>{" "}
-                      {formatDuration(
-                        editableDuration
-                          ? parseInt(editableDuration, 10) * 60
-                          : Math.floor(
-                              (Date.now() - workoutStartTime.current) / 1000,
-                            ),
-                      )}
-                    </p>
-                    {editableDate && (
-                      <>
-                        <p>
-                          <span className="font-medium">Start:</span>{" "}
-                          {(() => {
-                            const completionDate = getCompletionDate();
-                            const durationMs =
-                              parseInt(editableDuration || "0", 10) * 60 * 1000;
-                            const startTime = new Date(
-                              completionDate.getTime() - durationMs,
+                  </div>
+                </div>
+
+                {/* Date/Time/Duration editing fields */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium">Workout Details</h3>
+
+                  {/* Date field - single field since workouts don't span multiple days */}
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="finish-date"
+                      className="text-xs font-medium"
+                    >
+                      Date
+                    </label>
+                    <Input
+                      id="finish-date"
+                      type="date"
+                      value={finishDialogDate}
+                      onChange={(e) => setFinishDialogDate(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+
+                  {/* Start and End Time fields */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="finish-start-time"
+                        className="text-xs font-medium"
+                      >
+                        Start Time
+                      </label>
+                      <Input
+                        id="finish-start-time"
+                        type="time"
+                        value={finishDialogStartTime}
+                        onChange={(e) => {
+                          setFinishDialogStartTime(e.target.value);
+                          calculateDurationFromTimes(
+                            e.target.value,
+                            finishDialogEndTime,
+                          );
+                        }}
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="finish-end-time"
+                        className="text-xs font-medium"
+                      >
+                        End Time
+                      </label>
+                      <div className="flex gap-1">
+                        <Input
+                          id="finish-end-time"
+                          type="time"
+                          value={finishDialogEndTime}
+                          onChange={(e) => {
+                            setFinishDialogEndTime(e.target.value);
+                            calculateDurationFromTimes(
+                              finishDialogStartTime,
+                              e.target.value,
                             );
-                            return `${startTime.toLocaleDateString()} ${startTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-                          })()}
-                        </p>
-                        <p>
-                          <span className="font-medium">Finish:</span>{" "}
-                          {`${getCompletionDate().toLocaleDateString()} ${getCompletionDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
-                        </p>
-                      </>
-                    )}
+                          }}
+                          className="h-9 flex-1"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={setEndTimeToNow}
+                          className="h-9 w-9 p-0"
+                          title="Set to now"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Duration field */}
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="finish-duration"
+                      className="text-xs font-medium"
+                    >
+                      Duration (minutes)
+                    </label>
+                    <Input
+                      id="finish-duration"
+                      type="number"
+                      value={finishDialogDuration}
+                      onChange={(e) => {
+                        setFinishDialogDuration(e.target.value);
+                        calculateStartFromDuration(e.target.value);
+                      }}
+                      className="h-9"
+                      min="1"
+                      step="1"
+                    />
                   </div>
                 </div>
               </div>
@@ -1295,13 +1386,7 @@ export default function WorkoutComponent({
           </div>
 
           <DialogFooter>
-            {saveWorkoutMutation.isPending ? (
-              // Saving State
-              <Button disabled className="w-full">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving...
-              </Button>
-            ) : finishedWorkout ? (
+            {finishedWorkout ? (
               // Success State
               <Button
                 onClick={() => {
@@ -1314,11 +1399,18 @@ export default function WorkoutComponent({
                 Done
               </Button>
             ) : (
-              // Initial/Error State
+              // Initial/Saving State
               <>
                 <Button
                   variant="outline"
-                  onClick={() => setFinishDialogOpen(false)}
+                  onClick={() => {
+                    setFinishDialogOpen(false);
+                    // Reset finish dialog values when cancelled
+                    setFinishDialogDate("");
+                    setFinishDialogStartTime("");
+                    setFinishDialogEndTime("");
+                    setFinishDialogDuration("");
+                  }}
                   disabled={saveWorkoutMutation.isPending}
                 >
                   Cancel
@@ -1327,6 +1419,9 @@ export default function WorkoutComponent({
                   onClick={handleFinishWorkout}
                   disabled={saveWorkoutMutation.isPending}
                 >
+                  {saveWorkoutMutation.isPending && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
                   Save Workout
                 </Button>
               </>
