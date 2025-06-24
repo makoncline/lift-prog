@@ -1,6 +1,7 @@
 - [x] completion date time edit fix
 - [ ] plate calculator
 - [ ] logged out state on home page
+- [ ] negative body weight modifier increments should decrease on progression.
 
 ## Move workout timing controls to finish dialog
 

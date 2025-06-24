@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { RestTimer } from "@/components/RestTimer";
+import { PlateCalculator } from "@/components/plate-calculator";
 
 import {
   initialiseExercises,
@@ -668,7 +669,10 @@ export default function WorkoutComponent({
         </div>
       )}
       <div className="mb-2 flex items-center justify-between">
-        <RestTimer />
+        <div className="flex items-center gap-2">
+          <RestTimer />
+          <PlateCalculator />
+        </div>
         <div className="flex gap-2">
           <Button
             variant="outline"

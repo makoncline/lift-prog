@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PlateCalculator } from "@/components/plate-calculator";
 
 // Simplified schema - just what we need
 const progressionSchema = z.object({
@@ -351,21 +352,26 @@ export default function ProgressionForm() {
                     <div className="font-medium">
                       Target Weight for Next Set:
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleResetWeight}
-                      disabled={
-                        adjustedWeight === null ||
-                        adjustedWeight === calculationResult?.equivalentWeight
-                      }
-                      title="Reset to default weight"
-                      className="h-8 px-2"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      <span className="sr-only">Reset to default weight</span>
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {adjustedWeight !== null && adjustedWeight > 0 && (
+                        <PlateCalculator defaultWeight={adjustedWeight} />
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleResetWeight}
+                        disabled={
+                          adjustedWeight === null ||
+                          adjustedWeight === calculationResult?.equivalentWeight
+                        }
+                        title="Reset to default weight"
+                        className="h-8 px-2"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        <span className="sr-only">Reset to default weight</span>
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
