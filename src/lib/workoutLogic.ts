@@ -125,7 +125,21 @@ export const nextProgression = (
   if (prevWeight == null || prevReps == null)
     return { weight: null, reps: null, weightModifier: prevWeightModifier };
   if (prevReps >= MAX_REPS) {
-    const new1RM = estimate1RM(prevWeight, prevReps) + ONE_RM_INCREMENT;
+    // Calculate the base 1RM increment
+    let rmIncrement = ONE_RM_INCREMENT;
+
+    // For bodyweight exercises, adjust increment direction based on weight sign
+    if (prevWeightModifier === "bodyweight" && prevWeight !== 0) {
+      // If weight is negative (resistance), we want to make it more negative (remove weight)
+      // If weight is positive (assistance), we want to make it more positive (add weight)
+      // Since ONE_RM_INCREMENT is negative (-5), we need to flip the sign for negative weights
+      if (prevWeight < 0) {
+        rmIncrement = -ONE_RM_INCREMENT; // Makes it positive, which adds to a negative 1RM
+      }
+      // For positive weights, keep the negative increment to add more resistance
+    }
+
+    const new1RM = estimate1RM(prevWeight, prevReps) + rmIncrement;
     const targetWeight = roundToStep((new1RM * (37 - MIN_REPS)) / 36);
     return {
       weight: targetWeight,
