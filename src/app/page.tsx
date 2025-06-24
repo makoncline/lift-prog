@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useUser, SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import { workoutTemplates } from "@/data/workout-templates";
 import { H2, H3, P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
@@ -12,8 +13,8 @@ import {
   CardContent,
   CardFooter,
 } from "@/components/ui/card";
-import { Dumbbell, History, Trash2 } from "lucide-react"; // Added Trash2 icon
-import { api } from "@/trpc/react"; // Import tRPC api client
+import { Dumbbell, History, Trash2, LogIn } from "lucide-react";
+import { api } from "@/trpc/react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,8 +61,7 @@ const calculateDuration = (startDate: Date, endDate: Date): number => {
   return Math.round(durationMs / (1000 * 60)); // Convert ms to minutes
 };
 
-export default function HomePage() {
-  // Renamed component
+function AuthenticatedHomePage() {
   const router = useRouter();
   const [deleteWorkoutId, setDeleteWorkoutId] = useState<number | null>(null);
   const [hasInProgress, setHasInProgress] = useState(false);
@@ -248,6 +248,63 @@ export default function HomePage() {
           </AlertDialogContent>
         </AlertDialog>
       </div>
+    </>
+  );
+}
+
+function UnauthenticatedHomePage() {
+  return (
+    <div className="container mx-auto max-w-2xl py-8">
+      <div className="flex flex-col items-center justify-center space-y-6 text-center">
+        <div className="flex items-center gap-3">
+          <Dumbbell className="h-12 w-12" />
+          <H2>Lift Prog</H2>
+        </div>
+
+        <div className="space-y-4">
+          <P className="text-muted-foreground">
+            Track your workouts, monitor your progress, and reach your fitness
+            goals.
+          </P>
+
+          <Button asChild size="lg" className="gap-2">
+            <SignInButton>
+              <span className="flex items-center gap-2">
+                <LogIn className="h-4 w-4" />
+                Sign In to Get Started
+              </span>
+            </SignInButton>
+          </Button>
+        </div>
+
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-lg">Features</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="text-muted-foreground space-y-2 text-sm">
+              <li>• Track sets, reps, and weights</li>
+              <li>• Progressive overload calculations</li>
+              <li>• Workout templates</li>
+              <li>• Rest timer</li>
+              <li>• Plate calculator</li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <>
+      <SignedIn>
+        <AuthenticatedHomePage />
+      </SignedIn>
+      <SignedOut>
+        <UnauthenticatedHomePage />
+      </SignedOut>
     </>
   );
 }
