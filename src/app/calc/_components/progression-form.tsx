@@ -354,7 +354,10 @@ export default function ProgressionForm() {
                     </div>
                     <div className="flex items-center gap-1">
                       {adjustedWeight !== null && adjustedWeight > 0 && (
-                        <PlateCalculator defaultWeight={adjustedWeight} />
+                        <PlateCalculator
+                          key={adjustedWeight}
+                          defaultWeight={adjustedWeight}
+                        />
                       )}
                       <Button
                         type="button"

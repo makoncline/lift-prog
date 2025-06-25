@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -134,14 +134,6 @@ export function PlateCalculator({
   const [inputValue, setInputValue] = useState(
     (defaultWeight ?? 135).toString(),
   );
-
-  // Update when defaultWeight changes
-  useEffect(() => {
-    if (defaultWeight && defaultWeight !== targetWeight) {
-      setTargetWeight(defaultWeight);
-      setInputValue(defaultWeight.toString());
-    }
-  }, [defaultWeight, targetWeight]);
 
   // Calculate plate breakdown
   const calculatePlates = (weight: number): PlateBreakdown => {
