@@ -95,7 +95,7 @@ export interface CompletedWorkout {
 
 export const MIN_REPS = 8;
 export const MAX_REPS = 12;
-export const ONE_RM_INCREMENT = -5; // lb added to est. 1RM when progressing
+export const ONE_RM_INCREMENT = 0; // lb added to est. 1RM when progressing
 export const WEIGHT_STEP = 2.5; // lb, smallest plate increment
 
 // ----------------------  Pure helper functions  ------------------------

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -27,8 +27,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PlateCalculator } from "@/components/plate-calculator";
+import { Switch } from "@/components/ui/switch";
+import {
+  BAR_WEIGHT,
+  getClosestValidWeight,
+  getNextValidWeight,
+} from "@/lib/calc/barbell-utils";
 
-// Simplified schema - just what we need
 const progressionSchema = z.object({
   currentReps: z
     .number()
@@ -60,7 +65,6 @@ interface ProjectionRow {
 }
 
 export default function ProgressionForm() {
-  // Form setup with schema
   const form = useForm<ProgressionFormData>({
     resolver: zodResolver(progressionSchema),
     defaultValues: {
@@ -79,13 +83,12 @@ export default function ProgressionForm() {
   const [prevEquivalentWeight, setPrevEquivalentWeight] = useState<
     number | null
   >(null);
+  const [barbellMode, setBarbellMode] = useState(true);
 
-  // Watch for form value changes
   const currentWeight = form.watch("currentWeight");
   const currentReps = form.watch("currentReps");
   const nextReps = form.watch("nextReps");
 
-  // Calculate results whenever inputs change
   useEffect(() => {
     if (
       currentWeight !== undefined &&
@@ -95,17 +98,17 @@ export default function ProgressionForm() {
       nextReps !== undefined &&
       nextReps !== null
     ) {
-      // Calculate current 1RM
       const current1RM = estimate1RM(currentWeight, currentReps);
 
-      // Calculate equivalent weight for the target reps
-      // This already uses roundToStep to ensure it's in 2.5 lb increments
-      const equivalentWeight = current1RM
+      const rawEquivalentWeight = current1RM
         ? calculateEquivalentWeight(current1RM, nextReps)
         : null;
 
-      // Only update the adjusted weight if not manually adjusted by the user
-      // or if it's the first calculation (adjustedWeight is null)
+      const equivalentWeight =
+        rawEquivalentWeight !== null && barbellMode
+          ? getClosestValidWeight(rawEquivalentWeight)
+          : rawEquivalentWeight;
+
       if (
         equivalentWeight !== null &&
         (adjustedWeight === null || !isUserAdjusted)
@@ -113,17 +116,14 @@ export default function ProgressionForm() {
         setAdjustedWeight(equivalentWeight);
       }
 
-      // If form inputs change, mark user adjustments as reset
       if (equivalentWeight !== prevEquivalentWeight) {
         setPrevEquivalentWeight(equivalentWeight);
-        // Reset user adjustment flag when inputs change significantly
         setIsUserAdjusted(false);
       }
 
-      // Calculate new 1RM and percent change based on adjusted weight
-      const newResult = {
+      const newResult: CalculationResult = {
         current1RM,
-        equivalentWeight, // Use the properly stepped value
+        equivalentWeight,
         new1RM:
           adjustedWeight !== null && nextReps !== null
             ? estimate1RM(adjustedWeight, nextReps)
@@ -137,35 +137,29 @@ export default function ProgressionForm() {
 
       setCalculationResult(newResult);
 
-      // Generate projection data for the table
       if (
         adjustedWeight !== null &&
         nextReps !== null &&
         currentReps !== null
       ) {
         const projData: ProjectionRow[] = [];
-        const current1RM = estimate1RM(currentWeight, currentReps);
+        const curr1RM = estimate1RM(currentWeight, currentReps);
 
-        if (current1RM !== null && current1RM !== undefined) {
-          // Generate rows from nextReps to currentReps
+        if (curr1RM !== null && curr1RM !== undefined) {
           for (let reps = nextReps; reps <= currentReps; reps++) {
-            const estimated1RM = estimate1RM(adjustedWeight, reps);
-
-            if (estimated1RM !== null && estimated1RM !== undefined) {
-              const percentChange =
-                ((estimated1RM - current1RM) / current1RM) * 100;
-              const absoluteIncrease = estimated1RM - current1RM;
-
+            const est1RM = estimate1RM(adjustedWeight, reps);
+            if (est1RM !== null && est1RM !== undefined) {
+              const percentChange = ((est1RM - curr1RM) / curr1RM) * 100;
+              const absoluteIncrease = est1RM - curr1RM;
               projData.push({
                 reps,
-                estimated1RM,
+                estimated1RM: est1RM,
                 percentChange,
                 absoluteIncrease,
               });
             }
           }
         }
-
         setProjectionData(projData);
       }
     } else {
@@ -179,47 +173,40 @@ export default function ProgressionForm() {
     adjustedWeight,
     prevEquivalentWeight,
     isUserAdjusted,
+    barbellMode,
   ]);
 
-  // Function to calculate the weight needed for a given 1RM and rep count
   const calculateEquivalentWeight = (
     oneRepMax: number,
     reps: number,
   ): number | null => {
-    if (reps >= 37) return null; // Brzycki formula limitation
+    if (reps >= 37) return null;
     return roundToStep((oneRepMax * (37 - reps)) / 36, 2.5);
   };
 
-  // Function to calculate percentage change between 1RMs
   const calculatePercentChange = (
     current1RM: number | null,
-    adjustedWeight: number | null,
-    nextReps: number | null,
+    adjWeight: number | null,
+    nReps: number | null,
   ): number | null => {
-    if (!current1RM || !adjustedWeight || !nextReps) return null;
-
-    const new1RM = estimate1RM(adjustedWeight, nextReps);
+    if (!current1RM || !adjWeight || !nReps) return null;
+    const new1RM = estimate1RM(adjWeight, nReps);
     return ((new1RM - current1RM) / current1RM) * 100;
   };
 
-  // Handle weight adjustment buttons
   const handleAdjustWeight = (increment: number) => {
-    console.log(
-      "Adjusting weight, current:",
-      adjustedWeight,
-      "increment:",
-      increment,
-    );
     setAdjustedWeight((prev) => {
       if (prev === null) return null;
+      if (barbellMode) {
+        const direction = increment > 0 ? "up" : "down";
+        return getNextValidWeight(prev, direction);
+      }
       const newWeight = Math.max(0, prev + increment);
-      console.log("New weight calculated:", newWeight);
       return newWeight;
     });
     setIsUserAdjusted(true);
   };
 
-  // Reset adjusted weight to original calculated weight
   const handleResetWeight = () => {
     if (
       calculationResult?.equivalentWeight !== null &&
@@ -235,7 +222,6 @@ export default function ProgressionForm() {
       <form className="space-y-6">
         <Card>
           <CardContent className="space-y-4">
-            {/* Current Performance Section */}
             <div className="grid grid-cols-2 gap-4">
               <FormField<ProgressionFormData>
                 control={form.control}
@@ -254,10 +240,8 @@ export default function ProgressionForm() {
                           if (value === "") {
                             field.onChange(null);
                           } else {
-                            const parsedValue = parseFloat(value);
-                            if (!isNaN(parsedValue)) {
-                              field.onChange(parsedValue);
-                            }
+                            const parsed = parseFloat(value);
+                            if (!isNaN(parsed)) field.onChange(parsed);
                           }
                         }}
                         value={field.value ?? ""}
@@ -283,10 +267,8 @@ export default function ProgressionForm() {
                           if (value === "") {
                             field.onChange(null);
                           } else {
-                            const parsedValue = parseInt(value);
-                            if (!isNaN(parsedValue)) {
-                              field.onChange(parsedValue);
-                            }
+                            const parsed = parseInt(value);
+                            if (!isNaN(parsed)) field.onChange(parsed);
                           }
                         }}
                         value={field.value ?? ""}
@@ -297,8 +279,6 @@ export default function ProgressionForm() {
                 )}
               />
             </div>
-
-            {/* Next Set Target */}
             <FormField<ProgressionFormData>
               control={form.control}
               name="nextReps"
@@ -315,10 +295,8 @@ export default function ProgressionForm() {
                         if (value === "") {
                           field.onChange(null);
                         } else {
-                          const parsedValue = parseInt(value);
-                          if (!isNaN(parsedValue)) {
-                            field.onChange(parsedValue);
-                          }
+                          const parsed = parseInt(value);
+                          if (!isNaN(parsed)) field.onChange(parsed);
                         }
                       }}
                       value={field.value ?? ""}
@@ -328,8 +306,6 @@ export default function ProgressionForm() {
                 </FormItem>
               )}
             />
-
-            {/* Results Section */}
             {calculationResult?.current1RM && (
               <div className="space-y-3 rounded-md border p-3">
                 <div className="flex items-center justify-between">
@@ -338,21 +314,18 @@ export default function ProgressionForm() {
                     {calculationResult.current1RM.toFixed(1)} lbs
                   </div>
                 </div>
-
                 <div className="flex items-center justify-between">
                   <div>Equivalent weight for {nextReps} reps:</div>
                   <div className="text-right font-medium">
                     {calculationResult.equivalentWeight} lbs
                   </div>
                 </div>
-
-                {/* Adjustable Weight */}
                 <div className="space-y-1 border-t pt-2">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
                       Target Weight for Next Set:
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-2">
                       {adjustedWeight !== null && adjustedWeight > 0 && (
                         <PlateCalculator
                           key={adjustedWeight}
@@ -384,11 +357,12 @@ export default function ProgressionForm() {
                         size="sm"
                         onClick={() => handleAdjustWeight(-2.5)}
                         disabled={
-                          adjustedWeight === null || adjustedWeight <= 0
+                          adjustedWeight === null ||
+                          adjustedWeight <= (barbellMode ? BAR_WEIGHT : 0)
                         }
                       >
                         <ChevronLeft className="h-5 w-5" />
-                        <span className="sr-only">Decrease weight by 2.5</span>
+                        <span className="sr-only">Decrease weight</span>
                       </Button>
                       <div className="w-24 text-xl font-bold">
                         {adjustedWeight !== null
@@ -403,14 +377,22 @@ export default function ProgressionForm() {
                         disabled={adjustedWeight === null}
                       >
                         <ChevronRight className="h-5 w-5" />
-                        <span className="sr-only">Increase weight by 2.5</span>
+                        <span className="sr-only">Increase weight</span>
                       </Button>
                     </div>
                     <div className="ml-4 font-medium">x {nextReps} reps</div>
                   </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Switch
+                      id="barbell-mode"
+                      checked={barbellMode}
+                      onCheckedChange={setBarbellMode}
+                    />
+                    <label htmlFor="barbell-mode" className="text-sm">
+                      Barbell mode
+                    </label>
+                  </div>
                 </div>
-
-                {/* New 1RM */}
                 {calculationResult.new1RM && (
                   <div className="flex items-center justify-between border-t pt-2">
                     <div>New estimated 1RM:</div>
@@ -438,8 +420,6 @@ export default function ProgressionForm() {
             )}
           </CardContent>
         </Card>
-
-        {/* Projection Table */}
         {projectionData.length > 0 && (
           <Card>
             <CardHeader>
