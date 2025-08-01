@@ -1102,6 +1102,7 @@ export default function WorkoutComponent({
           <WeightKeyboard
             onKeyPress={handleKeyPress}
             activeSetWeightModifier={activeSet?.weightModifier}
+            currentWeight={parseFloat(state.inputValue) || undefined}
           />
         ) : (
           <RepsKeyboard onKeyPress={handleKeyPress} />

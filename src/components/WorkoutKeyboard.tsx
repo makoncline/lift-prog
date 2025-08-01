@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { WeightModifier } from "@/lib/workoutLogic";
+import { PlateCalculator } from "@/components/plate-calculator";
 
 /* ---------- low-level primitives ---------- */
 
@@ -149,9 +150,11 @@ function DigitKeys({ onKeyPress }: { onKeyPress: (v: string) => void }) {
 export function WeightKeyboard({
   onKeyPress,
   activeSetWeightModifier,
+  currentWeight,
 }: {
   onKeyPress: (v: string) => void;
   activeSetWeightModifier?: WeightModifier;
+  currentWeight?: number;
 }) {
   const isBwActive = activeSetWeightModifier === "bodyweight";
 
@@ -169,13 +172,22 @@ export function WeightKeyboard({
         <Delete size={16} />
       </KBButton>
 
-      {/* action1 - collapse */}
-      <KBButton value="collapse" onKeyPress={onKeyPress} gridArea="action1">
-        <div className="flex items-center gap-1">
-          <KeyboardIcon size={16} />
-          <ChevronDown size={12} />
+      {/* action1 - plate calculator & collapse */}
+      <DoubleCell gridArea="action1">
+        <div className="h-full w-full">
+          <PlateCalculator
+            key={String(currentWeight ?? "")}
+            className="h-full w-full"
+            defaultWeight={currentWeight}
+          />
         </div>
-      </KBButton>
+        <KBButton value="collapse" onKeyPress={onKeyPress} gridArea="">
+          <div className="flex items-center gap-1">
+            <KeyboardIcon size={16} />
+            <ChevronDown size={12} />
+          </div>
+        </KBButton>
+      </DoubleCell>
 
       {/* action2 - minus / plus */}
       <DoubleCell gridArea="action2">
