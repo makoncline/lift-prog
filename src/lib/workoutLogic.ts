@@ -566,14 +566,22 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
       let initialValue = "";
       if (field === "weight") {
-        // If bodyweight, show 0 if null, otherwise show the number (could be negative)
+        let weightValue: number | null = set.weight;
+        if (weightValue === null && !set.weightExplicit) {
+          weightValue = displayWeight(set, ex.sets, setIndex, ex);
+        }
+
         if (set.weightModifier === "bodyweight") {
-          initialValue = set.weight === null ? "0" : String(set.weight);
+          initialValue = weightValue !== null ? String(weightValue) : "0";
         } else {
-          initialValue = set.weight !== null ? String(set.weight) : "";
+          initialValue = weightValue !== null ? String(weightValue) : "";
         }
       } else if (field === "reps") {
-        initialValue = set.reps !== null ? String(set.reps) : "";
+        let repsValue: number | null = set.reps;
+        if (repsValue === null && !set.repsExplicit) {
+          repsValue = displayReps(set, ex.sets, setIndex, ex);
+        }
+        initialValue = repsValue !== null ? String(repsValue) : "";
       }
 
       return {
@@ -1069,10 +1077,13 @@ const applyInput = (
       : field === "weight"
         ? parseFloat(newVal)
         : parseInt(newVal, 10);
+
+  const isExplicit = parsed !== null;
+
   const updatedSet: WorkoutSet = {
     ...set,
     [field]: parsed,
-    [`${field}Explicit`]: true,
+    [`${field}Explicit`]: isExplicit,
   };
   const newExercises = replaceSet(
     exercises,
