@@ -366,7 +366,7 @@ export function RestTimer({ className }: RestTimerProps) {
         )}
       </Button>
 
-      <Dialog open={open} onOpenChange={handleOpenChange}>
+      <Dialog modal={false} open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>
