@@ -264,7 +264,7 @@ export function PlateCalculator({
         <Scale className="h-4 w-4" />
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog modal={false} open={open} onOpenChange={setOpen}>
         <DialogContent className="w-[95vw] max-w-md">
           <DialogHeader>
             <DialogTitle>Plate Calculator</DialogTitle>
