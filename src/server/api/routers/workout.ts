@@ -1,43 +1,17 @@
 import { z } from "zod";
-
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
-import { Modifier, WeightModifier } from "@prisma/client";
-
-// Define Zod schemas matching the structure of CompletedWorkout from workoutLogic
-const CompletedSetSchema = z.object({
-  order: z.number(),
-  weight: z.number().nullable(),
-  reps: z.number().nullable(),
-  modifier: z.nativeEnum(Modifier).nullable(),
-  weightModifier: z.nativeEnum(WeightModifier).nullable(),
-  completed: z.boolean(),
-});
-
-const CompletedExerciseSchema = z.object({
-  name: z.string(),
-  order: z.number(),
-  notes: z.string().optional(),
-  sets: z.array(CompletedSetSchema),
-});
-
-const CompletedWorkoutSchema = z.object({
-  userId: z.string(),
-  name: z.string(),
-  notes: z.string().optional(),
-  completedAt: z.date(),
-  startedAt: z.date(),
-  exercises: z.array(CompletedExerciseSchema),
-});
+import { CompletedWorkoutSchema } from "@/lib/schemas/workout-schema";
 
 export const workoutRouter = createTRPCRouter({
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
     .mutation(async ({ ctx, input }) => {
-      const { userId, name, exercises, notes, completedAt, startedAt } = input;
+      const { name, exercises, notes, completedAt, startedAt } = input;
       const prisma = ctx.db; // Use prisma client from context
+      const userId = ctx.session.userId;
 
-      if (ctx.session?.userId !== userId) {
+      if (!userId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Unauthorized: User ID mismatch",
@@ -71,7 +45,7 @@ export const workoutRouter = createTRPCRouter({
           },
         });
 
-        for (const [index, exerciseInput] of exercises.entries()) {
+        for (const exerciseInput of exercises) {
           const exerciseId = exerciseNameToIdMap.get(exerciseInput.name);
           if (!exerciseId) {
             throw new TRPCError({
@@ -84,14 +58,14 @@ export const workoutRouter = createTRPCRouter({
             data: {
               workoutSessionId: workout.id,
               exerciseId: exerciseId,
-              order: index,
+              order: exerciseInput.order,
               notes: exerciseInput.notes,
             },
           });
 
-          const setsData = exerciseInput.sets.map((set, setIndex) => ({
+          const setsData = exerciseInput.sets.map((set, _setIndex) => ({
             workoutExerciseId: workoutExercise.id,
-            order: setIndex,
+            order: set.order,
             weight: set.weight,
             reps: set.reps,
             modifier: set.modifier,

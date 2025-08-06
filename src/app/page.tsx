@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useUser, SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import { workoutTemplates } from "@/data/workout-templates";
 import { H2, H3, P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
@@ -29,15 +29,6 @@ import { toast } from "sonner";
 
 // Import the shared constant
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
-
-// Define a type for the data returned by listRecent query
-// Note: Prisma dates are Date objects, need formatting for display
-interface RecentWorkoutItem {
-  id: number;
-  name: string;
-  completedAt: Date | null;
-  startedAt: Date;
-}
 
 // Helper function to format date and time
 const formatDateTime = (date: Date): { dateStr: string; timeStr: string } => {

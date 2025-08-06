@@ -60,35 +60,6 @@ export interface Workout {
   isInProgress: boolean; // Added to track if workout is active
 }
 
-// Types for finalized workouts
-export interface CompletedSet {
-  weight: number | null;
-  reps: number | null;
-  modifier?: SetModifier;
-  weightModifier?: WeightModifier; // Added to completed set
-  order: number;
-  completed: boolean;
-}
-
-export interface CompletedExercise {
-  name: string;
-  sets: CompletedSet[];
-  notes: Note[];
-  order: number;
-}
-
-/**
- * Interface representing a completed workout ready to be saved
- */
-export interface CompletedWorkout {
-  id?: string;
-  name: string;
-  date: string;
-  duration?: number; // in seconds
-  notes: Note[];
-  exercises: CompletedExercise[];
-}
-
 // ---------------------------  Constants  -------------------------------
 
 export const MIN_REPS = 8;
@@ -564,7 +535,26 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       if (field === "weight") {
         let weightValue: number | null = set.weight;
         if (weightValue === null && !set.weightExplicit) {
-          weightValue = displayWeight(set, ex.sets, setIndex, ex);
+          const { weight, weightModifier } = displayWeight(
+            set,
+            ex.sets,
+            setIndex,
+            ex,
+          );
+          weightValue = weight;
+          if (weightModifier) {
+            const newSet: WorkoutSet = { ...set, weightModifier };
+            const newExercises = replaceSet(
+              state.exercises,
+              exerciseIndex,
+              setIndex,
+              newSet,
+            );
+            // This is a bit of a hack, but we need to update the state here
+            // so that the rest of the function has the correct weightModifier.
+            // A deeper refactor might be needed to avoid this.
+            state = { ...state, exercises: newExercises };
+          }
         }
 
         if (set.weightModifier === "bodyweight") {
@@ -982,60 +972,25 @@ export const displayWeight = (
   sets: WorkoutSet[],
   idx: number,
   exercise?: WorkoutExercise,
-): number | null => {
+): { weight: number | null; weightModifier: WeightModifier | undefined } => {
   // Return explicit/completed weight
-  if (set.weightExplicit || set.completed) return set.weight;
+  if (set.weightExplicit || set.completed)
+    return { weight: set.weight, weightModifier: set.weightModifier };
 
   // Need exercise to estimate
-  if (!exercise) return null;
+  if (!exercise) return { weight: null, weightModifier: undefined };
 
   try {
     // Get estimated weight with error handling
     const estimate = estimateSet(sets, idx, exercise);
 
-    // ALWAYS update the set's weightModifier based on the estimate
-    // This ensures we cascade both adding and removing bodyweight modifier
-    set.weightModifier = estimate.weightModifier;
-
-    // If this is a bodyweight exercise but has no weight value yet,
-    // try to find a better weight from other bodyweight sets
-    if (
-      estimate.weightModifier === "bodyweight" &&
-      (estimate.weight === null || estimate.weight === 0)
-    ) {
-      // First, check if there's a working set above this one that has a bodyweight value
-      const workingSets = sets.filter((s) => s.modifier !== "warmup");
-      const currentSetIdx = workingSets.findIndex((s) => s === set);
-
-      if (currentSetIdx > 0) {
-        // Look at the previous working set if it has bodyweight
-        const prevSet = workingSets[currentSetIdx - 1];
-        if (
-          prevSet?.weightModifier === "bodyweight" &&
-          prevSet.weight !== null &&
-          prevSet.weight !== 0
-        ) {
-          return prevSet.weight;
-        }
-      }
-
-      // As a fallback, check any completed bodyweight set
-      for (const otherSet of sets) {
-        if (
-          otherSet.weightModifier === "bodyweight" &&
-          otherSet.weight !== null &&
-          otherSet.weight !== 0 &&
-          otherSet.completed
-        ) {
-          return otherSet.weight;
-        }
-      }
-    }
-
-    return estimate.weight;
+    return {
+      weight: estimate.weight,
+      weightModifier: estimate.weightModifier,
+    };
   } catch (error) {
     console.error("Error estimating weight:", error);
-    return null;
+    return { weight: null, weightModifier: undefined };
   }
 };
 
@@ -1131,7 +1086,7 @@ const handleNext = (state: Workout): Workout => {
     exerciseIndex,
     setIndex,
   };
-  const toggled = workoutReducer(state, toggleAction); // reuse toggle logic
+  let toggled = workoutReducer(state, toggleAction); // reuse toggle logic
   const ex = toggled.exercises[exerciseIndex];
   if (!ex) return toggled;
   const nextSetExists = setIndex + 1 < ex.sets.length;
@@ -1141,12 +1096,28 @@ const handleNext = (state: Workout): Workout => {
     const nextSet = ex.sets[setIndex + 1];
     if (!nextSet) return toggled;
 
-    const weightValue = displayWeight(nextSet, ex.sets, setIndex + 1, ex);
+    const { weight, weightModifier } = displayWeight(
+      nextSet,
+      ex.sets,
+      setIndex + 1,
+      ex,
+    );
+
+    if (weightModifier) {
+      const newSet: WorkoutSet = { ...nextSet, weightModifier };
+      const newExercises = replaceSet(
+        toggled.exercises,
+        exerciseIndex,
+        setIndex + 1,
+        newSet,
+      );
+      toggled = { ...toggled, exercises: newExercises };
+    }
 
     return {
       ...toggled,
       activeField: { exerciseIndex, setIndex: setIndex + 1, field: "weight" },
-      inputValue: weightValue?.toString() ?? "",
+      inputValue: weight?.toString() ?? "",
       isFirstInteraction: true,
     };
   }
@@ -1163,39 +1134,41 @@ const handleNext = (state: Workout): Workout => {
 /**
  * Creates a finalized workout object from the current workout state
  */
+import type {
+  CompletedExercise,
+  CompletedSet,
+  CompletedWorkout,
+} from "@/lib/schemas/workout-schema";
+
 export function finalizeWorkout(
   state: Workout,
   workoutNotesText?: string,
-  duration?: number,
 ): CompletedWorkout {
   const completedExercises: CompletedExercise[] = state.exercises
     .map((ex, exIndex) => {
       const completedSets: CompletedSet[] = ex.sets.map((set, index) => ({
         weight: set.weight,
         reps: set.reps,
-        modifier: set.modifier,
-        weightModifier: set.weightModifier, // Include weight modifier
+        modifier: set.modifier ?? null,
+        weightModifier: set.weightModifier ?? null,
         order: index + 1,
         completed: set.completed,
       }));
-      // Filter out exercises with no completed sets? Maybe not, keep all attempted.
-      // .filter(set => set.completed);
 
       return {
         name: ex.name,
         sets: completedSets,
-        notes: ex.notes, // Keep exercise notes
+        notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
         order: exIndex + 1,
       };
     })
-    // Optionally filter exercises that had no sets attempted/completed
     .filter((ex) => ex.sets.length > 0);
 
   return {
     name: state.name,
-    date: new Date().toISOString(),
-    duration: duration,
-    notes: workoutNotesText ? [{ text: workoutNotesText }] : [], // Use provided workout notes
+    startedAt: new Date(state.startTime),
+    completedAt: new Date(),
+    notes: workoutNotesText,
     exercises: completedExercises,
   };
 }

@@ -47,6 +47,95 @@ export function RestTimer({ className }: RestTimerProps) {
   // Audio notification ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // --- Helper Functions ---
+
+  const clearStoredTimer = () => {
+    localStorage.removeItem(TIMER_END_KEY);
+    localStorage.removeItem(TIMER_DURATION_KEY);
+  };
+
+  const saveTimerState = (endTime: number, duration: number) => {
+    localStorage.setItem(TIMER_END_KEY, endTime.toString());
+    localStorage.setItem(TIMER_DURATION_KEY, duration.toString());
+  };
+
+  const requestNotificationPermission = React.useCallback(async () => {
+    if ("Notification" in window) {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+    }
+  }, []);
+
+  const playSound = React.useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      void audioRef.current.play().catch((err) => {
+        console.error("Failed to play sound:", err);
+      });
+    }
+  }, []);
+
+  const showNotification = React.useCallback(() => {
+    if (notificationPermission === "granted") {
+      new Notification("Rest timer complete!", {
+        body: "Time to get back to it!",
+        icon: "/icon-192x192.png",
+      });
+    }
+  }, [notificationPermission]);
+
+  // Play sound and vibrate function
+  const notifyTimerComplete = React.useCallback(() => {
+    playSound();
+    showNotification();
+
+    // Vibrate on mobile devices if supported
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+      try {
+        navigator.vibrate([200, 100, 200]);
+      } catch (err) {
+        console.error("Vibration API error:", err);
+      }
+    }
+  }, [playSound, showNotification]);
+
+  // Start timer interval for UI updates
+  const startTimerInterval = React.useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    // Update UI every 500ms
+    timerRef.current = setInterval(() => {
+      const endTimeStr = localStorage.getItem(TIMER_END_KEY);
+      if (!endTimeStr) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        return;
+      }
+
+      const endTime = parseInt(endTimeStr, 10);
+      const now = Date.now();
+      const remaining = endTime - now;
+
+      if (remaining <= 0) {
+        // Timer complete
+        setSecondsLeft(0);
+        setTimerRunning(false);
+        setTimerCompleted(true);
+        clearStoredTimer();
+        if (timerRef.current) clearInterval(timerRef.current);
+        notifyTimerComplete();
+
+        // If dialog is open, reset to select mode
+        if (open) {
+          setMode("select");
+        }
+      } else {
+        setSecondsLeft(Math.ceil(remaining / 1000));
+      }
+    }, 500);
+  }, [open, notifyTimerComplete]);
+
   // Check notification permission and existing timer on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -88,129 +177,7 @@ export function RestTimer({ className }: RestTimerProps) {
         clearInterval(timerRef.current);
       }
     };
-  }, []);
-
-  // Save timer state to localStorage
-  const saveTimerState = (endTime: number, duration: number) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(TIMER_END_KEY, endTime.toString());
-      localStorage.setItem(TIMER_DURATION_KEY, duration.toString());
-    }
-  };
-
-  // Clear stored timer
-  const clearStoredTimer = () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(TIMER_END_KEY);
-      localStorage.removeItem(TIMER_DURATION_KEY);
-    }
-  };
-
-  // Start timer interval for UI updates
-  const startTimerInterval = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-
-    // Update UI every 500ms
-    timerRef.current = setInterval(() => {
-      const endTimeStr = localStorage.getItem(TIMER_END_KEY);
-      if (!endTimeStr) {
-        clearInterval(timerRef.current!);
-        return;
-      }
-
-      const endTime = parseInt(endTimeStr, 10);
-      const now = Date.now();
-      const remaining = endTime - now;
-
-      if (remaining <= 0) {
-        // Timer complete
-        setSecondsLeft(0);
-        setTimerRunning(false);
-        setTimerCompleted(true);
-        clearStoredTimer();
-        clearInterval(timerRef.current!);
-        notifyTimerComplete();
-
-        // If dialog is open, reset to select mode
-        if (open) {
-          setMode("select");
-        }
-      } else {
-        setSecondsLeft(Math.ceil(remaining / 1000));
-      }
-    }, 500);
-  };
-
-  // Request notification permission
-  const requestNotificationPermission = async () => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      try {
-        const permission = await Notification.requestPermission();
-        setNotificationPermission(permission);
-        return permission;
-      } catch (err) {
-        console.error("Error requesting notification permission:", err);
-        return "denied";
-      }
-    }
-    return "denied";
-  };
-
-  // Show browser notification
-  const showNotification = () => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-
-    if (notificationPermission === "granted") {
-      try {
-        new Notification("Rest Timer Complete", {
-          body: "Your rest period has ended!",
-          icon: "/favicon.ico",
-        });
-      } catch (err) {
-        console.error("Error showing notification:", err);
-      }
-    } else if (notificationPermission === "default") {
-      void requestNotificationPermission().then((permission) => {
-        if (permission === "granted") {
-          showNotification();
-        }
-      });
-    }
-  };
-
-  // Play sound function
-  const playSound = () => {
-    // Sound is disabled to prevent interrupting background audio (e.g., Spotify)
-    // when timer notifications occur on mobile devices.
-    // If sound notification is needed in the future, consider implementing
-    // a user toggle or using a less disruptive audio approach.
-    return;
-
-    // Original implementation:
-    // if (audioRef.current) {
-    //   audioRef.current.currentTime = 0;
-    //   audioRef.current.play().catch((err) => {
-    //     console.error("Failed to play audio:", err);
-    //   });
-    // }
-  };
-
-  // Play sound and vibrate function
-  const notifyTimerComplete = () => {
-    playSound();
-    showNotification();
-
-    // Vibrate on mobile devices if supported
-    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-      try {
-        navigator.vibrate([200, 100, 200]);
-      } catch (err) {
-        console.error("Vibration API error:", err);
-      }
-    }
-  };
+  }, [startTimerInterval]);
 
   // Format seconds to MM:SS
   const formatTime = (seconds: number): string => {
