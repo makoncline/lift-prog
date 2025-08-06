@@ -19,7 +19,6 @@ export interface Note {
 }
 
 export interface WorkoutSet {
-  id: number;
   weight: number | null; // lb
   reps: number | null;
   completed: boolean;
@@ -32,7 +31,6 @@ export interface WorkoutSet {
 }
 
 export interface WorkoutExercise {
-  id: number;
   name: string;
   sets: WorkoutSet[];
   previousSets: Array<{
@@ -73,10 +71,10 @@ export interface CompletedSet {
 }
 
 export interface CompletedExercise {
-  id?: string;
   name: string;
   sets: CompletedSet[];
   notes: Note[];
+  order: number;
 }
 
 /**
@@ -409,13 +407,11 @@ export const initialiseExercises = (
     }>;
   }[],
 ): WorkoutExercise[] =>
-  previous.map((ex, i) => ({
-    id: i,
+  previous.map((ex) => ({
     name: ex.name,
-    sets: ex.sets.map((s, idx) => {
+    sets: ex.sets.map((s) => {
       const isPrevBodyweight = s.weightModifier === "bodyweight";
       return {
-        id: idx,
         weight: isPrevBodyweight ? s.weight : null,
         reps: null,
         completed: false,
@@ -529,9 +525,9 @@ export type Action =
   | { type: "ADD_SET"; exerciseIndex: number }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
-  | { type: "ADD_EXERCISE_NOTE"; exerciseId: number; text: string }
+  | { type: "ADD_EXERCISE_NOTE"; exerciseIndex: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
-  | { type: "UPDATE_NOTES"; exerciseId: number; notes: string }
+  | { type: "UPDATE_NOTES"; exerciseIndex: number; notes: string }
   | { type: "UPDATE_WORKOUT_NAME"; name: string }
   | { type: "REPLACE_STATE"; state: Workout };
 
@@ -696,12 +692,30 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         modifier: set.modifier === "warmup" ? undefined : "warmup",
       };
 
-      const newExercises = replaceSet(
+      // Create a new sets array without the toggled set
+      const otherSets = ex.sets.filter((_, i) => i !== setIndex);
+
+      // Create new sorted lists of warmup and working sets
+      const warmups = [
+        ...otherSets.filter((s) => s.modifier === "warmup"),
+        ...(updatedSet.modifier === "warmup" ? [updatedSet] : []),
+      ];
+
+      const working = [
+        ...otherSets.filter((s) => s.modifier !== "warmup"),
+        ...(updatedSet.modifier !== "warmup" ? [updatedSet] : []),
+      ];
+
+      // Combine the sorted lists
+      const newSets = [...warmups, ...working];
+
+      const newEx: WorkoutExercise = { ...ex, sets: newSets };
+      const newExercises = replaceExercise(
         state.exercises,
         exerciseIndex,
-        setIndex,
-        updatedSet,
+        newEx,
       );
+
       return { ...state, exercises: newExercises };
     }
 
@@ -793,20 +807,22 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const { exerciseIndex } = action;
       const exPrev = state.exercises[exerciseIndex];
       if (!exPrev) return state;
-      const prevData = exPrev.sets[exPrev.sets.length] ?? {
-        weight: null,
-        reps: null,
-      };
+
+      const lastSet =
+        exPrev.sets.length > 0
+          ? exPrev.sets[exPrev.sets.length - 1]
+          : undefined;
+
       const newSet: WorkoutSet = {
-        id: exPrev.sets.length,
         weight: null,
         reps: null,
         completed: false,
         weightExplicit: false,
         repsExplicit: false,
-        prevWeight: prevData.weight,
-        prevReps: prevData.reps,
-        modifier: undefined, // No modifier by default
+        prevWeight: null,
+        prevReps: null,
+        modifier: undefined,
+        weightModifier: lastSet?.weightModifier,
       };
       const updatedExercise: WorkoutExercise = {
         ...exPrev,
@@ -839,29 +855,20 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
     }
 
     case "ADD_EXERCISE_NOTE": {
-      const { exerciseId, text } = action;
-
-      // Find the exercise with the matching ID
-      const exerciseIndex = state.exercises.findIndex(
-        (ex) => ex.id === exerciseId,
-      );
-      if (exerciseIndex === -1) return state;
+      const { exerciseIndex, text } = action;
 
       const exercise = state.exercises[exerciseIndex];
       if (!exercise) return state;
 
-      // Create a new note
       const newNote: Note = {
         text,
       };
 
-      // Create updated exercise with new note added
       const updatedExercise: WorkoutExercise = {
         ...exercise,
         notes: [...exercise.notes, newNote],
       };
 
-      // Update the exercises array
       const newExercises = replaceExercise(
         state.exercises,
         exerciseIndex,
@@ -885,12 +892,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
     case "UPDATE_NOTES": {
       // For backward compatibility, convert the notes string to a Note object
-      const { exerciseId, notes } = action;
-
-      const exerciseIndex = state.exercises.findIndex(
-        (ex) => ex.id === exerciseId,
-      );
-      if (exerciseIndex === -1) return state;
+      const { exerciseIndex, notes } = action;
 
       const exercise = state.exercises[exerciseIndex];
       if (!exercise) return state;
@@ -1167,7 +1169,7 @@ export function finalizeWorkout(
   duration?: number,
 ): CompletedWorkout {
   const completedExercises: CompletedExercise[] = state.exercises
-    .map((ex) => {
+    .map((ex, exIndex) => {
       const completedSets: CompletedSet[] = ex.sets.map((set, index) => ({
         weight: set.weight,
         reps: set.reps,
@@ -1180,10 +1182,10 @@ export function finalizeWorkout(
       // .filter(set => set.completed);
 
       return {
-        id: String(ex.id), // Assuming id is number, convert to string if needed
         name: ex.name,
         sets: completedSets,
         notes: ex.notes, // Keep exercise notes
+        order: exIndex + 1,
       };
     })
     // Optionally filter exercises that had no sets attempted/completed

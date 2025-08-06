@@ -65,9 +65,6 @@ import {
 import { api } from "@/trpc/react";
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants"; // Import the constant
 
-// TODO: Replace with a more robust ID generation method if needed
-const generateId = () => Math.random().toString(36).substring(2, 15);
-
 // Type definition for data structure expected from previous workouts or templates
 interface PreviousExerciseData {
   name: string;
@@ -143,7 +140,6 @@ export default function WorkoutComponent({
           ...set,
           // Handle potential null weightModifier from input
           weightModifier: set.weightModifier ?? undefined,
-          id: generateId(),
         })),
       })),
     ),
@@ -262,15 +258,15 @@ export default function WorkoutComponent({
   // State for delete confirmation dialog
   const [deleteDialog, setDeleteDialog] = useState<{
     isOpen: boolean;
-    setId: number | null;
-    exerciseId: number | null;
+    setIndex: number | null;
+    exerciseIndex: number | null;
     exerciseName: string;
     setNumber: number;
     isWarmup: boolean;
   }>({
     isOpen: false,
-    setId: null,
-    exerciseId: null,
+    setIndex: null,
+    exerciseIndex: null,
     exerciseName: "",
     setNumber: 0,
     isWarmup: false,
@@ -322,66 +318,53 @@ export default function WorkoutComponent({
     return state.notes[0]?.text ?? "";
   };
 
-  const toggleNoteVisibility = (exerciseId: number) => {
-    setShowNotes((prev) => ({ ...prev, [exerciseId]: !prev[exerciseId] }));
+  const toggleNoteVisibility = (exerciseIndex: number) => {
+    setShowNotes((prev) => ({
+      ...prev,
+      [exerciseIndex]: !prev[exerciseIndex],
+    }));
   };
 
-  const updateExerciseNote = (exerciseId: number, notes: string) => {
-    dispatch({ type: "UPDATE_NOTES", exerciseId, notes });
+  const updateExerciseNote = (exerciseIndex: number, notes: string) => {
+    dispatch({ type: "UPDATE_NOTES", exerciseIndex, notes });
   };
 
   const getExerciseNoteText = (exercise: WorkoutExercise) => {
     return exercise.notes[0]?.text ?? "";
   };
 
-  const handleDeleteSet = (setId: number) => {
-    if (deleteDialog.setId === null || deleteDialog.exerciseId === null) return;
-
-    const exerciseIndex = exercises.findIndex(
-      (ex) => ex.id === deleteDialog.exerciseId,
-    );
-
-    if (exerciseIndex !== -1) {
-      const exercise = exercises[exerciseIndex];
-      if (!exercise) return;
-
-      const setIndex = exercise.sets.findIndex((s) => s.id === setId);
-
-      if (setIndex !== -1) {
-        dispatch({
-          type: "DELETE_SET",
-          exerciseIndex,
-          setIndex,
-        });
-      }
-    }
+  const handleDeleteSet = (exerciseIndex: number, setIndex: number) => {
+    dispatch({
+      type: "DELETE_SET",
+      exerciseIndex,
+      setIndex,
+    });
 
     setDeleteDialog({
       isOpen: false,
-      setId: null,
-      exerciseId: null,
+      setIndex: null,
+      exerciseIndex: null,
       exerciseName: "",
       setNumber: 0,
       isWarmup: false,
     });
   };
 
-  const openDeleteDialog = (exerciseId: number, setId: number) => {
-    const exercise = exercises.find((ex) => ex.id === exerciseId);
-    if (!exercise) return;
-
-    const set = exercise.sets.find((s) => s.id === setId);
-    if (!set) return;
-
+  const openDeleteDialog = (
+    exerciseIndex: number,
+    setIndex: number,
+    exercise: WorkoutExercise,
+    set: WorkoutSet,
+  ) => {
     const workingSetNumber =
       exercise.sets
         .filter((s) => s.modifier !== "warmup")
-        .findIndex((s) => s.id === setId) + 1;
+        .findIndex((s, i) => i === setIndex) + 1;
 
     setDeleteDialog({
       isOpen: true,
-      setId,
-      exerciseId,
+      setIndex,
+      exerciseIndex,
       exerciseName: exercise.name,
       setNumber: workingSetNumber,
       isWarmup: set.modifier === "warmup",
@@ -424,19 +407,10 @@ export default function WorkoutComponent({
   };
 
   const handleFocus = (
-    exerciseId: number,
-    setId: number,
+    exerciseIndex: number,
+    setIndex: number,
     field: "weight" | "reps",
   ) => {
-    const exerciseIndex = exercises.findIndex((ex) => ex.id === exerciseId);
-    if (exerciseIndex === -1) return;
-
-    const exercise = exercises[exerciseIndex];
-    if (!exercise) return;
-
-    const setIndex = exercise.sets.findIndex((set) => set.id === setId);
-    if (setIndex === -1) return;
-
     dispatch({
       type: "FOCUS_FIELD",
       exerciseIndex,
@@ -460,8 +434,10 @@ export default function WorkoutComponent({
 
   const handleTouchEnd = (
     e: TouchEvent<HTMLTableRowElement>,
-    exerciseId: number,
-    setId: number,
+    exerciseIndex: number,
+    setIndex: number,
+    exercise: WorkoutExercise,
+    set: WorkoutSet,
   ) => {
     if (!touchStartX.current || !touchEndX.current) {
       touchStartX.current = null;
@@ -472,7 +448,7 @@ export default function WorkoutComponent({
     const swipeDistance = touchStartX.current - touchEndX.current;
     // If swipe left and distance is significant, open delete dialog
     if (swipeDistance > 50) {
-      openDeleteDialog(exerciseId, setId);
+      openDeleteDialog(exerciseIndex, setIndex, exercise, set);
     }
 
     touchStartX.current = null;
@@ -601,12 +577,12 @@ export default function WorkoutComponent({
         finalWorkoutData.notes.length > 0
           ? finalWorkoutData.notes[0]?.text
           : undefined,
-      exercises: finalWorkoutData.exercises.map((ex, exIndex) => ({
+      exercises: finalWorkoutData.exercises.map((ex) => ({
         name: ex.name,
-        order: exIndex,
+        order: ex.order,
         notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
-        sets: ex.sets.map((set, setIndex) => ({
-          order: setIndex,
+        sets: ex.sets.map((set) => ({
+          order: set.order,
           weight: set.weight,
           reps: set.reps,
           modifier: set.modifier ?? null,
@@ -760,7 +736,7 @@ export default function WorkoutComponent({
       </div>
 
       {exercises.map((exercise, exerciseIndex) => (
-        <div key={exercise.id} className="mb-4">
+        <div key={exerciseIndex} className="mb-4">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-lg font-bold">{exercise.name}</h2>
             <DropdownMenu>
@@ -771,24 +747,24 @@ export default function WorkoutComponent({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
-                  onClick={() => toggleNoteVisibility(exercise.id)}
+                  onClick={() => toggleNoteVisibility(exerciseIndex)}
                 >
                   <MessageSquare className="mr-2 h-4 w-4" />
-                  {showNotes[exercise.id] ? "Hide note" : "Add a note"}
+                  {showNotes[exerciseIndex] ? "Hide note" : "Add a note"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
           {/* Exercise note input */}
-          {showNotes[exercise.id] && (
+          {showNotes[exerciseIndex] && (
             <div className="mb-2">
               <Textarea
                 placeholder="Add a note about this exercise..."
                 className="min-h-[60px] text-sm"
                 value={getExerciseNoteText(exercise)}
                 onChange={(e) =>
-                  updateExerciseNote(exercise.id, e.target.value)
+                  updateExerciseNote(exerciseIndex, e.target.value)
                 }
               />
             </div>
@@ -835,7 +811,7 @@ export default function WorkoutComponent({
                   const workingSetNumber =
                     exercise.sets
                       .filter((s) => s.modifier !== "warmup")
-                      .findIndex((s) => s.id === set.id) + 1;
+                      .indexOf(set) + 1;
 
                   return (
                     <TableRow
@@ -849,7 +825,9 @@ export default function WorkoutComponent({
                       )}
                       onTouchStart={(e) => handleTouchStart(e)}
                       onTouchMove={(e) => handleTouchMove(e)}
-                      onTouchEnd={(e) => handleTouchEnd(e, exercise.id, set.id)}
+                      onTouchEnd={(e) =>
+                        handleTouchEnd(e, exerciseIndex, index, exercise, set)
+                      }
                     >
                       <TableCell className="px-1 py-1 text-center">
                         <div
@@ -860,16 +838,11 @@ export default function WorkoutComponent({
                               : "bg-gray-100 text-gray-700",
                           )}
                           onClick={() => {
-                            const setIndex = exercise.sets.findIndex(
-                              (s) => s.id === set.id,
-                            );
-                            if (setIndex !== -1) {
-                              dispatch({
-                                type: "TOGGLE_WARMUP",
-                                exerciseIndex,
-                                setIndex,
-                              });
-                            }
+                            dispatch({
+                              type: "TOGGLE_WARMUP",
+                              exerciseIndex,
+                              setIndex: index,
+                            });
                           }}
                         >
                           {set.modifier === "warmup" ? "W" : workingSetNumber}
@@ -937,7 +910,7 @@ export default function WorkoutComponent({
                           <div
                             className="flex h-full w-full items-center justify-center gap-1 px-1"
                             onClick={() =>
-                              handleFocus(exercise.id, set.id, "weight")
+                              handleFocus(exerciseIndex, index, "weight")
                             }
                           >
                             {/* 1. Icon (Conditional) */}
@@ -1015,7 +988,7 @@ export default function WorkoutComponent({
                           <div
                             className="h-full w-full"
                             onClick={() =>
-                              handleFocus(exercise.id, set.id, "reps")
+                              handleFocus(exerciseIndex, index, "reps")
                             }
                           >
                             {activeField.exerciseIndex === exerciseIndex &&
@@ -1050,16 +1023,11 @@ export default function WorkoutComponent({
                             set.completed && "bg-success hover:bg-success/90",
                           )}
                           onClick={() => {
-                            const setIndex = exercise.sets.findIndex(
-                              (s) => s.id === set.id,
-                            );
-                            if (setIndex !== -1) {
-                              dispatch({
-                                type: "TOGGLE_COMPLETE",
-                                exerciseIndex,
-                                setIndex,
-                              });
-                            }
+                            dispatch({
+                              type: "TOGGLE_COMPLETE",
+                              exerciseIndex,
+                              setIndex: index,
+                            });
                           }}
                         >
                           <Check
@@ -1115,8 +1083,8 @@ export default function WorkoutComponent({
             if (!open)
               setDeleteDialog({
                 isOpen: false,
-                setId: null,
-                exerciseId: null,
+                setIndex: null,
+                exerciseIndex: null,
                 exerciseName: "",
                 setNumber: 0,
                 isWarmup: false,
@@ -1147,8 +1115,8 @@ export default function WorkoutComponent({
                 onClick={() =>
                   setDeleteDialog({
                     isOpen: false,
-                    setId: null,
-                    exerciseId: null,
+                    setIndex: null,
+                    exerciseIndex: null,
                     exerciseName: "",
                     setNumber: 0,
                     isWarmup: false,
@@ -1161,12 +1129,21 @@ export default function WorkoutComponent({
               <Button
                 variant="destructive"
                 onClick={() => {
-                  if (deleteDialog.setId !== null) {
-                    handleDeleteSet(deleteDialog.setId);
+                  if (
+                    deleteDialog.exerciseIndex !== null &&
+                    deleteDialog.setIndex !== null
+                  ) {
+                    handleDeleteSet(
+                      deleteDialog.exerciseIndex,
+                      deleteDialog.setIndex,
+                    );
                   }
                 }}
                 className="px-6"
-                disabled={deleteDialog.setId === null}
+                disabled={
+                  deleteDialog.setIndex === null ||
+                  deleteDialog.exerciseIndex === null
+                }
               >
                 Delete
               </Button>
