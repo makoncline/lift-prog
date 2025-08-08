@@ -34,7 +34,7 @@ Workouts begin at a minimum of 8 reps per set. If the user successfully complete
 - [x] Option to add a set
 - [ ] Add an exercise to a workout
 - [ ] Select difficulty of a set
-- [ ] - and − to increment reps
+- [x] - and − to increment reps
 - [ ] Input weight by selecting bar type and plates per side
 - [x] - and − to increment weight by 2.5
 - [ ] Calculate weight by doing addition
@@ -44,10 +44,10 @@ Workouts begin at a minimum of 8 reps per set. If the user successfully complete
 - [x] Workout timer
 - [x] Workout notes
 - [x] Exercise notes
-- [ ] Add/remove warm-up sets
+- [x] Add/remove warm-up sets
 - [ ] Option for auto rest timer
 - [ ] weight estimates should include body weight
-- [ ] edit workout name, completion time, duration
+- [x] edit workout name, completion time, duration
 
 ## Workouts to start
 

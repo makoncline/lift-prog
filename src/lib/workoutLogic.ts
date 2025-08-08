@@ -499,6 +499,22 @@ export type Action =
   | { type: "ADD_EXERCISE_NOTE"; exerciseIndex: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
   | { type: "UPDATE_NOTES"; exerciseIndex: number; notes: string }
+  | {
+      type: "UPDATE_EXERCISE_NOTE";
+      exerciseIndex: number;
+      noteIndex: number;
+      text: string;
+    }
+  | { type: "DELETE_EXERCISE_NOTE"; exerciseIndex: number; noteIndex: number }
+  | {
+      type: "REORDER_EXERCISE_NOTES";
+      exerciseIndex: number;
+      fromIndex: number;
+      toIndex: number;
+    }
+  | { type: "UPDATE_WORKOUT_NOTE"; noteIndex: number; text: string }
+  | { type: "DELETE_WORKOUT_NOTE"; noteIndex: number }
+  | { type: "REORDER_WORKOUT_NOTES"; fromIndex: number; toIndex: number }
   | { type: "UPDATE_WORKOUT_NAME"; name: string }
   | { type: "REPLACE_STATE"; state: Workout };
 
@@ -870,13 +886,10 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
     case "ADD_WORKOUT_NOTE": {
       const { text } = action;
-
-      // Always create a single note or replace the existing one
       const newNote: Note = { text };
-
       return {
         ...state,
-        notes: [newNote],
+        notes: [...state.notes, newNote],
       };
     }
 
@@ -930,6 +943,98 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       );
 
       return { ...state, exercises: newExercises };
+    }
+
+    case "UPDATE_EXERCISE_NOTE": {
+      const { exerciseIndex, noteIndex, text } = action;
+      const exercise = state.exercises[exerciseIndex];
+      if (!exercise) return state;
+      const updatedNotes: Note[] = exercise.notes.map((n, i) =>
+        i === noteIndex ? { text } : n,
+      );
+      const updatedExercise: WorkoutExercise = {
+        ...exercise,
+        notes: updatedNotes,
+      };
+      const newExercises = replaceExercise(
+        state.exercises,
+        exerciseIndex,
+        updatedExercise,
+      );
+      return { ...state, exercises: newExercises };
+    }
+
+    case "DELETE_EXERCISE_NOTE": {
+      const { exerciseIndex, noteIndex } = action;
+      const exercise = state.exercises[exerciseIndex];
+      if (!exercise) return state;
+      const updatedExercise: WorkoutExercise = {
+        ...exercise,
+        notes: exercise.notes.filter((_, i) => i !== noteIndex),
+      };
+      const newExercises = replaceExercise(
+        state.exercises,
+        exerciseIndex,
+        updatedExercise,
+      );
+      return { ...state, exercises: newExercises };
+    }
+
+    case "REORDER_EXERCISE_NOTES": {
+      const { exerciseIndex, fromIndex, toIndex } = action;
+      const exercise = state.exercises[exerciseIndex];
+      if (!exercise) return state;
+      const notes: Note[] = [...exercise.notes];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= notes.length ||
+        toIndex < 0 ||
+        toIndex >= notes.length
+      )
+        return state;
+      const removed = notes.splice(fromIndex, 1);
+      if (removed.length === 0) return state;
+      const [moved] = removed as [Note];
+      notes.splice(toIndex, 0, moved);
+      const updatedExercise: WorkoutExercise = { ...exercise, notes };
+      const newExercises = replaceExercise(
+        state.exercises,
+        exerciseIndex,
+        updatedExercise,
+      );
+      return { ...state, exercises: newExercises };
+    }
+
+    case "UPDATE_WORKOUT_NOTE": {
+      const { noteIndex, text } = action;
+      if (noteIndex < 0 || noteIndex >= state.notes.length) return state;
+      const updated: Note[] = state.notes.map((n, i) =>
+        i === noteIndex ? { text } : n,
+      );
+      return { ...state, notes: updated };
+    }
+
+    case "DELETE_WORKOUT_NOTE": {
+      const { noteIndex } = action;
+      const updated = state.notes.filter((_, i) => i !== noteIndex);
+      return { ...state, notes: updated };
+    }
+
+    case "REORDER_WORKOUT_NOTES": {
+      const { fromIndex, toIndex } = action;
+      const notes: Note[] = [...state.notes];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= notes.length ||
+        toIndex < 0 ||
+        toIndex >= notes.length
+      )
+        return state;
+      const removed = notes.splice(fromIndex, 1);
+      if (removed.length === 0) return state;
+      const [moved] = removed as [Note];
+      notes.splice(toIndex, 0, moved);
+      return { ...state, notes };
     }
 
     default: {

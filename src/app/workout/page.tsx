@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getWorkoutTemplateById } from "@/data/workout-templates";
-import WorkoutComponent from "@/components/Workout"; // Use updated component name
+import { WorkoutComponent } from "@/components/workout/workout";
 import { H2, P } from "@/components/ui/typography";
 import { api } from "@/trpc/react"; // Import tRPC api
 import { Loader2 } from "lucide-react"; // Import loader icon
