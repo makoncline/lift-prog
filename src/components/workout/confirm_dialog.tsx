@@ -40,6 +40,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog
+      modal={false}
       open={open}
       onOpenChange={(o) => (onOpenChange ? onOpenChange(o) : !o && onCancel())}
     >
@@ -53,10 +54,16 @@ export function ConfirmDialog({
           ) : null}
         </DialogHeader>
         <DialogFooter className="bg-muted/20 flex flex-row justify-end gap-3 border-t p-4">
-          <Button variant="outline" onClick={onCancel} className="px-6">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            className="px-6"
+          >
             {cancelLabel}
           </Button>
           <Button
+            type="button"
             variant={confirmVariant}
             onClick={onConfirm}
             className="px-6"
