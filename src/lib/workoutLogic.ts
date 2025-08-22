@@ -635,14 +635,23 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
     case "PLUS_MINUS": {
       const activeSet = getActiveSet();
-      // Now only applies to weight field, and only increments/decrements
-      if (!activeSet || activeField.field !== "weight") return state;
+      if (!activeSet || activeField.field == null) return state;
 
-      const currentVal = parseFloat(state.inputValue) || 0;
-      const sign = action.sign;
-      const step = sign * WEIGHT_STEP;
-      const newVal = String(roundToStep(currentVal + step));
-      return applyInput(state, newVal, true);
+      if (activeField.field === "weight") {
+        const currentVal = parseFloat(state.inputValue) || 0;
+        const step = action.sign * WEIGHT_STEP;
+        const newVal = String(roundToStep(currentVal + step));
+        return applyInput(state, newVal, true);
+      }
+
+      if (activeField.field === "reps") {
+        const currentVal = parseInt(state.inputValue, 10) || 0;
+        const step = action.sign;
+        const newVal = String(Math.max(currentVal + step, 0));
+        return applyInput(state, newVal, true);
+      }
+
+      return state;
     }
 
     case "TOGGLE_SIGN": {
