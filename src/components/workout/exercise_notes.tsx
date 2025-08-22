@@ -110,7 +110,9 @@ export function ExerciseNotes({
                 <div className="flex w-full items-center gap-2">
                   {editingIndex === i ? (
                     <Input
-                      ref={(el) => (inputRefs.current[i] = el)}
+                      ref={(el) => {
+                        inputRefs.current[i] = el;
+                      }}
                       className="border-input bg-background placeholder:text-muted-foreground/70 h-7 w-full flex-1 rounded border px-2 text-[11px] italic shadow-none focus-visible:ring-1"
                       value={n.text}
                       onChange={(e) => onUpdate(i, e.target.value)}
