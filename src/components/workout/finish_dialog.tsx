@@ -37,7 +37,7 @@ export function FinishDialog({
     name: string;
     startedAt: Date;
     completedAt: Date;
-    exercises: Array<{ sets: Array<{}> }>;
+    exercises: Array<{ sets: Array<Record<string, unknown>> }>;
   };
   date: string;
   startTime: string;
