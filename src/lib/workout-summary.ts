@@ -5,6 +5,14 @@ export type SummaryInputSet = {
   weightModifier?: "bodyweight";
 };
 
+type SanitizedSet = {
+  weight: number;
+  reps: number;
+  weightModifier?: "bodyweight";
+  label: string;
+  key: string;
+};
+
 const formatWeightNumber = (weight: number): string => {
   const rounded = Number(weight.toFixed(2));
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
@@ -25,10 +33,8 @@ const formatWeightLabel = (
   return `${formatWeightNumber(weight)}lb`;
 };
 
-const weightKey = (
-  weight: number,
-  weightModifier?: "bodyweight",
-): string => `${weightModifier ?? "std"}:${weight}`;
+const weightKey = (weight: number, weightModifier?: "bodyweight"): string =>
+  `${weightModifier ?? "std"}:${weight}`;
 
 export const summarizeWorkingSets = (
   exerciseName: string,
@@ -36,26 +42,19 @@ export const summarizeWorkingSets = (
 ): string | undefined => {
   const workingSets = sets.filter((set) => set.modifier !== "warmup");
 
-  const sanitized = workingSets
-    .map((set) => {
-      if (set.weight == null || set.reps == null) return null;
-      const label = formatWeightLabel(set.weight, set.weightModifier);
-      if (!label) return null;
-      return {
-        weight: set.weight,
-        reps: set.reps,
-        weightModifier: set.weightModifier,
-        label,
-        key: weightKey(set.weight, set.weightModifier),
-      };
-    })
-    .filter((value): value is {
-      weight: number;
-      reps: number;
-      weightModifier?: "bodyweight";
-      label: string;
-      key: string;
-    } => value !== null);
+  const sanitized: SanitizedSet[] = [];
+  for (const set of workingSets) {
+    if (set.weight == null || set.reps == null) continue;
+    const label = formatWeightLabel(set.weight, set.weightModifier);
+    if (!label) continue;
+    sanitized.push({
+      weight: set.weight,
+      reps: set.reps,
+      weightModifier: set.weightModifier,
+      label,
+      key: weightKey(set.weight, set.weightModifier),
+    });
+  }
 
   if (sanitized.length === 0) return undefined;
 
