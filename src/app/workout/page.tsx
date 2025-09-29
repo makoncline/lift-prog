@@ -6,6 +6,7 @@ import { getWorkoutTemplateById } from "@/data/workout-templates";
 import { WorkoutComponent } from "@/components/workout/workout";
 import { H2, P } from "@/components/ui/typography";
 import { api } from "@/trpc/react"; // Import tRPC api
+import type { RouterInputs } from "@/trpc/react";
 import { Loader2 } from "lucide-react"; // Import loader icon
 // Using direct string literal until module import is resolved
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
@@ -15,6 +16,7 @@ function WorkoutInitializer() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateId = searchParams.get("templateId");
+  const customExercisesParam = searchParams.get("customExercises");
   const basedOnWorkoutIdStr = searchParams.get("basedOn");
   const basedOnWorkoutId = basedOnWorkoutIdStr
     ? parseInt(basedOnWorkoutIdStr, 10)
@@ -84,55 +86,85 @@ function WorkoutInitializer() {
   }, [templateId, basedOnWorkoutId]);
 
   // Fetch details if starting based on a previous workout
-  const workoutDetailsQuery = api.workout.getWorkoutDetails.useQuery(
-    { workoutId: basedOnWorkoutId! },
-    {
-      enabled: !!basedOnWorkoutId,
-      staleTime: Infinity,
-      refetchOnWindowFocus: false,
-    },
-  );
-
   // --- Render Logic --- //
 
   // Case 1: Start based on previous workout (Highest priority if ID is present)
   if (basedOnWorkoutId) {
-    if (workoutDetailsQuery.isLoading) {
-      return <LoadingState message="Loading previous workout data..." />;
-    }
-    if (workoutDetailsQuery.isError) {
-      return (
-        <ErrorState
-          message={`Error loading workout details: ${workoutDetailsQuery.error.message}`}
-        />
-      );
-    }
-    if (workoutDetailsQuery.data) {
-      return (
-        <WorkoutComponent
-          workoutName={workoutDetailsQuery.data.workoutName}
-          exercises={workoutDetailsQuery.data.exercises}
-          onInitialSave={onInitialSave}
-        />
-      );
-    }
-    return <ErrorState message="Failed to load workout details." />;
+    return (
+      <WorkoutLoader
+        input={{ mode: "workoutReference", workoutId: basedOnWorkoutId }}
+        loadingMessage="Loading previous workout data..."
+        errorPrefix="Error loading workout details"
+        onInitialSave={onInitialSave}
+      />
+    );
   }
 
   // Case 2: Start based on template (Second priority if ID is present)
   if (templateId) {
-    const template = getWorkoutTemplateById(templateId);
-    if (template) {
+    if (templateId === "custom") {
+      if (!customExercisesParam) {
+        return <ErrorState message="Select at least one exercise to start." />;
+      }
+      let exerciseNames: unknown = [];
+      try {
+        exerciseNames = JSON.parse(decodeURIComponent(customExercisesParam));
+      } catch (error) {
+        console.error("Failed to parse custom exercises", error);
+        return (
+          <ErrorState message="Unable to load selected exercises." />
+        );
+      }
+
+      if (!Array.isArray(exerciseNames) || exerciseNames.length === 0) {
+        return <ErrorState message="Select at least one exercise to start." />;
+      }
+
+      const normalizedNames = Array.from(
+        new Set(
+          exerciseNames
+            .map((name) =>
+              typeof name === "string" ? name.trim() : String(name ?? ""),
+            )
+            .filter((name) => name.length > 0),
+        ),
+      );
+
+      if (normalizedNames.length === 0) {
+        return <ErrorState message="Select at least one exercise to start." />;
+      }
+
       return (
-        <WorkoutComponent
-          workoutName={template.name}
-          exercises={template.exercises}
+        <WorkoutLoader
+          input={{
+            mode: "exerciseList",
+            workoutName: "Custom Workout",
+            exerciseNames: normalizedNames,
+          }}
+          loadingMessage="Preparing workout..."
+          errorPrefix="Error preparing workout"
           onInitialSave={onInitialSave}
         />
       );
-    } else {
-      return <ErrorState message="Workout template not found." />;
     }
+
+    const template = getWorkoutTemplateById(templateId);
+    if (template) {
+      return (
+        <WorkoutLoader
+          input={{
+            mode: "exerciseList",
+            workoutName: template.name,
+            exerciseNames: template.exercises.map((ex) => ex.name),
+          }}
+          loadingMessage="Preparing workout..."
+          errorPrefix="Error preparing workout"
+          onInitialSave={onInitialSave}
+        />
+      );
+    }
+
+    return <ErrorState message="Workout template not found." />;
   }
 
   // Case 3: No specific instructions (templateId or basedOnWorkoutId)
@@ -156,6 +188,51 @@ function WorkoutInitializer() {
   } else {
     return <LoadingState message="Verifying workout status..." />;
   }
+}
+
+type PrepareInitialWorkoutInput = RouterInputs["workout"]["prepareInitialWorkout"];
+
+function WorkoutLoader({
+  input,
+  loadingMessage,
+  errorPrefix,
+  onInitialSave,
+}: {
+  input: PrepareInitialWorkoutInput;
+  loadingMessage: string;
+  errorPrefix: string;
+  onInitialSave?: () => void;
+}) {
+  const prepareWorkoutQuery = api.workout.prepareInitialWorkout.useQuery(input, {
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+
+  if (prepareWorkoutQuery.isLoading) {
+    return <LoadingState message={loadingMessage} />;
+  }
+
+  if (prepareWorkoutQuery.isError) {
+    return (
+      <ErrorState
+        message={`${errorPrefix}: ${prepareWorkoutQuery.error.message}`}
+      />
+    );
+  }
+
+  const data = prepareWorkoutQuery.data;
+
+  if (!data) {
+    return <ErrorState message="Failed to prepare workout." />;
+  }
+
+  return (
+    <WorkoutComponent
+      workoutName={data.workoutName}
+      exercises={data.exercises}
+      onInitialSave={onInitialSave}
+    />
+  );
 }
 
 export default function WorkoutPage() {

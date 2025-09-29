@@ -6,6 +6,7 @@ import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import { workoutTemplates } from "@/data/workout-templates";
 import { H2, H3, P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardHeader,
@@ -170,6 +171,15 @@ function AuthenticatedHomePage() {
                       </Button>
                     </div>
                   </CardHeader>
+                  {workout.exerciseSummaries?.length ? (
+                    <CardContent className="pt-0">
+                      <ul className="text-muted-foreground space-y-1 text-xs">
+                        {workout.exerciseSummaries.map((summary, index) => (
+                          <li key={`${workout.id}-${index}`}>{summary}</li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  ) : null}
                   <CardFooter className="">
                     <Button
                       size="sm"
@@ -214,6 +224,10 @@ function AuthenticatedHomePage() {
                 </CardFooter>
               </Card>
             ))}
+            <CustomTemplateCard onStart={(names) => {
+              const payload = encodeURIComponent(JSON.stringify(names));
+              router.push(`/workout?templateId=custom&customExercises=${payload}`);
+            }} />
           </div>
         </section>
 
@@ -240,6 +254,92 @@ function AuthenticatedHomePage() {
         </AlertDialog>
       </div>
     </>
+  );
+}
+
+function CustomTemplateCard({
+  onStart,
+}: {
+  onStart: (exerciseNames: string[]) => void;
+}) {
+  const [selectedExercises, setSelectedExercises] = useState<string[]>([]);
+  const exercisesQuery = api.exercise.list.useQuery(undefined, {
+    staleTime: Infinity,
+  });
+
+  const toggleExercise = (name: string) => {
+    setSelectedExercises((prev) => {
+      if (prev.includes(name)) {
+        return prev.filter((existing) => existing !== name);
+      }
+      return [...prev, name];
+    });
+  };
+
+  const handleStart = () => {
+    if (selectedExercises.length === 0) {
+      toast.error("Select at least one exercise to start.");
+      return;
+    }
+    onStart(selectedExercises);
+  };
+
+  return (
+    <Card className="w-full gap-2">
+      <CardHeader className="space-y-1">
+        <CardTitle>Build Your Own</CardTitle>
+        <P className="text-muted-foreground text-sm">
+          Pick the exercises you want for today and start a fresh workout.
+        </P>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {exercisesQuery.isLoading ? (
+          <P className="text-sm text-muted-foreground">Loading exercises…</P>
+        ) : exercisesQuery.isError ? (
+          <P className="text-destructive text-sm">
+            Error loading exercises: {exercisesQuery.error.message}
+          </P>
+        ) : exercisesQuery.data && exercisesQuery.data.length > 0 ? (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {exercisesQuery.data
+              .slice()
+              .sort((a, b) => {
+                const aIndex = selectedExercises.indexOf(a.name);
+                const bIndex = selectedExercises.indexOf(b.name);
+                const aSelected = aIndex !== -1;
+                const bSelected = bIndex !== -1;
+
+                if (aSelected && bSelected) {
+                  return aIndex - bIndex;
+                }
+                if (aSelected) return -1;
+                if (bSelected) return 1;
+                return a.name.localeCompare(b.name);
+              })
+              .map((exercise) => (
+                <label
+                  key={exercise.id}
+                  className="flex cursor-pointer items-center gap-2 rounded border p-2 text-sm hover:bg-muted"
+                >
+                  <Checkbox
+                    checked={selectedExercises.includes(exercise.name)}
+                    onCheckedChange={() => toggleExercise(exercise.name)}
+                    aria-label={`Toggle ${exercise.name}`}
+                  />
+                  <span>{exercise.name}</span>
+                </label>
+              ))}
+          </div>
+        ) : (
+          <P className="text-sm text-muted-foreground">No exercises found.</P>
+        )}
+      </CardContent>
+      <CardFooter>
+        <Button onClick={handleStart} className="w-full" size="sm">
+          Start Custom Workout
+        </Button>
+      </CardFooter>
+    </Card>
   );
 }
 

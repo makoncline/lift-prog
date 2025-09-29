@@ -76,7 +76,12 @@ export function ExerciseSection({
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-lg font-bold">{exercise.name}</h2>
       </div>
-
+      {exercise.previousNotes ? (
+        <div className="mb-2 rounded bg-muted/40 p-2 text-xs text-muted-foreground">
+          <p className="font-semibold">Previous notes</p>
+          <p>{exercise.previousNotes}</p>
+        </div>
+      ) : null}
       <div className="mb-2">
         <ExerciseNotes
           title="Exercise Notes"

@@ -43,6 +43,7 @@ interface PreviousExerciseData {
     modifier?: SetModifier;
     weightModifier?: WeightModifier | null;
   }>;
+  notes?: string | null;
 }
 
 function safelyParseWorkoutState(jsonString: string | null): Workout | null {
