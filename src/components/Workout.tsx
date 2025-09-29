@@ -76,6 +76,7 @@ interface PreviousExerciseData {
     modifier?: SetModifier; // Explicitly use SetModifier type
     weightModifier?: WeightModifier | null; // Add weightModifier (allow null from DB)
   }>;
+  notes?: string | null;
 }
 
 function safelyParseWorkoutState(jsonString: string | null): Workout | null {

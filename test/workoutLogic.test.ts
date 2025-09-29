@@ -23,6 +23,75 @@ describe("progression helpers", () => {
   });
 });
 
+describe("initialiseExercises previous summary", () => {
+  it("groups repeated weights into shorthand", () => {
+    const exercise = initialiseExercises([
+      {
+        name: "Bench Press",
+        sets: [
+          { weight: 100, reps: 8 },
+          { weight: 100, reps: 6 },
+          { weight: 90, reps: 6 },
+        ],
+        notes: "Paused reps last set",
+      },
+    ])[0];
+
+    expect(exercise.previousSummary).toBe(
+      "Bench Press - 100lbx8,x6,90lbx6",
+    );
+    expect(exercise.previousNotes).toBe("Paused reps last set");
+  });
+
+  it("uses colon format when all weights match", () => {
+    const exercise = initialiseExercises([
+      {
+        name: "Overhead Press",
+        sets: [
+          { weight: 100, reps: 8 },
+          { weight: 100, reps: 8 },
+          { weight: 100, reps: 6 },
+        ],
+      },
+    ])[0];
+
+    expect(exercise.previousSummary).toBe(
+      "Overhead Press - 100lb:x8,x8,x6",
+    );
+  });
+
+  it("handles weight changes that return to a previous load", () => {
+    const exercise = initialiseExercises([
+      {
+        name: "Row",
+        sets: [
+          { weight: 100, reps: 8 },
+          { weight: 90, reps: 6 },
+          { weight: 100, reps: 6 },
+        ],
+      },
+    ])[0];
+
+    expect(exercise.previousSummary).toBe(
+      "Row - 100lbx8,90lbx6,100lbx6",
+    );
+  });
+
+  it("omits summary when only warmups are present", () => {
+    const exercise = initialiseExercises([
+      {
+        name: "Bike",
+        sets: [
+          { weight: null, reps: 20, isWarmup: true },
+        ],
+      },
+    ])[0];
+
+    expect(exercise.previousSummary).toBeUndefined();
+    expect(exercise.previousNotes).toBeUndefined();
+  });
+});
+
 describe("PLUS_MINUS reducer", () => {
   const baseState = (): Workout => ({
     currentExerciseIndex: 0,

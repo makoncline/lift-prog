@@ -9,6 +9,8 @@
  *  presentation component (React, React‑Native, CLI, etc.) without change.
  * --------------------------------------------------------------------*/
 
+import { summarizeWorkingSets } from "@/lib/workout-summary";
+
 // -----------------------------  Types  ---------------------------------
 
 export type SetModifier = "warmup";
@@ -39,6 +41,8 @@ export interface WorkoutExercise {
     modifier?: SetModifier;
     weightModifier?: WeightModifier; // Ensure consistency if loading previous data
   }>;
+  previousSummary?: string;
+  previousNotes?: string;
   notes: Note[];
 }
 
@@ -376,32 +380,48 @@ export const initialiseExercises = (
       modifier?: SetModifier;
       weightModifier?: WeightModifier;
     }>;
+    notes?: string | null;
   }[],
 ): WorkoutExercise[] =>
-  previous.map((ex) => ({
-    name: ex.name,
-    sets: ex.sets.map((s) => {
-      const isPrevBodyweight = s.weightModifier === "bodyweight";
-      return {
-        weight: isPrevBodyweight ? s.weight : null,
-        reps: null,
-        completed: false,
-        weightExplicit: false,
-        repsExplicit: false,
-        prevWeight: s.weight,
-        prevReps: s.reps,
-        modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
-        weightModifier: s.weightModifier,
-      };
-    }),
-    previousSets: ex.sets.map((s) => ({
+  previous.map((ex) => {
+    const normalizedSets = ex.sets.map((s) => ({
       weight: s.weight,
       reps: s.reps,
       modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
       weightModifier: s.weightModifier,
-    })),
-    notes: [],
-  }));
+    }));
+
+    const previousSummary = summarizeWorkingSets(ex.name, normalizedSets);
+    const previousNotes = ex.notes ?? undefined;
+
+    return {
+      name: ex.name,
+      sets: ex.sets.map((s) => {
+        const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
+        const isPrevBodyweight = s.weightModifier === "bodyweight";
+        return {
+          weight: isPrevBodyweight ? s.weight : null,
+          reps: null,
+          completed: false,
+          weightExplicit: false,
+          repsExplicit: false,
+          prevWeight: s.weight,
+          prevReps: s.reps,
+          modifier,
+          weightModifier: s.weightModifier,
+        };
+      }),
+      previousSets: normalizedSets.map((s) => ({
+        weight: s.weight,
+        reps: s.reps,
+        modifier: s.modifier,
+        weightModifier: s.weightModifier,
+      })),
+      previousSummary,
+      previousNotes,
+      notes: [],
+    } satisfies WorkoutExercise;
+  });
 
 /**
  * Get previous workout data for a set based on its position
