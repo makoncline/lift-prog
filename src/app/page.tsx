@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
 import { workoutTemplates } from "@/data/workout-templates";
 import { H2, H3, P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ const calculateDuration = (startDate: Date, endDate: Date): number => {
 
 function AuthenticatedHomePage() {
   const router = useRouter();
+  const { isLoaded, isSignedIn } = useAuth();
   const [deleteWorkoutId, setDeleteWorkoutId] = useState<number | null>(null);
   const [hasInProgress, setHasInProgress] = useState(false);
 
@@ -72,6 +73,7 @@ function AuthenticatedHomePage() {
     {
       // Optional: configure query behavior (e.g., refetching)
       // refetchOnWindowFocus: false,
+      enabled: isLoaded && isSignedIn,
     },
   );
 
