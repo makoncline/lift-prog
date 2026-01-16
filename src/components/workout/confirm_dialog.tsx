@@ -40,6 +40,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog
+      modal={false}
       open={open}
       onOpenChange={(o) => (onOpenChange ? onOpenChange(o) : !o && onCancel())}
     >
