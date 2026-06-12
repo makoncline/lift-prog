@@ -1,5 +1,38 @@
+import { existsSync, readFileSync } from "node:fs";
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
+
+/**
+ * @param {string} relativePath
+ */
+const loadRootEnvFile = (relativePath) => {
+  const envUrl = new URL(relativePath, import.meta.url);
+  if (!existsSync(envUrl)) return;
+
+  for (const line of readFileSync(envUrl, "utf8").split(/\r?\n/)) {
+    const match = line.match(
+      /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i,
+    );
+    const key = match?.[1];
+    const rawValue = match?.[2];
+    if (!key || rawValue === undefined || process.env[key] !== undefined) {
+      continue;
+    }
+
+    const trimmedValue = rawValue.trim();
+    const value =
+      (trimmedValue.startsWith('"') && trimmedValue.endsWith('"')) ||
+      (trimmedValue.startsWith("'") && trimmedValue.endsWith("'"))
+        ? trimmedValue.slice(1, -1)
+        : trimmedValue;
+    process.env[key] = value;
+  }
+};
+
+if (process.env.NODE_ENV === "production") {
+  loadRootEnvFile("../../../.env.production");
+}
+loadRootEnvFile("../../../.env");
 
 export const env = createEnv({
   /**
