@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@lift-prog/workout-core": ["../../packages/workout-core/src/index.ts"],
+      "@lift-prog/workout-sdk": ["../../packages/workout-sdk/src/index.ts"]
+    }
+  },
+  "include": ["App.tsx", "**/*.ts", "**/*.tsx"]
+}
