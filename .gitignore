@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+apps/*/node_modules/
+packages/*/node_modules/
 /.pnp
 .pnp.js
 
@@ -17,6 +19,16 @@ db.sqlite
 /.next/
 /out/
 next-env.d.ts
+apps/web/.next/
+apps/web/out/
+
+# expo
+apps/mobile/.expo/
+apps/mobile/.expo-shared/
+apps/mobile/dist/
+apps/mobile/dist-ios/
+apps/mobile/ios/
+apps/mobile/android/
 
 # production
 /build
@@ -47,3 +59,4 @@ yarn-error.log*
 .idea
 # clerk configuration (can include secrets)
 /.clerk/
+.codex/
