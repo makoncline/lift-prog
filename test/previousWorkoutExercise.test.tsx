@@ -109,7 +109,7 @@ describe("PreviousWorkoutExercise", () => {
     );
     fireEvent.click(
       screen
-        .getAllByRole("button", { name: /Edit set 1 note/ })
+        .getAllByRole("button", { name: /Add set 1 note/ })
         .find((button) => !button.hasAttribute("disabled"))!,
     );
     fireEvent.change(screen.getByRole("textbox", { name: "Set note" }), {

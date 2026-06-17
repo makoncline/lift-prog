@@ -92,7 +92,6 @@ function previousSetToCurrentSet(
     weightAmount: parsedWeight.amount,
     weightSign: parsedWeight.sign,
     reps: String(set.reps[0] ?? ""),
-    note: set.note,
     restBefore: set.restBefore,
     completed: false,
   };

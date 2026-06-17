@@ -31,7 +31,7 @@ describe("initialiseExercises previous summary", () => {
       {
         name: "Bench Press",
         sets: [
-          { weight: 100, reps: 8 },
+          { weight: 100, reps: 8, notes: "do not copy" },
           { weight: 100, reps: 6 },
           { weight: 90, reps: 6 },
         ],
@@ -43,6 +43,8 @@ describe("initialiseExercises previous summary", () => {
       "Bench Press - 100lbx8,x6,90lbx6",
     );
     expect(exercise.previousNotes).toBe("Paused reps last set");
+    expect(exercise.sets[0]!.notes).toBeUndefined();
+    expect(exercise.previousSets[0]!.notes).toBe("do not copy");
   });
 
   it("uses colon format when all weights match", () => {

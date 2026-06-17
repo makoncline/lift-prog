@@ -567,7 +567,6 @@ export const initialiseExercises = (
           modifier,
           weightModifier: s.weightModifier,
           restBefore: s.restBefore,
-          notes: s.notes ?? undefined,
           rir: s.rir,
         };
       }),
