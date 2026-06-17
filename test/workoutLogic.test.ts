@@ -2,8 +2,10 @@ import {
   nextProgression,
   estimateSet,
   initialiseExercises,
+  parseQuickSetLine,
   workoutReducer,
 } from "@/lib/workoutLogic";
+import { summarizeWorkingSets } from "@/lib/workout-summary";
 import type { Workout } from "@/lib/workoutLogic";
 
 describe("progression helpers", () => {
@@ -16,7 +18,7 @@ describe("progression helpers", () => {
   it("warm-up cascade uses previous snapshot", () => {
     const ex = initialiseExercises([
       { name: "Bench", sets: [{ weight: 45, reps: 15, isWarmup: true }] },
-    ])[0];
+    ])[0]!;
     const est = estimateSet(ex.sets, 0, ex);
     expect(est.weight).toBe(45);
     expect(est.reps).toBe(15);
@@ -35,7 +37,7 @@ describe("initialiseExercises previous summary", () => {
         ],
         notes: "Paused reps last set",
       },
-    ])[0];
+    ])[0]!;
 
     expect(exercise.previousSummary).toBe(
       "Bench Press - 100lbx8,x6,90lbx6",
@@ -53,7 +55,7 @@ describe("initialiseExercises previous summary", () => {
           { weight: 100, reps: 6 },
         ],
       },
-    ])[0];
+    ])[0]!;
 
     expect(exercise.previousSummary).toBe(
       "Overhead Press - 100lb:x8,x8,x6",
@@ -70,7 +72,7 @@ describe("initialiseExercises previous summary", () => {
           { weight: 100, reps: 6 },
         ],
       },
-    ])[0];
+    ])[0]!;
 
     expect(exercise.previousSummary).toBe(
       "Row - 100lbx8,90lbx6,100lbx6",
@@ -85,10 +87,131 @@ describe("initialiseExercises previous summary", () => {
           { weight: null, reps: 20, isWarmup: true },
         ],
       },
-    ])[0];
+    ])[0]!;
 
     expect(exercise.previousSummary).toBeUndefined();
     expect(exercise.previousNotes).toBeUndefined();
+  });
+});
+
+describe("parseQuickSetLine", () => {
+  it("marks earlier hyphen groups as warmups", () => {
+    expect(parseQuickSetLine("0x30-45x15-90x8,8,6")).toMatchObject([
+      { weight: 0, reps: 30, modifier: "warmup" },
+      { weight: 45, reps: 15, modifier: "warmup" },
+      { weight: 90, reps: 8 },
+      { weight: 90, reps: 8 },
+      { weight: 90, reps: 6 },
+    ]);
+  });
+
+  it("keeps hyphen warmups when the working group has a backoff separator", () => {
+    const sets = parseQuickSetLine("0x30-45x15-90x8,7,5;75x5");
+    expect(sets).toMatchObject([
+      { weight: 0, reps: 30, modifier: "warmup" },
+      { weight: 45, reps: 15, modifier: "warmup" },
+      { weight: 90, reps: 8 },
+      { weight: 90, reps: 7 },
+      { weight: 90, reps: 5 },
+      { weight: 75, reps: 5 },
+    ]);
+    expect(sets.slice(2).map((set) => set.modifier)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("uses short rest fragments for plus notation", () => {
+    expect(parseQuickSetLine("90x10,6+1")).toMatchObject([
+      { weight: 90, reps: 10 },
+      { weight: 90, reps: 6 },
+      { weight: 90, reps: 1, restBefore: "short" },
+    ]);
+  });
+
+  it("parses bodyweight pull-up notation and neg notes", () => {
+    expect(parseQuickSetLine("BW 10,10,9+1+4(neg)"))
+      .toMatchObject([
+        { weight: 0, reps: 10, weightModifier: "bodyweight" },
+        { weight: 0, reps: 10, weightModifier: "bodyweight" },
+        { weight: 0, reps: 9, weightModifier: "bodyweight" },
+        {
+          weight: 0,
+          reps: 1,
+          weightModifier: "bodyweight",
+          restBefore: "short",
+        },
+        {
+          weight: 0,
+          reps: 4,
+          weightModifier: "bodyweight",
+          restBefore: "short",
+          notes: "neg",
+        },
+      ]);
+  });
+
+  it("parses weighted bodyweight notation", () => {
+    expect(parseQuickSetLine("BW+10x13,10+1")).toMatchObject([
+      { weight: 10, reps: 13, weightModifier: "bodyweight" },
+      { weight: 10, reps: 10, weightModifier: "bodyweight" },
+      {
+        weight: 10,
+        reps: 1,
+        weightModifier: "bodyweight",
+        restBefore: "short",
+      },
+    ]);
+
+    expect(parseQuickSetLine("BW 10lbx13,10")).toMatchObject([
+      { weight: 10, reps: 13, weightModifier: "bodyweight" },
+      { weight: 10, reps: 10, weightModifier: "bodyweight" },
+    ]);
+  });
+
+  it("keeps bare weighted notation standard even with bodyweight history", () => {
+    expect(parseQuickSetLine("10lbx13,10", { bodyweight: true }))
+      .toMatchObject([{ weight: 10, reps: 13 }, { weight: 10, reps: 10 }]);
+    expect(
+      parseQuickSetLine("10lbx13,10", { bodyweight: true }).map(
+        (set) => set.weightModifier,
+      ),
+    ).toEqual([undefined, undefined]);
+  });
+});
+
+describe("summarizeWorkingSets", () => {
+  it("groups short-rest fragments with plus notation", () => {
+    expect(
+      summarizeWorkingSets("Pull-ups", [
+        { weight: 0, reps: 10, weightModifier: "bodyweight" },
+        { weight: 0, reps: 10, weightModifier: "bodyweight" },
+        { weight: 0, reps: 9, weightModifier: "bodyweight" },
+        {
+          weight: 0,
+          reps: 1,
+          weightModifier: "bodyweight",
+          restBefore: "short",
+        },
+        {
+          weight: 0,
+          reps: 4,
+          weightModifier: "bodyweight",
+          restBefore: "short",
+        },
+      ]),
+    ).toBe("Pull-ups - BW:x10,x10,x9+1+4");
+  });
+
+  it("includes the weight when a short-rest fragment changes load", () => {
+    expect(
+      summarizeWorkingSets("Drop", [
+        { weight: 90, reps: 8 },
+        { weight: 75, reps: 5, restBefore: "short" },
+      ]),
+    ).toBe("Drop - 90lbx8+75lbx5");
   });
 });
 
@@ -111,11 +234,11 @@ describe("PLUS_MINUS reducer", () => {
     const state = baseState();
     const inc = workoutReducer(state, { type: "PLUS_MINUS", sign: 1 });
     expect(inc.inputValue).toBe("6");
-    expect(inc.exercises[0].sets[0].reps).toBe(6);
+    expect(inc.exercises[0]!.sets[0]!.reps).toBe(6);
 
     const dec = workoutReducer(inc, { type: "PLUS_MINUS", sign: -1 });
     expect(dec.inputValue).toBe("5");
-    expect(dec.exercises[0].sets[0].reps).toBe(5);
+    expect(dec.exercises[0]!.sets[0]!.reps).toBe(5);
   });
 
   it("does not decrement reps below zero", () => {
@@ -128,6 +251,6 @@ describe("PLUS_MINUS reducer", () => {
     };
     const dec = workoutReducer(state, { type: "PLUS_MINUS", sign: -1 });
     expect(dec.inputValue).toBe("0");
-    expect(dec.exercises[0].sets[0].reps).toBe(0);
+    expect(dec.exercises[0]!.sets[0]!.reps).toBe(0);
   });
 });

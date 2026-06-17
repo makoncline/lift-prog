@@ -3,12 +3,14 @@ export type SummaryInputSet = {
   reps: number | null;
   modifier?: "warmup";
   weightModifier?: "bodyweight";
+  restBefore?: "short" | "standard" | null;
 };
 
 type SanitizedSet = {
   weight: number;
   reps: number;
   weightModifier?: "bodyweight";
+  restBefore?: "short" | "standard" | null;
   label: string;
   key: string;
 };
@@ -51,6 +53,7 @@ export const summarizeWorkingSets = (
       weight: set.weight,
       reps: set.reps,
       weightModifier: set.weightModifier,
+      restBefore: set.restBefore,
       label,
       key: weightKey(set.weight, set.weightModifier),
     });
@@ -62,14 +65,24 @@ export const summarizeWorkingSets = (
   const allSameWeight = sanitized.every((set) => set.key === first.key);
 
   if (allSameWeight) {
-    const repsParts = sanitized.map((set) => `x${set.reps}`);
+    const repsParts: string[] = [];
+    for (const set of sanitized) {
+      if (set.restBefore === "short" && repsParts.length > 0) {
+        repsParts[repsParts.length - 1] += `+${set.reps}`;
+      } else {
+        repsParts.push(`x${set.reps}`);
+      }
+    }
     return `${exerciseName} - ${first.label}:${repsParts.join(",")}`;
   }
 
   const parts: string[] = [];
   let prevKey: string | null = null;
   for (const set of sanitized) {
-    if (prevKey === set.key && parts.length > 0) {
+    if (set.restBefore === "short" && parts.length > 0) {
+      parts[parts.length - 1] +=
+        prevKey === set.key ? `+${set.reps}` : `+${set.label}x${set.reps}`;
+    } else if (prevKey === set.key && parts.length > 0) {
       parts.push(`x${set.reps}`);
     } else {
       parts.push(`${set.label}x${set.reps}`);

@@ -37,13 +37,20 @@ export const workoutRouter = createTRPCRouter({
 
       // 1. Find or create Exercise records based on names
       const exerciseNameToIdMap = new Map<string, number>();
-      const exerciseNames = exercises.map((ex) => ex.name);
 
-      for (const name of exerciseNames) {
+      for (const exerciseInput of exercises) {
         const rec = await prisma.exercise.upsert({
-          where: { name },
-          update: {},
-          create: { name },
+          where: { name: exerciseInput.name },
+          update:
+            exerciseInput.exerciseNotes === undefined
+              ? {}
+              : { notes: exerciseInput.exerciseNotes },
+          create: {
+            name: exerciseInput.name,
+            ...(exerciseInput.exerciseNotes === undefined
+              ? {}
+              : { notes: exerciseInput.exerciseNotes }),
+          },
           select: { id: true, name: true },
         });
         exerciseNameToIdMap.set(rec.name, rec.id);
@@ -85,6 +92,11 @@ export const workoutRouter = createTRPCRouter({
               exerciseId: exerciseId,
               order: exerciseInput.order,
               notes: exerciseInput.notes,
+              ...(exerciseInput.exerciseNotesSnapshot === undefined
+                ? {}
+                : {
+                    exerciseNotesSnapshot: exerciseInput.exerciseNotesSnapshot,
+                  }),
             },
           });
 
@@ -95,6 +107,11 @@ export const workoutRouter = createTRPCRouter({
             reps: set.reps,
             modifier: set.modifier,
             weightModifier: set.weightModifier ?? null,
+            ...(set.restBefore === undefined
+              ? {}
+              : { restBefore: set.restBefore }),
+            ...(set.notes === undefined ? {} : { notes: set.notes }),
+            ...(set.rir === undefined ? {} : { rir: set.rir }),
             completed: true,
           }));
 
@@ -145,6 +162,7 @@ export const workoutRouter = createTRPCRouter({
                   reps: true,
                   modifier: true,
                   weightModifier: true,
+                  restBefore: true,
                 },
               },
             },
@@ -166,6 +184,7 @@ export const workoutRouter = createTRPCRouter({
                 reps: set.reps,
                 modifier: set.modifier ?? undefined,
                 weightModifier: set.weightModifier ?? undefined,
+                restBefore: set.restBefore,
               })),
             ),
           )
@@ -191,11 +210,12 @@ export const workoutRouter = createTRPCRouter({
         });
       }
       try {
-        const { workoutName, exercises } = await buildInitialExercisesFromWorkout({
-          prisma: ctx.db,
-          userId,
-          workoutId: input.workoutId,
-        });
+        const { workoutName, exercises } =
+          await buildInitialExercisesFromWorkout({
+            prisma: ctx.db,
+            userId,
+            workoutId: input.workoutId,
+          });
 
         return {
           workoutName,

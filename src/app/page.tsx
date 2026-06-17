@@ -2,19 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
-import { workoutTemplates } from "@/data/workout-templates";
-import { H2, H3, P } from "@/components/ui/typography";
+import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import { P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-  CardFooter,
-} from "@/components/ui/card";
-import { Dumbbell, History, Trash2, LogIn } from "lucide-react";
+  ChevronDown,
+  ChevronUp,
+  Dumbbell,
+  LogIn,
+  Play,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api } from "@/trpc/react";
 import {
   AlertDialog,
@@ -31,33 +31,67 @@ import { toast } from "sonner";
 // Import the shared constant
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
 
-// Helper function to format date and time
-const formatDateTime = (date: Date): { dateStr: string; timeStr: string } => {
-  // Format date as MM/DD/YY
-  const dateStr = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${String(date.getFullYear()).slice(2)}`;
+const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+const localDevMode = process.env.NODE_ENV === "development";
 
-  // Format time as h:MMam/pm
-  const hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const period = hours >= 12 ? "pm" : "am";
-  const displayHours = hours % 12 || 12; // Convert 0 to 12 for 12am
-
-  const timeStr = `${displayHours}:${minutes}${period}`;
-
-  return { dateStr, timeStr };
+const formatWorkoutDate = (date: Date): string => {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 };
 
-// Calculate workout duration in minutes
 const calculateDuration = (startDate: Date, endDate: Date): number => {
   const durationMs = endDate.getTime() - startDate.getTime();
-  return Math.round(durationMs / (1000 * 60)); // Convert ms to minutes
+  return Math.round(durationMs / (1000 * 60));
 };
 
-function AuthenticatedHomePage() {
+const splitExerciseSummary = (
+  summary: string,
+): { exerciseName: string; sets: string } => {
+  const separator = " - ";
+  const index = summary.indexOf(separator);
+  if (index === -1) return { exerciseName: summary, sets: "" };
+  return {
+    exerciseName: summary.slice(0, index),
+    sets: summary.slice(index + separator.length),
+  };
+};
+
+const sampleWorkouts = [
+  {
+    id: -1,
+    name: "Pull",
+    completedAt: new Date("2026-06-10T18:30:00"),
+    startedAt: new Date("2026-06-10T17:42:00"),
+    exerciseSummaries: [
+      "Pull-ups - BWx15,20lbx13,8",
+      "Cable Row - 110lbx12,12,10",
+      "Lat Pulldown - 120lbx11,10,10",
+      "Curl - 30lbx13,12",
+    ],
+  },
+  {
+    id: -2,
+    name: "Push",
+    completedAt: new Date("2026-06-08T17:50:00"),
+    startedAt: new Date("2026-06-08T17:05:00"),
+    exerciseSummaries: [
+      "Bench - 185lbx8,8,7",
+      "Dips - BWx12,10,8",
+      "Press - 95lbx10,8,8",
+    ],
+  },
+];
+
+function AuthenticatedHomePage({
+  historyEnabled = true,
+}: {
+  historyEnabled?: boolean;
+}) {
   const router = useRouter();
-  const { isLoaded, isSignedIn } = useAuth();
   const [deleteWorkoutId, setDeleteWorkoutId] = useState<number | null>(null);
   const [hasInProgress, setHasInProgress] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [exerciseSearch, setExerciseSearch] = useState("");
+  const [selectedExercises, setSelectedExercises] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -66,6 +100,20 @@ function AuthenticatedHomePage() {
   }, []);
 
   const utils = api.useUtils();
+  const exercisesQuery = api.exercise.list.useQuery(undefined, {
+    staleTime: Infinity,
+    enabled: historyEnabled,
+  });
+  const addExerciseMutation = api.exercise.add.useMutation({
+    onSuccess: async () => {
+      await utils.exercise.list.invalidate();
+    },
+    onError: (error) => {
+      if (!error.message.includes("already exists")) {
+        toast.error(`Error creating exercise: ${error.message}`);
+      }
+    },
+  });
 
   // Fetch recent workouts using tRPC query hook
   const recentWorkoutsQuery = api.workout.listRecent.useQuery(
@@ -73,7 +121,7 @@ function AuthenticatedHomePage() {
     {
       // Optional: configure query behavior (e.g., refetching)
       // refetchOnWindowFocus: false,
-      enabled: isLoaded && isSignedIn,
+      enabled: historyEnabled,
     },
   );
 
@@ -96,141 +144,291 @@ function AuthenticatedHomePage() {
     }
   };
 
-  const handleSelectTemplate = (templateId: string) => {
-    router.push(`/workout?templateId=${templateId}`);
-  };
-
   const handleSelectRecent = (workoutId: number) => {
-    // Navigate to workout page, initializing based on the selected workout ID
+    if (workoutId < 0) {
+      router.push("/workout-reference");
+      return;
+    }
     router.push(`/workout?basedOn=${workoutId}`);
   };
+
+  const addSelectedExercise = (exerciseName: string) => {
+    const trimmed = exerciseName.trim();
+    if (!trimmed) return;
+    setSelectedExercises((current) =>
+      current.some((name) => name.toLowerCase() === trimmed.toLowerCase())
+        ? current
+        : [...current, trimmed],
+    );
+  };
+
+  const removeSelectedExercise = (index: number) => {
+    setSelectedExercises((current) => current.filter((_, i) => i !== index));
+  };
+
+  const moveSelectedExercise = (index: number, direction: 1 | -1) => {
+    setSelectedExercises((current) => {
+      const target = index + direction;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      const moving = next[index];
+      const swapped = next[target];
+      if (!moving || !swapped) return current;
+      next[index] = swapped;
+      next[target] = moving;
+      return next;
+    });
+  };
+
+  const startCustomWorkout = () => {
+    if (selectedExercises.length === 0) {
+      toast.error("Add at least one exercise.");
+      return;
+    }
+    const encoded = encodeURIComponent(JSON.stringify(selectedExercises));
+    router.push(`/workout?templateId=custom&customExercises=${encoded}`);
+  };
+
+  const addOrCreateExerciseFromSearch = () => {
+    const trimmedSearch = exerciseSearch.trim();
+    if (!trimmedSearch) return;
+
+    const exact = exercisesQuery.data?.find(
+      (exercise) =>
+        exercise.name.toLowerCase() === trimmedSearch.toLowerCase(),
+    );
+    const exerciseName = exact?.name ?? trimmedSearch;
+    addSelectedExercise(exerciseName);
+    setExerciseSearch("");
+
+    if (!exact) {
+      addExerciseMutation.mutate({ name: trimmedSearch });
+    }
+  };
+
+  const workouts = historyEnabled
+    ? (recentWorkoutsQuery.data ?? [])
+    : sampleWorkouts;
+  const showLoading = historyEnabled && recentWorkoutsQuery.isLoading;
+  const showError = historyEnabled && recentWorkoutsQuery.isError;
 
   return (
     <>
       {hasInProgress && (
-        <div className="container mx-auto mb-4 flex max-w-2xl items-center justify-between rounded bg-yellow-100 p-4">
-          <p>You have a workout in progress.</p>
-          <Button variant="outline" onClick={() => router.push("/workout")}>
+        <div className="mx-auto flex max-w-md items-center justify-between gap-3 px-4 pt-4 font-mono text-sm">
+          <span className="text-muted-foreground">workout in progress</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/workout")}
+          >
             Resume Workout
           </Button>
         </div>
       )}
-      <div className="container mx-auto max-w-2xl py-8">
-        <div className="mb-8 flex items-center gap-3">
-          <Dumbbell className="h-8 w-8" />
-          <H2>Start a Workout</H2>
+      <div className="mx-auto max-w-md px-4 py-7 font-mono">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h1 className="text-3xl font-semibold tracking-normal">
+            workout history
+          </h1>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-sm"
+            onClick={() => setShowBuilder((value) => !value)}
+          >
+            <Plus className="h-4 w-4" />
+            workout
+          </Button>
         </div>
 
-        {/* Section 1: Continue Previous Workout */}
-        <section className="mb-12">
-          <div className="mb-4 flex items-center justify-between border-b pb-2">
-            <H3>Progress from Previous Workout</H3>
-            <History className="text-muted-foreground h-5 w-5" />
-          </div>
+        {showBuilder ? (
+          <section className="mb-7 space-y-2">
+            <div className="text-[13px] leading-none text-stone-500">
+              new workout
+            </div>
+            <form
+              className="flex gap-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                addOrCreateExerciseFromSearch();
+              }}
+            >
+              <input
+                value={exerciseSearch}
+                onChange={(event) => setExerciseSearch(event.target.value)}
+                placeholder="search or create exercise"
+                className="border-input bg-background h-9 min-w-0 flex-1 rounded-sm border px-2 text-sm"
+              />
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-sm px-2"
+                disabled={!exerciseSearch.trim()}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </form>
 
-          {recentWorkoutsQuery.isLoading ? (
-            <P>Loading recent workouts...</P>
-          ) : recentWorkoutsQuery.isError ? (
-            <P className="text-destructive">
-              Error loading recent workouts: {recentWorkoutsQuery.error.message}
+            {exerciseSearch.trim() && exercisesQuery.data?.length ? (
+              <div className="flex max-h-28 flex-col overflow-y-auto text-sm">
+                {exercisesQuery.data
+                  .filter((exercise) =>
+                    exercise.name
+                      .toLowerCase()
+                      .includes(exerciseSearch.trim().toLowerCase()),
+                  )
+                  .slice(0, 8)
+                  .map((exercise) => (
+                    <button
+                      key={exercise.id}
+                      type="button"
+                      className="rounded-sm px-2 py-1 text-left hover:bg-stone-100"
+                      onClick={() => {
+                        addSelectedExercise(exercise.name);
+                        setExerciseSearch("");
+                      }}
+                    >
+                      {exercise.name}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+
+            {selectedExercises.length > 0 ? (
+              <div className="space-y-1">
+                {selectedExercises.map((exerciseName, index) => (
+                  <div
+                    key={`${exerciseName}-${index}`}
+                    className="flex items-center gap-1 text-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {exerciseName}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-sm"
+                      disabled={index === 0}
+                      onClick={() => moveSelectedExercise(index, -1)}
+                      aria-label={`Move ${exerciseName} up`}
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-sm"
+                      disabled={index === selectedExercises.length - 1}
+                      onClick={() => moveSelectedExercise(index, 1)}
+                      aria-label={`Move ${exerciseName} down`}
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-sm text-stone-500"
+                      onClick={() => removeSelectedExercise(index)}
+                      aria-label={`Remove ${exerciseName}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-sm"
+              disabled={selectedExercises.length === 0}
+              onClick={startCustomWorkout}
+            >
+              start workout
+            </Button>
+          </section>
+        ) : null}
+
+        <section>
+          {showLoading ? (
+            <P className="text-muted-foreground text-sm">loading workouts...</P>
+          ) : showError ? (
+            <P className="text-destructive text-sm">
+              error loading workouts: {recentWorkoutsQuery.error?.message}
             </P>
-          ) : recentWorkoutsQuery.data &&
-            recentWorkoutsQuery.data.length > 0 ? (
-            <div className="space-y-3">
-              {recentWorkoutsQuery.data.map((workout) => (
-                <Card key={workout.id} className="w-full gap-0">
-                  <CardHeader className="">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-1">
-                        {workout.completedAt && (
-                          <p className="text-muted-foreground text-sm font-medium">
-                            {
-                              formatDateTime(new Date(workout.completedAt))
-                                .dateStr
-                            }{" "}
-                            @{" "}
-                            {
-                              formatDateTime(new Date(workout.completedAt))
-                                .timeStr
-                            }
-                          </p>
-                        )}
-                        <CardTitle>{workout.name}</CardTitle>
-                        <p className="text-muted-foreground text-sm">
-                          {workout.completedAt
-                            ? `${calculateDuration(new Date(workout.startedAt), new Date(workout.completedAt))} mins`
-                            : "In progress"}
-                        </p>
+          ) : workouts.length > 0 ? (
+            <div className="space-y-7">
+              {workouts.map((workout) => (
+                <article key={workout.id} className="space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[13px] leading-tight text-stone-500">
+                        {workout.completedAt
+                          ? `${formatWorkoutDate(new Date(workout.completedAt))} · ${calculateDuration(new Date(workout.startedAt), new Date(workout.completedAt))}m`
+                          : "in progress"}
                       </div>
+                      <div className="truncate text-[24px] leading-tight font-semibold tracking-normal">
+                        {workout.name}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-1 pt-1">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleSelectRecent(workout.id)}
+                        aria-label={`Start from ${workout.name}`}
+                        className="h-8 w-8 rounded-sm"
+                      >
+                        <Play className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon"
                         onClick={() => setDeleteWorkoutId(workout.id)}
-                        className="text-destructive hover:bg-destructive/10 gap-1 text-xs"
+                        aria-label={`Delete ${workout.name}`}
+                        className="text-muted-foreground hover:text-destructive h-8 w-8 rounded-sm"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  </CardHeader>
+                  </div>
+
                   {workout.exerciseSummaries?.length ? (
-                    <CardContent className="pt-0">
-                      <ul className="text-muted-foreground space-y-1 text-xs">
-                        {workout.exerciseSummaries.map((summary, index) => (
-                          <li key={`${workout.id}-${index}`}>{summary}</li>
-                        ))}
-                      </ul>
-                    </CardContent>
+                    <div className="space-y-1.5">
+                      {workout.exerciseSummaries.map((summary, index) => {
+                        const { exerciseName, sets } =
+                          splitExerciseSummary(summary);
+                        return (
+                          <div
+                            key={`${workout.id}-${index}`}
+                            className="grid grid-cols-[minmax(5.5rem,auto)_1fr] gap-x-2 text-[15px] leading-tight"
+                          >
+                            <span className="truncate text-stone-500">
+                              {exerciseName}
+                            </span>
+                            <span className="min-w-0 text-stone-950">
+                              {sets}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : null}
-                  <CardFooter className="">
-                    <Button
-                      size="sm"
-                      onClick={() => handleSelectRecent(workout.id)}
-                      className="w-full"
-                    >
-                      Progress
-                    </Button>
-                  </CardFooter>
-                </Card>
+                </article>
               ))}
             </div>
           ) : (
-            <P>No recent completed workouts found.</P>
+            <P className="text-muted-foreground text-sm">
+              no completed workouts yet
+            </P>
           )}
-        </section>
-
-        {/* Section 2: Start from Template */}
-        <section>
-          <H3 className="mb-4 border-b pb-2">Start from a Template</H3>
-          <div className="space-y-3">
-            {workoutTemplates.map((template) => (
-              <Card key={template.id} className="w-full gap-2">
-                <CardHeader className="">
-                  <CardTitle>{template.name}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ul className="text-muted-foreground list-disc pl-5 text-sm">
-                    {template.exercises.map((ex) => (
-                      <li key={ex.name}>{ex.name}</li>
-                    ))}
-                  </ul>
-                </CardContent>
-                <CardFooter className="">
-                  <Button
-                    onClick={() => handleSelectTemplate(template.id)}
-                    className="w-full"
-                    size="sm"
-                  >
-                    Start {template.name}
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-            <CustomTemplateCard onStart={(names) => {
-              const payload = encodeURIComponent(JSON.stringify(names));
-              router.push(`/workout?templateId=custom&customExercises=${payload}`);
-            }} />
-          </div>
         </section>
 
         {/* Delete Confirmation Dialog */}
@@ -259,99 +457,13 @@ function AuthenticatedHomePage() {
   );
 }
 
-function CustomTemplateCard({
-  onStart,
-}: {
-  onStart: (exerciseNames: string[]) => void;
-}) {
-  const [selectedExercises, setSelectedExercises] = useState<string[]>([]);
-  const exercisesQuery = api.exercise.list.useQuery(undefined, {
-    staleTime: Infinity,
-  });
-
-  const toggleExercise = (name: string) => {
-    setSelectedExercises((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((existing) => existing !== name);
-      }
-      return [...prev, name];
-    });
-  };
-
-  const handleStart = () => {
-    if (selectedExercises.length === 0) {
-      toast.error("Select at least one exercise to start.");
-      return;
-    }
-    onStart(selectedExercises);
-  };
-
-  return (
-    <Card className="w-full gap-2">
-      <CardHeader className="space-y-1">
-        <CardTitle>Build Your Own</CardTitle>
-        <P className="text-muted-foreground text-sm">
-          Pick the exercises you want for today and start a fresh workout.
-        </P>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {exercisesQuery.isLoading ? (
-          <P className="text-sm text-muted-foreground">Loading exercises…</P>
-        ) : exercisesQuery.isError ? (
-          <P className="text-destructive text-sm">
-            Error loading exercises: {exercisesQuery.error.message}
-          </P>
-        ) : exercisesQuery.data && exercisesQuery.data.length > 0 ? (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {exercisesQuery.data
-              .slice()
-              .sort((a, b) => {
-                const aIndex = selectedExercises.indexOf(a.name);
-                const bIndex = selectedExercises.indexOf(b.name);
-                const aSelected = aIndex !== -1;
-                const bSelected = bIndex !== -1;
-
-                if (aSelected && bSelected) {
-                  return aIndex - bIndex;
-                }
-                if (aSelected) return -1;
-                if (bSelected) return 1;
-                return a.name.localeCompare(b.name);
-              })
-              .map((exercise) => (
-                <label
-                  key={exercise.id}
-                  className="flex cursor-pointer items-center gap-2 rounded border p-2 text-sm hover:bg-muted"
-                >
-                  <Checkbox
-                    checked={selectedExercises.includes(exercise.name)}
-                    onCheckedChange={() => toggleExercise(exercise.name)}
-                    aria-label={`Toggle ${exercise.name}`}
-                  />
-                  <span>{exercise.name}</span>
-                </label>
-              ))}
-          </div>
-        ) : (
-          <P className="text-sm text-muted-foreground">No exercises found.</P>
-        )}
-      </CardContent>
-      <CardFooter>
-        <Button onClick={handleStart} className="w-full" size="sm">
-          Start Custom Workout
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
 function UnauthenticatedHomePage() {
   return (
-    <div className="container mx-auto max-w-2xl py-8">
+    <div className="mx-auto max-w-md px-4 py-8 font-mono">
       <div className="flex flex-col items-center justify-center space-y-6 text-center">
         <div className="flex items-center gap-3">
           <Dumbbell className="h-12 w-12" />
-          <H2>Lift Prog</H2>
+          <h1 className="text-3xl font-semibold tracking-normal">Lift Prog</h1>
         </div>
 
         <div className="space-y-4">
@@ -369,27 +481,16 @@ function UnauthenticatedHomePage() {
             </SignInButton>
           </Button>
         </div>
-
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-lg">Features</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="text-muted-foreground space-y-2 text-sm">
-              <li>• Track sets, reps, and weights</li>
-              <li>• Progressive overload calculations</li>
-              <li>• Workout templates</li>
-              <li>• Rest timer</li>
-              <li>• Plate calculator</li>
-            </ul>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );
 }
 
 export default function HomePage() {
+  if (!clerkEnabled) {
+    return <AuthenticatedHomePage historyEnabled={localDevMode} />;
+  }
+
   return (
     <>
       <SignedIn>

@@ -20,6 +20,11 @@ enum WeightModifier {
   bodyweight
 }
 
+enum RestType {
+  standard
+  short
+}
+
 model User {
   id              String    @id
   clerkUserId     String    @unique
@@ -31,6 +36,7 @@ model User {
 model Exercise {
   id               Int               @id @default(autoincrement())
   name             String            @unique
+  notes            String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   workoutExercises WorkoutExercise[]
@@ -53,16 +59,17 @@ model Workout {
 }
 
 model WorkoutExercise {
-  id               Int                  @id @default(autoincrement())
-  workoutSessionId Int
-  exerciseId       Int
-  order            Int
-  notes            String?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  workout          Workout              @relation(fields: [workoutSessionId], references: [id], onDelete: Cascade)
-  exercise         Exercise             @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
-  sets             WorkoutExerciseSet[]
+  id                    Int                  @id @default(autoincrement())
+  workoutSessionId      Int
+  exerciseId            Int
+  order                 Int
+  notes                 String?
+  exerciseNotesSnapshot String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  workout               Workout              @relation(fields: [workoutSessionId], references: [id], onDelete: Cascade)
+  exercise              Exercise             @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  sets                  WorkoutExerciseSet[]
 
   @@index([workoutSessionId])
   @@index([exerciseId])
@@ -76,6 +83,9 @@ model WorkoutExerciseSet {
   weightModifier    WeightModifier?
   reps              Int?
   modifier          Modifier?
+  restBefore        RestType?
+  notes             String?
+  rir               Int?
   completed         Boolean         @default(true)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt

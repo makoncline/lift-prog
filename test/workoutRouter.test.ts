@@ -13,6 +13,7 @@ const makeCaller = () => {
     }));
 
   const workoutCreate = vi.fn().mockResolvedValue({ id: 101 });
+  const workoutFindMany = vi.fn().mockResolvedValue([]);
   const workoutExerciseCreate = vi.fn().mockResolvedValue({ id: 202 });
   const workoutExerciseSetCreateMany = vi.fn().mockResolvedValue({});
 
@@ -29,6 +30,7 @@ const makeCaller = () => {
   const caller = createCaller(async () => ({
     db: {
       exercise: { upsert: exerciseUpsert },
+      workout: { findMany: workoutFindMany },
       $transaction: transaction,
     } as any,
     session: { userId: "user_123" },
@@ -40,6 +42,7 @@ const makeCaller = () => {
     spies: {
       exerciseUpsert,
       workoutCreate,
+      workoutFindMany,
       workoutExerciseCreate,
       workoutExerciseSetCreateMany,
       transaction,
@@ -53,8 +56,8 @@ describe("workout.saveWorkout", () => {
 
     await caller.workout.saveWorkout({
       name: "Session",
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      startedAt: new Date(),
+      completedAt: new Date(),
       exercises: [
         {
           name: "Bench",
@@ -105,8 +108,8 @@ describe("workout.saveWorkout", () => {
 
     await caller.workout.saveWorkout({
       name: "Session",
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      startedAt: new Date(),
+      completedAt: new Date(),
       exercises: [
         {
           name: "Squat",
@@ -130,5 +133,204 @@ describe("workout.saveWorkout", () => {
     expect(spies.workoutExerciseCreate).not.toHaveBeenCalled();
     expect(spies.workoutExerciseSetCreateMany).not.toHaveBeenCalled();
     expect(spies.workoutCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists exercise notes, set notes, rest, and rir when present", async () => {
+    const { caller, spies } = makeCaller();
+
+    await caller.workout.saveWorkout({
+      name: "Session",
+      startedAt: new Date(),
+      completedAt: new Date(),
+      exercises: [
+        {
+          name: "Pull Up",
+          order: 0,
+          exerciseNotes: "Hold dumbbell in thighs",
+          exerciseNotesSnapshot: "Old machine setup",
+          notes: "Feeling weak today",
+          sets: [
+            {
+              order: 0,
+              weight: 0,
+              reps: 15,
+              modifier: "warmup",
+              weightModifier: "bodyweight",
+              completed: true,
+              notes: "Foot assist",
+              rir: 2,
+            },
+            {
+              order: 1,
+              weight: 20,
+              reps: 13,
+              modifier: null,
+              weightModifier: null,
+              completed: true,
+              restBefore: "short",
+              notes: "solid first set",
+              rir: 1,
+            },
+          ],
+        },
+      ],
+      notes: "Pull day felt low energy",
+    });
+
+    expect(spies.exerciseUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { name: "Pull Up" },
+        update: { notes: "Hold dumbbell in thighs" },
+        create: {
+          name: "Pull Up",
+          notes: "Hold dumbbell in thighs",
+        },
+      }),
+    );
+    expect(spies.workoutExerciseCreate).toHaveBeenCalledWith({
+      data: {
+        workoutSessionId: 101,
+        exerciseId: "Pull Up".length,
+        order: 0,
+        notes: "Feeling weak today",
+        exerciseNotesSnapshot: "Old machine setup",
+      },
+    });
+    expect(spies.workoutExerciseSetCreateMany).toHaveBeenCalledWith({
+      data: [
+        {
+          workoutExerciseId: 202,
+          order: 0,
+          weight: 0,
+          reps: 15,
+          modifier: "warmup",
+          weightModifier: "bodyweight",
+          notes: "Foot assist",
+          rir: 2,
+          completed: true,
+        },
+        {
+          workoutExerciseId: 202,
+          order: 1,
+          weight: 20,
+          reps: 13,
+          modifier: null,
+          weightModifier: null,
+          restBefore: "short",
+          notes: "solid first set",
+          rir: 1,
+          completed: true,
+        },
+      ],
+    });
+  });
+});
+
+describe("workout.listRecent", () => {
+  it("uses short-rest plus notation in exercise summaries", async () => {
+    const { caller, spies } = makeCaller();
+    spies.workoutFindMany.mockResolvedValue([
+      {
+        id: 1,
+        name: "Workout 3/26",
+        completedAt: new Date("2026-03-26T12:45:00"),
+        startedAt: new Date("2026-03-26T12:00:00"),
+        workoutExercises: [
+          {
+            exercise: { name: "Pull-ups" },
+            sets: [
+              {
+                weight: 0,
+                reps: 10,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: null,
+              },
+              {
+                weight: 0,
+                reps: 10,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: null,
+              },
+              {
+                weight: 0,
+                reps: 9,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: null,
+              },
+              {
+                weight: 0,
+                reps: 1,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: "short",
+              },
+              {
+                weight: 0,
+                reps: 4,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: "short",
+              },
+            ],
+          },
+          {
+            exercise: { name: "Tricep overhead" },
+            sets: [
+              {
+                weight: 40,
+                reps: 15,
+                modifier: null,
+                weightModifier: null,
+                restBefore: null,
+              },
+              {
+                weight: 40,
+                reps: 12,
+                modifier: null,
+                weightModifier: null,
+                restBefore: null,
+              },
+              {
+                weight: 40,
+                reps: 8,
+                modifier: null,
+                weightModifier: null,
+                restBefore: null,
+              },
+              {
+                weight: 40,
+                reps: 4,
+                modifier: null,
+                weightModifier: null,
+                restBefore: "short",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const workouts = await caller.workout.listRecent({ limit: 1 });
+
+    expect(spies.workoutFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          workoutExercises: expect.objectContaining({
+            select: expect.objectContaining({
+              sets: expect.objectContaining({
+                select: expect.objectContaining({ restBefore: true }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(workouts[0]?.exerciseSummaries).toEqual([
+      "Pull-ups - BW:x10,x10,x9+1+4",
+      "Tricep overhead - 40lb:x15,x12,x8+4",
+    ]);
   });
 });

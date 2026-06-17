@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Modifier, WeightModifier } from "@prisma/client";
+import { Modifier, RestType, WeightModifier } from "@prisma/client";
 
 export const CompletedSetSchema = z.object({
   order: z.number(),
@@ -7,13 +7,18 @@ export const CompletedSetSchema = z.object({
   reps: z.number().nullable(),
   modifier: z.nativeEnum(Modifier).nullable(),
   weightModifier: z.nativeEnum(WeightModifier).nullable(),
+  restBefore: z.nativeEnum(RestType).nullable().optional(),
+  notes: z.string().optional(),
+  rir: z.number().int().min(0).max(10).nullable().optional(),
   completed: z.boolean(),
 });
 
 export const CompletedExerciseSchema = z.object({
   name: z.string(),
   order: z.number(),
+  exerciseNotes: z.string().optional(),
   notes: z.string().optional(),
+  exerciseNotesSnapshot: z.string().optional(),
   sets: z.array(CompletedSetSchema),
 });
 

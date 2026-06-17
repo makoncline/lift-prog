@@ -11,7 +11,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Clipboard, Loader2, RotateCcw, CheckCircle } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
-import { useEffect } from "react";
 
 export function FinishDialog({
   open,
@@ -53,15 +52,12 @@ export function FinishDialog({
   onSave: () => void;
   onDone?: () => void;
 }) {
-  useEffect(() => {
-    // prevent autofocus jumping inside dialog
-  }, [open]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="sm:max-w-[425px]"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        data-testid="finish-workout-dialog"
       >
         <DialogHeader>
           <DialogTitle>Finish Workout</DialogTitle>
@@ -135,10 +131,13 @@ export function FinishDialog({
                   </label>
                   <Input
                     id="finish-date"
-                    type="date"
+                    type="text"
+                    inputMode="numeric"
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     className="h-9"
+                    placeholder="YYYY-MM-DD"
+                    data-testid="finish-date"
                   />
                 </div>
                 <div className="space-y-2">
@@ -155,6 +154,7 @@ export function FinishDialog({
                       value={startTime}
                       onChange={(e) => setStartTime(e.target.value)}
                       className="h-9"
+                      data-testid="finish-start-time"
                     />
                   </div>
                   <div className="space-y-1">
@@ -171,6 +171,7 @@ export function FinishDialog({
                         value={endTime}
                         onChange={(e) => setEndTime(e.target.value)}
                         className="h-9 flex-1"
+                        data-testid="finish-end-time"
                       />
                       <Button
                         type="button"
@@ -200,6 +201,7 @@ export function FinishDialog({
                     className="h-9"
                     min="1"
                     step="1"
+                    data-testid="finish-duration"
                   />
                 </div>
               </div>
@@ -221,10 +223,15 @@ export function FinishDialog({
                 variant="outline"
                 onClick={() => onOpenChange(false)}
                 disabled={isSaving}
+                data-testid="cancel-finish-workout"
               >
                 Cancel
               </Button>
-              <Button onClick={onSave} disabled={isSaving}>
+              <Button
+                onClick={onSave}
+                disabled={isSaving}
+                data-testid="save-finished-workout"
+              >
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Save Workout
               </Button>
