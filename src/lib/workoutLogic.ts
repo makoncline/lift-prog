@@ -1736,17 +1736,22 @@ export function finalizeWorkout(
 ): CompletedWorkout {
   const completedExercises: CompletedExercise[] = state.exercises
     .map((ex, exIndex) => {
-      const completedSets: CompletedSet[] = ex.sets.map((set, index) => ({
-        weight: set.weight,
-        reps: set.reps,
-        modifier: set.modifier ?? null,
-        weightModifier: set.weightModifier ?? null,
-        restBefore: set.restBefore ?? null,
-        notes: set.notes,
-        rir: set.rir ?? null,
-        order: index + 1,
-        completed: set.completed || (set.weight !== null && set.reps !== null),
-      }));
+      const completedSets: CompletedSet[] = ex.sets.map((set, index) => {
+        const weight = set.weight ?? set.prevWeight;
+        const reps = set.reps ?? set.prevReps;
+
+        return {
+          weight,
+          reps,
+          modifier: set.modifier ?? null,
+          weightModifier: set.weightModifier ?? null,
+          restBefore: set.restBefore ?? null,
+          notes: set.notes,
+          rir: set.rir ?? null,
+          order: index + 1,
+          completed: set.completed || (weight !== null && reps !== null),
+        };
+      });
 
       return {
         name: ex.name,

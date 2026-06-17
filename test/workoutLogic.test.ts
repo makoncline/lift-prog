@@ -1,4 +1,5 @@
 import {
+  finalizeWorkout,
   nextProgression,
   estimateSet,
   initialiseExercises,
@@ -254,5 +255,61 @@ describe("PLUS_MINUS reducer", () => {
     const dec = workoutReducer(state, { type: "PLUS_MINUS", sign: -1 });
     expect(dec.inputValue).toBe("0");
     expect(dec.exercises[0]!.sets[0]!.reps).toBe(0);
+  });
+});
+
+describe("finalizeWorkout", () => {
+  it("saves carried-forward set values even when the set was never edited", () => {
+    const [exercise] = initialiseExercises([
+      {
+        name: "Incline Press",
+        sets: [{ weight: 95, reps: 8 }],
+      },
+    ]);
+
+    const workout = finalizeWorkout({
+      currentExerciseIndex: 0,
+      exercises: [exercise!],
+      activeField: { exerciseIndex: null, setIndex: null, field: null },
+      inputValue: "",
+      isFirstInteraction: false,
+      notes: [],
+      startTime: 0,
+      name: "Push",
+      isInProgress: true,
+    });
+
+    expect(workout.exercises[0]!.sets[0]).toMatchObject({
+      weight: 95,
+      reps: 8,
+      completed: true,
+    });
+  });
+
+  it("keeps blank default sets incomplete", () => {
+    const [exercise] = initialiseExercises([
+      {
+        name: "New Movement",
+        sets: [{ weight: null, reps: null }],
+      },
+    ]);
+
+    const workout = finalizeWorkout({
+      currentExerciseIndex: 0,
+      exercises: [exercise!],
+      activeField: { exerciseIndex: null, setIndex: null, field: null },
+      inputValue: "",
+      isFirstInteraction: false,
+      notes: [],
+      startTime: 0,
+      name: "Push",
+      isInProgress: true,
+    });
+
+    expect(workout.exercises[0]!.sets[0]).toMatchObject({
+      weight: null,
+      reps: null,
+      completed: false,
+    });
   });
 });
