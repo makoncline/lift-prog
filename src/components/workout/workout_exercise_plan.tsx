@@ -1,6 +1,13 @@
 "use client";
 
-import { GripVertical, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -27,38 +34,52 @@ export function WorkoutExercisePlan({
   onDragEnd: () => void;
   onDropExercise: (targetIndex: number) => void;
 }) {
-  return (
-    <section className="mb-5 text-[#17150f]" aria-label="Workout exercises">
-      <WorkoutExercisePlanHeader />
-      <WorkoutExercisePlanList>
-        {exercises.map((exerciseName, exerciseIndex) => (
-          <WorkoutExercisePlanItem
-            key={`${exerciseName}-${exerciseIndex}`}
-            exerciseName={exerciseName}
-            exerciseIndex={exerciseIndex}
-            dragging={draggingIndex === exerciseIndex}
-            onDeleteExercise={onDeleteExercise}
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-            onDropExercise={onDropExercise}
-          />
-        ))}
-      </WorkoutExercisePlanList>
-      <WorkoutExercisePlanAddForm
-        exerciseName={newExerciseName}
-        addingExerciseName={addingExerciseName}
-        onExerciseNameChange={onNewExerciseNameChange}
-        onAddExercise={onAddExercise}
-      />
-    </section>
-  );
-}
+  const [expanded, setExpanded] = useState(false);
+  const summary = exercises.length > 0 ? exercises.join(", ") : "no exercises";
 
-function WorkoutExercisePlanHeader() {
   return (
-    <div className="mb-0.5 text-[11px] leading-4 text-[#716b5d]">
-      exercises
-    </div>
+    <section className="mb-3 text-[#17150f]" aria-label="Workout exercises">
+      <button
+        type="button"
+        className="flex min-h-7 w-full min-w-0 items-center gap-1 text-left font-mono text-[12px] leading-4 text-[#716b5d]"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        {expanded ? (
+          <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
+        )}
+        <span className="shrink-0">exercises</span>
+        <span className="min-w-0 flex-1 truncate text-[#8a8373]">
+          {summary}
+        </span>
+      </button>
+      {expanded ? (
+        <div className="mt-0.5">
+          <WorkoutExercisePlanList>
+            {exercises.map((exerciseName, exerciseIndex) => (
+              <WorkoutExercisePlanItem
+                key={`${exerciseName}-${exerciseIndex}`}
+                exerciseName={exerciseName}
+                exerciseIndex={exerciseIndex}
+                dragging={draggingIndex === exerciseIndex}
+                onDeleteExercise={onDeleteExercise}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onDropExercise={onDropExercise}
+              />
+            ))}
+          </WorkoutExercisePlanList>
+          <WorkoutExercisePlanAddForm
+            exerciseName={newExerciseName}
+            addingExerciseName={addingExerciseName}
+            onExerciseNameChange={onNewExerciseNameChange}
+            onAddExercise={onAddExercise}
+          />
+        </div>
+      ) : null}
+    </section>
   );
 }
 
