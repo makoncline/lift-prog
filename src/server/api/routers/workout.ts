@@ -334,17 +334,11 @@ export const workoutRouter = createTRPCRouter({
         });
       }
       try {
-        const { workoutName, exercises } =
-          await buildInitialExercisesFromWorkout({
-            prisma: ctx.db,
-            userId,
-            workoutId: input.workoutId,
-          });
-
-        return {
-          workoutName,
-          exercises,
-        };
+        return await buildInitialExercisesFromWorkout({
+          prisma: ctx.db,
+          userId,
+          workoutId: input.workoutId,
+        });
       } catch (error) {
         throw new TRPCError({
           code: "NOT_FOUND",
