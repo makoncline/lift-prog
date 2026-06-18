@@ -304,9 +304,13 @@ function WorkoutComponentInner({
       )}
       <WorkoutHeader
         name={state.name}
+        startTime={state.startTime}
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
+        onStartTimeChange={(startTime) =>
+          dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime })
+        }
         onEditableNameChange={setEditableName}
         onStartEditingName={handleStartEditingName}
         onCancelEditingName={handleCancelEditingName}

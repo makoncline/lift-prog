@@ -717,6 +717,7 @@ export type Action =
       exerciseIndex: number;
       line: string;
     }
+  | { type: "UPDATE_WORKOUT_START_TIME"; startTime: number }
   | { type: "ADD_EXERCISE"; exercise: WorkoutExercise }
   | { type: "DELETE_EXERCISE"; exerciseIndex: number }
   | {
@@ -1180,6 +1181,13 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return {
         ...state,
         exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+      };
+    }
+
+    case "UPDATE_WORKOUT_START_TIME": {
+      return {
+        ...state,
+        startTime: action.startTime,
       };
     }
 
