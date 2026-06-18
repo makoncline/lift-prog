@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getWorkoutTemplateById } from "@/data/workout-templates";
 import { WorkoutComponent } from "@/components/workout/workout";
@@ -17,10 +17,11 @@ function WorkoutInitializer() {
   const searchParams = useSearchParams();
   const templateId = searchParams.get("templateId");
   const customExercisesParam = searchParams.get("customExercises");
+  const copyFromWorkoutId = parseWorkoutId(searchParams.get("copyFrom"));
   const basedOnWorkoutIdStr = searchParams.get("basedOn");
-  const basedOnWorkoutId = basedOnWorkoutIdStr
-    ? parseInt(basedOnWorkoutIdStr, 10)
-    : null;
+  const basedOnWorkoutId = parseWorkoutId(basedOnWorkoutIdStr);
+  const sourceWorkoutId = copyFromWorkoutId ?? basedOnWorkoutId;
+  const hasStartParams = Boolean(templateId) || sourceWorkoutId != null;
 
   // Track active states
   const [hasInProgressStorage, setHasInProgressStorage] = useState<
@@ -47,35 +48,31 @@ function WorkoutInitializer() {
   // Clear URL params after initialization is complete
   useEffect(() => {
     // Only clear if:
-    // 1. We have params (templateId or basedOnWorkoutId)
+    // 1. We have start params
     // 2. We're not keeping params anymore
     // 3. hasInitializedRef is true (meaning WorkoutComponent saved state)
-    if (
-      (templateId || basedOnWorkoutId) &&
-      !keepParams &&
-      hasInitializedRef.current
-    ) {
+    if (hasStartParams && !keepParams && hasInitializedRef.current) {
       // Use setTimeout to avoid navigation during rendering
       setTimeout(() => {
         router.replace("/workout");
       }, 300); // Increased from 100ms to 300ms to ensure localStorage save completes
     }
-  }, [templateId, basedOnWorkoutId, keepParams, router]);
+  }, [hasStartParams, keepParams, router]);
 
   // Clear any in-progress workout if we're starting fresh with params
-  useEffect(() => {
-    // If we have templateId or basedOnWorkoutId, we're starting a new workout
+  useLayoutEffect(() => {
+    // If we have start params, we're starting a new workout.
     // Clear any existing workout from localStorage
-    if ((templateId || basedOnWorkoutId) && typeof window !== "undefined") {
+    if (hasStartParams && typeof window !== "undefined") {
       localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
       setHasInProgressStorage(false);
     }
-  }, [templateId, basedOnWorkoutId]);
+  }, [hasStartParams]);
 
   // Check localStorage for existing workout
   useEffect(() => {
     // Only check localStorage if we're NOT starting with params
-    if (!templateId && !basedOnWorkoutId && typeof window !== "undefined") {
+    if (!hasStartParams && typeof window !== "undefined") {
       const storedItem = localStorage.getItem(LOCAL_STORAGE_WORKOUT_KEY);
       const itemExists = storedItem != null;
 
@@ -83,17 +80,19 @@ function WorkoutInitializer() {
     }
 
     setStorageCheckComplete(true);
-  }, [templateId, basedOnWorkoutId]);
+  }, [hasStartParams]);
 
   // Fetch details if starting based on a previous workout
   // --- Render Logic --- //
 
   // Case 1: Start based on previous workout (Highest priority if ID is present)
-  if (basedOnWorkoutId) {
+  if (sourceWorkoutId) {
     return (
       <WorkoutLoader
-        input={{ mode: "workoutReference", workoutId: basedOnWorkoutId }}
-        loadingMessage="Loading previous workout data..."
+        input={{ mode: "workoutReference", workoutId: sourceWorkoutId }}
+        loadingMessage={
+          copyFromWorkoutId ? "Copying workout..." : "Loading previous workout..."
+        }
         errorPrefix="Error loading workout details"
         onInitialSave={onInitialSave}
       />
@@ -167,7 +166,7 @@ function WorkoutInitializer() {
     return <ErrorState message="Workout template not found." />;
   }
 
-  // Case 3: No specific instructions (templateId or basedOnWorkoutId)
+  // Case 3: No specific start instructions
   // We must wait for the storage check to complete before deciding further.
   if (!storageCheckComplete) {
     return <LoadingState message="Checking for in-progress workout..." />;
@@ -191,6 +190,12 @@ function WorkoutInitializer() {
 }
 
 type PrepareInitialWorkoutInput = RouterInputs["workout"]["prepareInitialWorkout"];
+
+function parseWorkoutId(value: string | null) {
+  if (!value) return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
 
 function WorkoutLoader({
   input,

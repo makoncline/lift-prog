@@ -32,7 +32,7 @@ export function TitleEditor({
   onSave: () => void;
 }) {
   return (
-    <div className="mb-2 flex items-center justify-between">
+    <div className="flex min-w-0 items-center">
       <Dialog
         open={isEditing}
         onOpenChange={(open) => {
@@ -41,10 +41,10 @@ export function TitleEditor({
       >
         <button
           type="button"
-          className="min-w-0 cursor-pointer appearance-none bg-transparent p-0 text-left text-inherit"
+          className="min-w-0 max-w-full cursor-pointer appearance-none rounded-[4px] border border-[#ebe4d6] bg-[#fdfcf8] px-1 py-0.5 text-left text-inherit hover:bg-[#eee8da]"
           onClick={onStartEditing}
         >
-          <H4>{name}</H4>
+          <H4 className="truncate">{name}</H4>
         </button>
         <WorkoutEditorContent>
           <DialogTitle className="sr-only">Workout name</DialogTitle>

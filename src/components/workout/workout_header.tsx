@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Pencil, Redo2, Save, Undo2, X } from "lucide-react";
+import { Pencil, Redo2, Save, Trash2, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -23,6 +23,7 @@ export function WorkoutHeader({
   isInProgress = false,
   showFinishAction = true,
   showDiscardAction = false,
+  showDeleteAction = false,
   canUndo = false,
   canRedo = false,
   onStartTimeChange,
@@ -34,6 +35,7 @@ export function WorkoutHeader({
   onEditWorkoutNote,
   onFinishWorkout,
   onDiscardWorkout,
+  onDeleteWorkout,
   onUndo,
   onRedo,
 }: {
@@ -47,6 +49,7 @@ export function WorkoutHeader({
   isInProgress?: boolean;
   showFinishAction?: boolean;
   showDiscardAction?: boolean;
+  showDeleteAction?: boolean;
   canUndo?: boolean;
   canRedo?: boolean;
   onStartTimeChange: (startTime: number) => void;
@@ -58,6 +61,7 @@ export function WorkoutHeader({
   onEditWorkoutNote: () => void;
   onFinishWorkout: () => void;
   onDiscardWorkout?: () => void;
+  onDeleteWorkout?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
 }) {
@@ -107,14 +111,16 @@ export function WorkoutHeader({
           >
             <Redo2 className="size-3.5" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            aria-label={workoutNote ? "Edit workout note" : "Add workout note"}
-            className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da]"
-            onClick={onEditWorkoutNote}
-          >
-            <Pencil className="size-3.5" aria-hidden="true" />
-          </button>
+          {showDeleteAction ? (
+            <button
+              type="button"
+              aria-label="Delete workout"
+              className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] hover:text-[#5f2018]"
+              onClick={onDeleteWorkout}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
           {showFinishAction ? (
             <Button
               variant="outline"
@@ -127,21 +133,33 @@ export function WorkoutHeader({
             </Button>
           ) : null}
         </div>
-        <TitleEditor
-          name={name}
-          editableName={editableName}
-          isEditing={isEditingName}
-          onChange={onEditableNameChange}
-          onStartEditing={onStartEditingName}
-          onCancel={onCancelEditingName}
-          onSave={onSaveName}
-        />
+        <div className="flex w-full items-start gap-1">
+          <div className="min-w-0 flex-1">
+            <TitleEditor
+              name={name}
+              editableName={editableName}
+              isEditing={isEditingName}
+              onChange={onEditableNameChange}
+              onStartEditing={onStartEditingName}
+              onCancel={onCancelEditingName}
+              onSave={onSaveName}
+            />
+          </div>
+          <button
+            type="button"
+            aria-label={workoutNote ? "Edit workout note" : "Add workout note"}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da]"
+            onClick={onEditWorkoutNote}
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
         {contextLabel ? (
           <div className="mt-0.5 font-mono text-[10px] leading-3 text-[#8a8373]">
             {contextLabel}
           </div>
         ) : null}
-        <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+        <div className="mt-0.5 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
           <span>{relativeDate}</span>
           <span className="px-1">·</span>
           <TimeTextButton
@@ -160,7 +178,12 @@ export function WorkoutHeader({
           {isInProgress ? (
             <>
               <span className="pl-1">(</span>
-              <span>{formatDurationMinutes(durationMinutes)}</span>
+              <TimeTextButton
+                ariaLabel="Edit duration"
+                onClick={() => setEditingTimePart("duration")}
+              >
+                {formatDurationMinutes(durationMinutes)}
+              </TimeTextButton>
               <span>)</span>
             </>
           ) : (
@@ -192,7 +215,8 @@ export function WorkoutHeader({
       <WorkoutTimePartEditor
         part={editingTimePart}
         startTime={startTime}
-        completedAt={completedAt}
+        completedAt={displayEnd}
+        isInProgress={isInProgress}
         onStartTimeChange={onStartTimeChange}
         onCompletedAtChange={onCompletedAtChange}
         onOpenChange={(open) => {
@@ -223,7 +247,7 @@ function TimeTextButton({
     <button
       type="button"
       aria-label={ariaLabel}
-      className="rounded-[3px] px-0.5 text-left hover:bg-[#eee8da] hover:text-[#373226]"
+      className="rounded-[3px] border border-[#ebe4d6] bg-[#fdfcf8] px-0.5 text-left hover:bg-[#eee8da] hover:text-[#373226]"
       onClick={onClick}
     >
       {children}
@@ -235,6 +259,7 @@ function WorkoutTimePartEditor({
   part,
   startTime,
   completedAt,
+  isInProgress,
   onStartTimeChange,
   onCompletedAtChange,
   onOpenChange,
@@ -242,6 +267,7 @@ function WorkoutTimePartEditor({
   part: TimeEditorPart;
   startTime: number;
   completedAt: Date;
+  isInProgress: boolean;
   onStartTimeChange: (startTime: number) => void;
   onCompletedAtChange: (completedAt: Date) => void;
   onOpenChange: (open: boolean) => void;
@@ -283,6 +309,11 @@ function WorkoutTimePartEditor({
   function updateDuration(value: string) {
     const minutes = Number(value);
     if (!Number.isFinite(minutes) || minutes < 1) return;
+
+    if (isInProgress) {
+      onStartTimeChange(Date.now() - Math.round(minutes) * 60_000);
+      return;
+    }
 
     onCompletedAtChange(new Date(startTime + Math.round(minutes) * 60_000));
   }

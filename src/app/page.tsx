@@ -42,9 +42,73 @@ const formatWorkoutDate = (date: Date): string => {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 };
 
+const relativeDateFormatter = new Intl.RelativeTimeFormat(undefined, {
+  numeric: "always",
+  style: "long",
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const startOfLocalDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const getWholeMonthDifference = (fromDate: Date, toDate: Date) => {
+  const direction = fromDate <= toDate ? 1 : -1;
+  const earlier = direction === 1 ? fromDate : toDate;
+  const later = direction === 1 ? toDate : fromDate;
+  let months =
+    (later.getFullYear() - earlier.getFullYear()) * 12 +
+    later.getMonth() -
+    earlier.getMonth();
+
+  if (later.getDate() < earlier.getDate()) months -= 1;
+
+  return direction * Math.max(0, months);
+};
+
+const formatRelativeWorkoutDate = (date: Date, now = new Date()) => {
+  const dayDifference = Math.round(
+    (startOfLocalDay(now).getTime() - startOfLocalDay(date).getTime()) /
+      DAY_MS,
+  );
+  const absDays = Math.abs(dayDifference);
+  const direction = dayDifference > 0 ? -1 : 1;
+
+  if (absDays === 0) return "today";
+  if (absDays < 7) {
+    return relativeDateFormatter.format(direction * absDays, "day");
+  }
+  if (absDays < 45) {
+    return relativeDateFormatter.format(
+      direction * Math.max(1, Math.round(absDays / 7)),
+      "week",
+    );
+  }
+
+  const monthDifference = getWholeMonthDifference(date, now);
+  const absMonths = Math.abs(monthDifference);
+  const monthDirection = monthDifference > 0 ? -1 : 1;
+
+  if (absMonths < 12) {
+    return relativeDateFormatter.format(
+      monthDirection * Math.max(1, absMonths),
+      "month",
+    );
+  }
+
+  return relativeDateFormatter.format(
+    monthDirection * Math.max(1, Math.floor(absMonths / 12)),
+    "year",
+  );
+};
+
 const calculateDuration = (startDate: Date, endDate: Date): number => {
   const durationMs = endDate.getTime() - startDate.getTime();
   return Math.round(durationMs / (1000 * 60));
+};
+
+const formatWorkoutMeta = (startedAt: Date, completedAt: Date) => {
+  return `${formatRelativeWorkoutDate(completedAt)} · ${formatWorkoutDate(completedAt)} · ${calculateDuration(startedAt, completedAt)}m`;
 };
 
 const splitExerciseSummary = (
@@ -129,6 +193,7 @@ function AuthenticatedHomePage({
       // Optional: configure query behavior (e.g., refetching)
       // refetchOnWindowFocus: false,
       enabled: historyEnabled,
+      placeholderData: (previousData) => previousData,
     },
   );
 
@@ -156,7 +221,7 @@ function AuthenticatedHomePage({
       router.push("/workout-reference");
       return;
     }
-    router.push(`/workout?basedOn=${workoutId}`);
+    router.push(`/workout?copyFrom=${workoutId}`);
   };
 
   const handleEditWorkout = (workoutId: number) => {
@@ -227,8 +292,10 @@ function AuthenticatedHomePage({
     historyEnabled &&
     workouts.length >= visibleWorkoutLimit &&
     visibleWorkoutLimit < MAX_WORKOUT_HISTORY_LIMIT;
-  const showLoading = historyEnabled && recentWorkoutsQuery.isLoading;
-  const showError = historyEnabled && recentWorkoutsQuery.isError;
+  const showLoading =
+    historyEnabled && recentWorkoutsQuery.isLoading && workouts.length === 0;
+  const showError =
+    historyEnabled && recentWorkoutsQuery.isError && workouts.length === 0;
 
   return (
     <>
@@ -252,12 +319,13 @@ function AuthenticatedHomePage({
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="h-8 rounded-sm"
+            size="icon"
+            className="h-8 w-8 rounded-sm"
             onClick={() => setShowBuilder((value) => !value)}
+            aria-label={showBuilder ? "Hide new workout form" : "Add new workout"}
+            aria-pressed={showBuilder}
           >
             <Plus className="h-4 w-4" />
-            workout
           </Button>
         </div>
 
@@ -389,7 +457,10 @@ function AuthenticatedHomePage({
                     <div className="min-w-0">
                       <div className="text-[13px] leading-tight text-stone-500">
                         {workout.completedAt
-                          ? `${formatWorkoutDate(new Date(workout.completedAt))} · ${calculateDuration(new Date(workout.startedAt), new Date(workout.completedAt))}m`
+                          ? formatWorkoutMeta(
+                              new Date(workout.startedAt),
+                              new Date(workout.completedAt),
+                            )
                           : "in progress"}
                       </div>
                       <div className="truncate text-[24px] leading-tight font-semibold tracking-normal">

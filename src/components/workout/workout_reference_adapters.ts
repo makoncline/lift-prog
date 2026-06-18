@@ -11,6 +11,7 @@ export function workoutSetToCurrentSet(
   exerciseIndex: number,
   setIndex: number,
 ): CurrentExerciseSet {
+  const id = set.clientId ?? `exercise-${exerciseIndex}-set-${setIndex}`;
   const previousSet = exercise.previousSets[setIndex];
   const displayWeight = set.weight ?? set.prevWeight ?? previousSet?.weight;
   const displayReps = set.reps ?? set.prevReps ?? previousSet?.reps;
@@ -21,7 +22,7 @@ export function workoutSetToCurrentSet(
   const isBodyweight = weightModifier === "bodyweight";
 
   return {
-    id: `exercise-${exerciseIndex}-set-${setIndex}`,
+    id,
     kind: set.modifier === "warmup" ? "warmup" : "working",
     weightMode: isBodyweight ? "bodyweight" : "standard",
     weightAmount:
@@ -48,6 +49,7 @@ export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
   const reps = set.reps.trim() === "" ? null : Number(set.reps);
 
   return {
+    clientId: set.id,
     weight,
     reps,
     completed: set.completed || (weight !== null && reps !== null),

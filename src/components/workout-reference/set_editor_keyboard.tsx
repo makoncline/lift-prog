@@ -1,31 +1,59 @@
 "use client";
 
-import type { ReactNode } from "react";
+import {
+  forwardRef,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import {
   CircleChevronDown,
   Delete,
+  Disc3,
   KeyboardIcon,
   Minus,
   Plus,
+  TimerReset,
+  TrendingUp,
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  IncreaseWeightDialog,
+  PlateCalculatorDialog,
+  type WeightSuggestion,
+} from "@/components/workout-reference/weight_helper_dialog";
 import type { CurrentExerciseSet } from "@/components/workout-reference/workout_reference_types";
 
 export function SetEditorKeyboard({
   field,
   set,
   onDone,
+  onAddShortRest,
   onNext,
   onUpdate,
 }: {
   field: "weight" | "reps";
   set: CurrentExerciseSet;
   onDone: () => void;
+  onAddShortRest?: () => void;
   onNext: () => void;
   onUpdate: (set: CurrentExerciseSet) => void;
 }) {
+  const [draftSet, setDraftSet] = useState(set);
+  const draftSetRef = useRef(set);
+
+  function updateDraftSet(
+    nextSet: (currentSet: CurrentExerciseSet) => CurrentExerciseSet,
+  ) {
+    const nextDraftSet = nextSet(draftSetRef.current);
+    draftSetRef.current = nextDraftSet;
+    setDraftSet(nextDraftSet);
+    onUpdate(nextDraftSet);
+  }
+
   function handleKeyPress(value: string) {
     if (value === "done") {
       onDone();
@@ -37,12 +65,27 @@ export function SetEditorKeyboard({
       return;
     }
 
-    if (field === "weight") {
-      onUpdate(applyWeightKey(set, value));
+    if (value === "short-rest") {
+      onAddShortRest?.();
       return;
     }
 
-    onUpdate(applyRepsKey(set, value));
+    if (field === "weight") {
+      updateDraftSet((currentSet) => applyWeightKey(currentSet, value));
+      return;
+    }
+
+    updateDraftSet((currentSet) => applyRepsKey(currentSet, value));
+  }
+
+  function applyWeightSuggestion(suggestion: WeightSuggestion) {
+    updateDraftSet((currentSet) => ({
+      ...currentSet,
+      weightMode: "standard",
+      weightAmount: formatEditorNumber(suggestion.weight),
+      weightSign: 1,
+      reps: String(suggestion.reps),
+    }));
   }
 
   return (
@@ -62,12 +105,30 @@ export function SetEditorKeyboard({
       >
         <Delete className="size-4" aria-hidden="true" />
       </KeypadButton>
-      <KeypadButton value="done" area="action1" onKeyPress={handleKeyPress}>
-        <div className="flex items-center gap-1">
-          <KeyboardIcon className="size-4" aria-hidden="true" />
-          <CircleChevronDown className="size-3" aria-hidden="true" />
+      {field === "weight" ? (
+        <div
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
+          style={{ gridArea: "action1" }}
+        >
+          <IncreaseWeightDialog set={draftSet} onUse={applyWeightSuggestion}>
+            <KeypadTriggerButton label="increase weight helper">
+              <TrendingUp className="size-4" aria-hidden="true" />
+            </KeypadTriggerButton>
+          </IncreaseWeightDialog>
+          <PlateCalculatorDialog set={draftSet}>
+            <KeypadTriggerButton label="plate calculator">
+              <Disc3 className="size-4" aria-hidden="true" />
+            </KeypadTriggerButton>
+          </PlateCalculatorDialog>
         </div>
-      </KeypadButton>
+      ) : (
+        <KeypadButton value="done" area="action1" onKeyPress={handleKeyPress}>
+          <div className="flex items-center gap-1">
+            <KeyboardIcon className="size-4" aria-hidden="true" />
+            <CircleChevronDown className="size-3" aria-hidden="true" />
+          </div>
+        </KeypadButton>
+      )}
       <div
         className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
         style={{ gridArea: "action2" }}
@@ -87,7 +148,7 @@ export function SetEditorKeyboard({
           <KeypadButton
             value="bw"
             label="bodyweight"
-            active={set.weightMode === "bodyweight"}
+            active={draftSet.weightMode === "bodyweight"}
             onKeyPress={handleKeyPress}
           >
             <User className="size-4" aria-hidden="true" />
@@ -95,14 +156,25 @@ export function SetEditorKeyboard({
           <KeypadButton
             value="toggle-sign"
             label="toggle sign"
-            disabled={set.weightMode !== "bodyweight"}
+            disabled={draftSet.weightMode !== "bodyweight"}
             onKeyPress={handleKeyPress}
           >
             +/-
           </KeypadButton>
         </div>
       ) : (
-        <div style={{ gridArea: "action3" }} />
+        <KeypadButton
+          value="short-rest"
+          label="short rest add reps"
+          area="action3"
+          disabled={!onAddShortRest}
+          onKeyPress={handleKeyPress}
+        >
+          <div className="flex items-center gap-1">
+            <TimerReset className="size-4" aria-hidden="true" />
+            <Plus className="size-3" aria-hidden="true" />
+          </div>
+        </KeypadButton>
       )}
       <KeypadButton
         value="next"
@@ -210,6 +282,27 @@ function KeypadButton({
     </Button>
   );
 }
+
+const KeypadTriggerButton = forwardRef<
+  HTMLButtonElement,
+  ComponentPropsWithoutRef<typeof Button> & { label: string }
+>(function KeypadTriggerButton({ label, children, className, ...props }, ref) {
+  return (
+    <Button
+      ref={ref}
+      type="button"
+      aria-label={label}
+      variant="outline"
+      className={cn(
+        "h-full w-full min-w-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-1 py-1 font-mono text-[13px] font-normal text-[#373226] shadow-none hover:bg-[#f6f1e8]",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </Button>
+  );
+});
 
 function applyWeightKey(
   set: CurrentExerciseSet,

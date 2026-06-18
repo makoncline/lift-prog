@@ -17,6 +17,7 @@ import type {
   CurrentExerciseSet,
   EditorField,
   RestType,
+  SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
 
 type SetEditorState = {
@@ -30,7 +31,11 @@ type TimelineExerciseInputProps = {
   restTypes: RestType[];
   workoutExerciseNote: string;
   onEditWorkoutExerciseNote: () => void;
-  onSetsChange?: (sets: CurrentExerciseSet[]) => void;
+  onSetsChange?: (
+    sets: CurrentExerciseSet[],
+    options?: SetChangeOptions,
+  ) => void;
+  onCommitPendingHistory?: () => void;
 };
 
 export function TimelineExerciseInput({
@@ -40,10 +45,15 @@ export function TimelineExerciseInput({
   workoutExerciseNote,
   onEditWorkoutExerciseNote,
   onSetsChange,
+  onCommitPendingHistory,
 }: TimelineExerciseInputProps) {
-  const [sets, setSets] = useState<CurrentExerciseSet[]>(() =>
-    normalizeRestBlocks(initialSets, restTypes),
-  );
+  const controlled = Boolean(onSetsChange);
+  const [uncontrolledSets, setUncontrolledSets] = useState<
+    CurrentExerciseSet[]
+  >(() => normalizeRestBlocks(initialSets, restTypes));
+  const sets = controlled
+    ? normalizeRestBlocks(initialSets, restTypes)
+    : uncontrolledSets;
   const [editor, setEditor] = useState<SetEditorState>(null);
   const defaultRestTypeId = getDefaultRestTypeId(restTypes);
   const activeSet = editor
@@ -56,21 +66,33 @@ export function TimelineExerciseInput({
     ? getCurrentSetLabel(displaySets, editor.setId, restTypes)
     : "";
 
-  function commitSets(nextSets: CurrentExerciseSet[]) {
-    setSets(nextSets);
-    onSetsChange?.(nextSets);
+  function commitPendingHistory() {
+    onCommitPendingHistory?.();
+  }
+
+  function commitSets(
+    nextSets: CurrentExerciseSet[],
+    options?: SetChangeOptions,
+  ) {
+    if (!controlled) {
+      setUncontrolledSets(nextSets);
+    }
+    onSetsChange?.(nextSets, options);
   }
 
   function updateSet(
     setId: string,
     nextSet: (set: CurrentExerciseSet) => CurrentExerciseSet,
+    options?: SetChangeOptions,
   ) {
     commitSets(
       sets.map((set) => (set.id === setId ? nextSet(set) : set)),
+      options,
     );
   }
 
   function addWorkingSet() {
+    commitPendingHistory();
     const nextSetId = `timeline-working-${Date.now()}`;
 
     const lastWorkingSet = [...sets]
@@ -94,7 +116,32 @@ export function TimelineExerciseInput({
     setEditor({ setId: nextSetId, field: "reps" });
   }
 
+  function addShortRestSet(afterSetId: string) {
+    commitPendingHistory();
+    const setIndex = sets.findIndex((set) => set.id === afterSetId);
+    const baseSet = sets[setIndex];
+    if (!baseSet) return;
+
+    const nextSetId = `timeline-${baseSet.kind}-short-${Date.now()}`;
+    const nextSet: CurrentExerciseSet = {
+      ...baseSet,
+      id: nextSetId,
+      reps: "",
+      note: undefined,
+      restBefore: "short",
+      completed: false,
+    };
+
+    commitSets([
+      ...sets.slice(0, setIndex + 1),
+      nextSet,
+      ...sets.slice(setIndex + 1),
+    ]);
+    setEditor({ setId: nextSetId, field: "reps" });
+  }
+
   function cycleRestBefore(setId: string) {
+    commitPendingHistory();
     commitSets(
       sets.map((set) => {
         if (set.id !== setId) return set;
@@ -113,7 +160,16 @@ export function TimelineExerciseInput({
     );
   }
 
+  function useStandardRestBefore(setId: string) {
+    commitPendingHistory();
+    updateSet(setId, (set) => ({
+      ...set,
+      restBefore: defaultRestTypeId,
+    }));
+  }
+
   function deleteSet(setId: string) {
+    commitPendingHistory();
     const deletedSetIndex = sets.findIndex((set) => set.id === setId);
     const nextSets = normalizeRestBlocks(
       sets.filter((set) => set.id !== setId),
@@ -149,8 +205,14 @@ export function TimelineExerciseInput({
               sets={warmupSets}
               allSets={sets}
               restTypes={restTypes}
-              onEdit={(setId, field) => setEditor({ setId, field })}
-              onEditNote={(setId) => setEditor({ setId, field: "note" })}
+              onEdit={(setId, field) => {
+                commitPendingHistory();
+                setEditor({ setId, field });
+              }}
+              onEditNote={(setId) => {
+                commitPendingHistory();
+                setEditor({ setId, field: "note" });
+              }}
               onCycleRest={cycleRestBefore}
             />
           </div>
@@ -161,8 +223,14 @@ export function TimelineExerciseInput({
             sets={workingSets}
             allSets={sets}
             restTypes={restTypes}
-            onEdit={(setId, field) => setEditor({ setId, field })}
-            onEditNote={(setId) => setEditor({ setId, field: "note" })}
+            onEdit={(setId, field) => {
+              commitPendingHistory();
+              setEditor({ setId, field });
+            }}
+            onEditNote={(setId) => {
+              commitPendingHistory();
+              setEditor({ setId, field: "note" });
+            }}
             onCycleRest={cycleRestBefore}
             onAddSet={addWorkingSet}
           />
@@ -181,22 +249,31 @@ export function TimelineExerciseInput({
           deleteSet(activeSet.id);
         }}
         onAddSet={addWorkingSet}
+        onAddShortRestSet={addShortRestSet}
+        onCycleRestBefore={cycleRestBefore}
+        onUseStandardRestBefore={useStandardRestBefore}
         onSelectSet={(setId) => {
+          commitPendingHistory();
           setEditor((currentEditor) =>
             currentEditor ? { ...currentEditor, setId } : currentEditor,
           );
         }}
         onOpenChange={(open) => {
-          if (!open) setEditor(null);
+          if (!open) {
+            commitPendingHistory();
+            setEditor(null);
+          }
         }}
         onFieldChange={(field) => {
+          commitPendingHistory();
           setEditor((currentEditor) =>
             currentEditor ? { ...currentEditor, field } : currentEditor,
           );
         }}
-        onUpdate={(nextSet) => {
+        onUpdate={(nextSet, options) => {
           if (!editor) return;
-          updateSet(editor.setId, () => nextSet);
+          if (!options?.deferHistory) commitPendingHistory();
+          updateSet(editor.setId, () => nextSet, options);
         }}
       />
     </section>

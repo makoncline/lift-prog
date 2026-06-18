@@ -40,6 +40,10 @@ export type ShortBreakRestType = {
 
 export type RestType = TimedRestType | ShortBreakRestType;
 
+export type SetChangeOptions = {
+  deferHistory?: boolean;
+};
+
 export type CurrentExerciseSet = {
   id: string;
   kind: CurrentSetKind;

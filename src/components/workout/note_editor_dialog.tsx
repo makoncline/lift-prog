@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useState } from "react";
 import {
   Dialog,
@@ -29,7 +30,7 @@ export function NoteEditorDialog({
   open: boolean;
   title: string;
   description: string;
-  label: string;
+  label: ReactNode;
   note: string;
   deleteLabel: string;
   onOpenChange: (open: boolean) => void;
@@ -67,7 +68,7 @@ function NoteEditorDialogContent({
 }: {
   title: string;
   description: string;
-  label: string;
+  label: ReactNode;
   note: string;
   deleteLabel: string;
   onOpenChange: (open: boolean) => void;

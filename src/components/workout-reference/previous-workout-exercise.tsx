@@ -18,6 +18,7 @@ import {
 import type {
   CurrentExerciseSet,
   PreviousExercise,
+  SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
 
 type PreviousWorkoutExerciseProps = {
@@ -26,8 +27,13 @@ type PreviousWorkoutExerciseProps = {
   history: PreviousExercise[];
   initialCurrentSets?: CurrentExerciseSet[];
   workoutExerciseNote?: string;
+  onExerciseNoteChange?: (note: string) => void;
   onWorkoutExerciseNoteChange?: (note: string) => void;
-  onCurrentSetsChange?: (sets: CurrentExerciseSet[]) => void;
+  onCurrentSetsChange?: (
+    sets: CurrentExerciseSet[],
+    options?: SetChangeOptions,
+  ) => void;
+  onCommitPendingHistory?: () => void;
   shellClassName?: string;
 };
 
@@ -37,12 +43,17 @@ export function PreviousWorkoutExercise({
   history,
   initialCurrentSets: initialCurrentSetsOverride,
   workoutExerciseNote = "",
+  onExerciseNoteChange,
   onWorkoutExerciseNoteChange,
   onCurrentSetsChange,
+  onCommitPendingHistory,
   shellClassName,
 }: PreviousWorkoutExerciseProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [exerciseNoteEditorOpen, setExerciseNoteEditorOpen] = useState(false);
+  const [userExerciseNoteEditorOpen, setUserExerciseNoteEditorOpen] =
+    useState(false);
+  const [workoutExerciseNoteEditorOpen, setWorkoutExerciseNoteEditorOpen] =
+    useState(false);
   const restTypes = DEFAULT_REST_TYPES;
   const currentSets =
     initialCurrentSetsOverride ?? initialCurrentSets(history, restTypes);
@@ -55,8 +66,9 @@ export function PreviousWorkoutExercise({
         workoutExerciseNote={workoutExerciseNote}
         hasHistory={history.length > 0}
         historyVisible={isExpanded}
+        onEditExerciseNote={() => setUserExerciseNoteEditorOpen(true)}
         onToggleHistory={() => setIsExpanded((visible) => !visible)}
-        onEditWorkoutExerciseNote={() => setExerciseNoteEditorOpen(true)}
+        onEditWorkoutExerciseNote={() => setWorkoutExerciseNoteEditorOpen(true)}
       />
       <HistoryDisclosure expanded={isExpanded}>
         <HistoryViewport history={history} />
@@ -66,17 +78,39 @@ export function PreviousWorkoutExercise({
         initialSets={currentSets}
         restTypes={restTypes}
         workoutExerciseNote={workoutExerciseNote}
-        onEditWorkoutExerciseNote={() => setExerciseNoteEditorOpen(true)}
+        onEditWorkoutExerciseNote={() => setWorkoutExerciseNoteEditorOpen(true)}
         onSetsChange={onCurrentSetsChange}
+        onCommitPendingHistory={onCommitPendingHistory}
       />
       <NoteEditorDialog
-        open={exerciseNoteEditorOpen}
-        title="Exercise note"
-        description="Add a note for this exercise in the current workout."
-        label="exercise note"
+        open={userExerciseNoteEditorOpen}
+        title={`${exerciseName} pinned exercise note`}
+        description={`Edit the pinned exercise note for ${exerciseName}.`}
+        label={
+          <span className="flex flex-col">
+            <span className="text-[#17150f]">{exerciseName}</span>
+            <span>pinned exercise note</span>
+          </span>
+        }
+        note={exerciseNote}
+        deleteLabel="Delete pinned exercise note"
+        onOpenChange={setUserExerciseNoteEditorOpen}
+        onSave={(note) => onExerciseNoteChange?.(note)}
+        onDelete={() => onExerciseNoteChange?.("")}
+      />
+      <NoteEditorDialog
+        open={workoutExerciseNoteEditorOpen}
+        title={`${exerciseName} note for this workout`}
+        description={`Add a note for ${exerciseName} in this workout only.`}
+        label={
+          <span className="flex flex-col">
+            <span className="text-[#17150f]">{exerciseName}</span>
+            <span>this workout note</span>
+          </span>
+        }
         note={workoutExerciseNote}
-        deleteLabel="Delete exercise note"
-        onOpenChange={setExerciseNoteEditorOpen}
+        deleteLabel="Delete workout note"
+        onOpenChange={setWorkoutExerciseNoteEditorOpen}
         onSave={(note) => onWorkoutExerciseNoteChange?.(note)}
         onDelete={() => onWorkoutExerciseNoteChange?.("")}
       />

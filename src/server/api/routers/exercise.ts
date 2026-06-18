@@ -53,6 +53,35 @@ export const exerciseRouter = createTRPCRouter({
       });
     }),
 
+  updateNote: protectedProcedure
+    .input(
+      z
+        .object({
+          id: z.number().optional(),
+          name: z.string().min(1).optional(),
+          note: z.string(),
+        })
+        .refine((input) => input.id !== undefined || input.name !== undefined, {
+          message: "Exercise id or name is required.",
+        }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.userId;
+      if (!userId) throw new Error("User not found.");
+
+      return ctx.db.userExercise.updateMany({
+        where: {
+          userId,
+          ...(input.id !== undefined
+            ? { id: input.id }
+            : { name: input.name?.trim() }),
+        },
+        data: {
+          notes: input.note.trim() || null,
+        },
+      });
+    }),
+
   // Procedure to delete a user exercise
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))

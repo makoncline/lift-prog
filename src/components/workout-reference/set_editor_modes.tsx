@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ConfirmableNoteDeleteAction,
@@ -30,6 +31,8 @@ export function SetNoteEditor({
   onDone: () => void;
   onUpdate: (set: CurrentExerciseSet) => void;
 }) {
+  const [draftNote, setDraftNote] = useState(set.note ?? "");
+
   function blurActiveInput() {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
@@ -38,7 +41,15 @@ export function SetNoteEditor({
 
   function doneAfterBlur() {
     blurActiveInput();
-    window.requestAnimationFrame(onDone);
+    window.requestAnimationFrame(() => {
+      if (draftNote !== (set.note ?? "")) {
+        onUpdate({
+          ...set,
+          note: draftNote,
+        });
+      }
+      onDone();
+    });
   }
 
   function deleteAfterBlur() {
@@ -54,17 +65,12 @@ export function SetNoteEditor({
       <textarea
         aria-label="Set note"
         autoFocus
-        value={set.note ?? ""}
+        value={draftNote}
         className="min-h-20 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[16px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
-        onChange={(event) =>
-          onUpdate({
-            ...set,
-            note: event.target.value,
-          })
-        }
+        onChange={(event) => setDraftNote(event.target.value)}
       />
       <NoteEditorActions onDone={doneAfterBlur}>
-        {set.note?.trim() ? (
+        {draftNote.trim() ? (
           <ConfirmableNoteDeleteAction
             deleteLabel="Delete set note"
             onDelete={deleteAfterBlur}

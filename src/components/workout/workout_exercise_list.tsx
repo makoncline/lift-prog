@@ -1,7 +1,10 @@
 "use client";
 
 import { PreviousWorkoutExercise } from "@/components/workout-reference/previous-workout-exercise";
-import type { CurrentExerciseSet } from "@/components/workout-reference/workout_reference_types";
+import type {
+  CurrentExerciseSet,
+  SetChangeOptions,
+} from "@/components/workout-reference/workout_reference_types";
 import {
   buildReferenceHistory,
   normalizeCurrentSetOrder,
@@ -11,17 +14,22 @@ import type { Workout } from "@/lib/workoutLogic";
 
 type WorkoutExerciseListProps = {
   exercises: Workout["exercises"];
+  onExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onWorkoutExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onCurrentSetsChange: (
     exerciseIndex: number,
     sets: CurrentExerciseSet[],
+    options?: SetChangeOptions,
   ) => void;
+  onCommitPendingHistory: () => void;
 };
 
 export function WorkoutExerciseList({
   exercises,
+  onExerciseNoteChange,
   onWorkoutExerciseNoteChange,
   onCurrentSetsChange,
+  onCommitPendingHistory,
 }: WorkoutExerciseListProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -30,8 +38,10 @@ export function WorkoutExerciseList({
           <WorkoutExerciseReference
             exercise={exercise}
             exerciseIndex={exerciseIndex}
+            onExerciseNoteChange={onExerciseNoteChange}
             onWorkoutExerciseNoteChange={onWorkoutExerciseNoteChange}
             onCurrentSetsChange={onCurrentSetsChange}
+            onCommitPendingHistory={onCommitPendingHistory}
           />
         </section>
       ))}
@@ -42,16 +52,21 @@ export function WorkoutExerciseList({
 function WorkoutExerciseReference({
   exercise,
   exerciseIndex,
+  onExerciseNoteChange,
   onWorkoutExerciseNoteChange,
   onCurrentSetsChange,
+  onCommitPendingHistory,
 }: {
   exercise: Workout["exercises"][number];
   exerciseIndex: number;
+  onExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onWorkoutExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onCurrentSetsChange: (
     exerciseIndex: number,
     sets: CurrentExerciseSet[],
+    options?: SetChangeOptions,
   ) => void;
+  onCommitPendingHistory: () => void;
 }) {
   return (
     <PreviousWorkoutExercise
@@ -60,6 +75,7 @@ function WorkoutExerciseReference({
       history={buildReferenceHistory(exercise)}
       shellClassName="min-h-0 max-w-none bg-transparent p-0"
       workoutExerciseNote={exercise.notes[0]?.text ?? ""}
+      onExerciseNoteChange={(note) => onExerciseNoteChange(exerciseIndex, note)}
       onWorkoutExerciseNoteChange={(note) =>
         onWorkoutExerciseNoteChange(exerciseIndex, note)
       }
@@ -68,7 +84,10 @@ function WorkoutExerciseReference({
           workoutSetToCurrentSet(set, exercise, exerciseIndex, setIndex),
         ),
       )}
-      onCurrentSetsChange={(sets) => onCurrentSetsChange(exerciseIndex, sets)}
+      onCurrentSetsChange={(sets, options) =>
+        onCurrentSetsChange(exerciseIndex, sets, options)
+      }
+      onCommitPendingHistory={onCommitPendingHistory}
     />
   );
 }

@@ -18,9 +18,16 @@ import {
 
 type SetReadoutPreview = {
   label: string;
+  kind: CurrentExerciseSet["kind"];
+  segments: SetReadoutSegment[];
+};
+
+type SetReadoutSegment = {
+  id: string;
   weight: string;
   reps: string;
-  kind: CurrentExerciseSet["kind"];
+  showWeight: boolean;
+  active: boolean;
 };
 
 export function SetEditorReadout({
@@ -34,6 +41,8 @@ export function SetEditorReadout({
   onEditNote,
   onDelete,
   onAddSet,
+  onCycleRestBefore,
+  onUseStandardRestBefore,
   onSelectSet,
   onToggleWarmup,
 }: {
@@ -47,6 +56,8 @@ export function SetEditorReadout({
   onEditNote: () => void;
   onDelete: () => void;
   onAddSet: () => void;
+  onCycleRestBefore: (setId: string) => void;
+  onUseStandardRestBefore: (setId: string) => void;
   onSelectSet: (setId: string) => void;
   onToggleWarmup: () => void;
 }) {
@@ -131,6 +142,7 @@ export function SetEditorReadout({
           onSelectSet(setId);
           onFieldChange(nextField);
         }}
+        onCycleRestBefore={onCycleRestBefore}
       />
       {editingNote ? null : (
         <div
@@ -146,9 +158,13 @@ export function SetEditorReadout({
               : getCurrentSetLabel(sets, readoutSet.id, restTypes);
             const preview: SetReadoutPreview = {
               label,
-              weight: formatCurrentWeight(readoutSet),
-              reps: formatCurrentReps(readoutSet),
               kind: readoutSet.kind,
+              segments: getReadoutSegments(
+                sets,
+                readoutSet.id,
+                isActive ? set.id : readoutSet.id,
+                restTypes,
+              ),
             };
 
             return (
@@ -168,6 +184,11 @@ export function SetEditorReadout({
                   deleteLabel={`Delete ${label}`}
                   className={cn(!isActive && "opacity-55")}
                   onFieldChange={onFieldChange}
+                  onSelectSegmentField={(setId, nextField) => {
+                    onSelectSet(setId);
+                    onFieldChange(nextField);
+                  }}
+                  onUseStandardRestBefore={onUseStandardRestBefore}
                   onEditNote={onEditNote}
                   onDelete={onDelete}
                   onToggleWarmup={onToggleWarmup}
@@ -179,9 +200,16 @@ export function SetEditorReadout({
             <SetEditorReadoutPanel
               preview={{
                 label: setLabel,
-                weight: formatCurrentWeight(set),
-                reps: formatCurrentReps(set),
                 kind: set.kind,
+                segments: [
+                  {
+                    id: set.id,
+                    weight: formatCurrentWeight(set),
+                    reps: formatCurrentReps(set),
+                    showWeight: true,
+                    active: true,
+                  },
+                ],
               }}
               field={field}
               interactive
@@ -190,6 +218,11 @@ export function SetEditorReadout({
               }
               deleteLabel={`Delete ${setLabel}`}
               onFieldChange={onFieldChange}
+              onSelectSegmentField={(setId, nextField) => {
+                onSelectSet(setId);
+                onFieldChange(nextField);
+              }}
+              onUseStandardRestBefore={onUseStandardRestBefore}
               onEditNote={onEditNote}
               onDelete={onDelete}
               onToggleWarmup={onToggleWarmup}
@@ -208,6 +241,7 @@ function SetEditorSummaryLine({
   restTypes,
   onAddSet,
   onEdit,
+  onCycleRestBefore,
 }: {
   sets: CurrentExerciseSet[];
   activeSetId: string;
@@ -215,77 +249,33 @@ function SetEditorSummaryLine({
   restTypes: RestType[];
   onAddSet?: () => void;
   onEdit: (setId: string, field: EditorField) => void;
+  onCycleRestBefore: (setId: string) => void;
 }) {
+  const warmupSets = sets.filter((set) => set.kind === "warmup");
+  const workingSets = sets.filter((set) => set.kind === "working");
+
   return (
     <div className={cn("relative mb-1 min-w-0", onAddSet && "pr-8")}>
-      <div className="flex min-h-6 min-w-0 flex-wrap items-baseline gap-x-0 gap-y-1 text-[13px] leading-5 text-[#696457]">
-        {sets.map((set, index) => {
-          const previousSet = sets[index - 1];
-          const sameKindAsPrevious = previousSet?.kind === set.kind;
-          const weight = formatCompactCurrentWeight(set);
-          const previousWeight = previousSet
-            ? formatCompactCurrentWeight(previousSet)
-            : "";
-          const showWeight =
-            index === 0 || !sameKindAsPrevious || previousWeight !== weight;
-          const active = set.id === activeSetId;
-          const separatorIsActive = active && activeField === "rest";
-          const isCompound =
-            sameKindAsPrevious && isCompoundRest(set.restBefore, restTypes);
-
-          return (
-            <span key={set.id} className="inline-flex items-baseline gap-0">
-              {index > 0 ? (
-                <button
-                  type="button"
-                  aria-label={`Edit rest before ${formatCurrentReps(set)}`}
-                  className={cn(
-                    "inline-flex min-w-3 justify-center rounded-[3px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]",
-                    separatorIsActive &&
-                      "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
-                  )}
-                  onClick={() => onEdit(set.id, "rest")}
-                >
-                  {isCompound ? "+" : ","}
-                </button>
-              ) : null}
-              {index === 0 && set.kind === "warmup" ? (
-                <span className="rounded-[3px] px-0.5">W</span>
-              ) : null}
-              {showWeight ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label={`Edit ${formatCurrentWeight(set)} weight`}
-                    className={cn(
-                      "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
-                      active &&
-                        activeField === "weight" &&
-                        "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
-                    )}
-                    onClick={() => onEdit(set.id, "weight")}
-                  >
-                    {weight}
-                  </button>
-                  <span>×</span>
-                </>
-              ) : null}
-              <button
-                type="button"
-                aria-label={`Edit ${formatCurrentReps(set)} reps`}
-                className={cn(
-                  "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
-                  active &&
-                    activeField === "reps" &&
-                    "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
-                )}
-                onClick={() => onEdit(set.id, "reps")}
-              >
-                {formatCurrentReps(set)}
-              </button>
-            </span>
-          );
-        })}
+      <div className="flex min-h-6 min-w-0 flex-col gap-0.5 text-[13px] leading-5 text-[#696457]">
+        {warmupSets.length > 0 ? (
+          <SetEditorSummaryGroup
+            sets={warmupSets}
+            activeSetId={activeSetId}
+            activeField={activeField}
+            restTypes={restTypes}
+            warmup
+            onEdit={onEdit}
+            onCycleRestBefore={onCycleRestBefore}
+          />
+        ) : null}
+        <SetEditorSummaryGroup
+          sets={workingSets}
+          activeSetId={activeSetId}
+          activeField={activeField}
+          restTypes={restTypes}
+          onEdit={onEdit}
+          onCycleRestBefore={onCycleRestBefore}
+        />
       </div>
       {onAddSet ? (
         <button
@@ -301,6 +291,150 @@ function SetEditorSummaryLine({
   );
 }
 
+function SetEditorSummaryGroup({
+  sets,
+  activeSetId,
+  activeField,
+  restTypes,
+  warmup = false,
+  onEdit,
+  onCycleRestBefore,
+}: {
+  sets: CurrentExerciseSet[];
+  activeSetId: string;
+  activeField: EditorField;
+  restTypes: RestType[];
+  warmup?: boolean;
+  onEdit: (setId: string, field: EditorField) => void;
+  onCycleRestBefore: (setId: string) => void;
+}) {
+  if (sets.length === 0) return null;
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-0 gap-y-0.5">
+      {sets.map((set, index) => {
+        const previousSet = sets[index - 1];
+        const weight = formatCompactCurrentWeight(set);
+        const previousWeight = previousSet
+          ? formatCompactCurrentWeight(previousSet)
+          : "";
+        const showWeight = index === 0 || previousWeight !== weight;
+        const active = set.id === activeSetId;
+        const isCompound = isCompoundRest(set.restBefore, restTypes);
+
+        return (
+          <span key={set.id} className="inline-flex items-baseline gap-0">
+            {index > 0 ? (
+              <button
+                type="button"
+                aria-label={`Change rest before ${formatCurrentReps(set)}`}
+                title={isCompound ? "short rest" : "standard rest"}
+                className={cn(
+                  "inline-flex min-w-3 justify-center rounded-[3px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]",
+                  isCompound && "font-semibold text-[#373226]",
+                )}
+                onClick={() => onCycleRestBefore(set.id)}
+              >
+                {isCompound ? "+" : ","}
+              </button>
+            ) : null}
+            {index === 0 && warmup ? (
+              <span className="rounded-[3px] px-0.5">W</span>
+            ) : null}
+            {showWeight ? (
+              <>
+                <button
+                  type="button"
+                  aria-label={`Edit ${formatCurrentWeight(set)} weight`}
+                  className={cn(
+                    "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
+                    active &&
+                      activeField === "weight" &&
+                      "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
+                  )}
+                  onClick={() => onEdit(set.id, "weight")}
+                >
+                  {weight}
+                </button>
+                <span>×</span>
+              </>
+            ) : null}
+            <button
+              type="button"
+              aria-label={`Edit ${formatCurrentReps(set)} reps`}
+              className={cn(
+                "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
+                active &&
+                  activeField === "reps" &&
+                  "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
+              )}
+              onClick={() => onEdit(set.id, "reps")}
+            >
+              {formatCurrentReps(set)}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function getReadoutSegments(
+  sets: CurrentExerciseSet[],
+  setId: string,
+  activeSetId: string,
+  restTypes: RestType[],
+): SetReadoutSegment[] {
+  const setIndex = sets.findIndex((candidateSet) => candidateSet.id === setId);
+  if (setIndex === -1) return [];
+
+  let startIndex = setIndex;
+  while (startIndex > 0) {
+    const set = sets[startIndex];
+    const previousSet = sets[startIndex - 1];
+    if (
+      !set ||
+      !previousSet ||
+      set.kind !== previousSet.kind ||
+      !isCompoundRest(set.restBefore, restTypes)
+    ) {
+      break;
+    }
+    startIndex -= 1;
+  }
+
+  let endIndex = setIndex;
+  while (endIndex < sets.length - 1) {
+    const set = sets[endIndex];
+    const nextSet = sets[endIndex + 1];
+    if (
+      !set ||
+      !nextSet ||
+      nextSet.kind !== set.kind ||
+      !isCompoundRest(nextSet.restBefore, restTypes)
+    ) {
+      break;
+    }
+    endIndex += 1;
+  }
+
+  return sets.slice(startIndex, endIndex + 1).map((set, index, group) => {
+    const weight = formatCurrentWeight(set);
+    const previousWeight =
+      index > 0 && group[index - 1]
+        ? formatCurrentWeight(group[index - 1]!)
+        : "";
+
+    return {
+      id: set.id,
+      weight,
+      reps: formatCurrentReps(set),
+      showWeight: index === 0 || weight !== previousWeight,
+      active: set.id === activeSetId,
+    };
+  });
+}
+
 function SetEditorReadoutPanel({
   preview,
   field,
@@ -309,6 +443,8 @@ function SetEditorReadoutPanel({
   deleteLabel,
   className,
   onFieldChange,
+  onSelectSegmentField,
+  onUseStandardRestBefore,
   onEditNote,
   onDelete,
   onToggleWarmup,
@@ -323,6 +459,8 @@ function SetEditorReadoutPanel({
   onEditNote?: () => void;
   onDelete?: () => void;
   onToggleWarmup?: () => void;
+  onSelectSegmentField?: (setId: string, field: "weight" | "reps") => void;
+  onUseStandardRestBefore?: (setId: string) => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -346,31 +484,77 @@ function SetEditorReadoutPanel({
           >
             W
           </button>
-          <button
-            type="button"
-            disabled={!interactive}
-            className={cn(
-              "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
-              field === "weight" && interactive && "bg-[#eee8da]",
-              !interactive && "pointer-events-none",
-            )}
-            onClick={() => onFieldChange?.("weight")}
-          >
-            {preview.weight}
-          </button>
-          <span className="text-[#8a8374]">×</span>
-          <button
-            type="button"
-            disabled={!interactive}
-            className={cn(
-              "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
-              field === "reps" && interactive && "bg-[#eee8da]",
-              !interactive && "pointer-events-none",
-            )}
-            onClick={() => onFieldChange?.("reps")}
-          >
-            {preview.reps}
-          </button>
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-0 gap-y-0.5 overflow-hidden">
+            {preview.segments.map((segment, index) => (
+              <span
+                key={segment.id}
+                className="inline-flex min-w-0 items-baseline gap-0"
+              >
+                {index > 0 ? (
+                  <button
+                    type="button"
+                    aria-label={`Change rest before ${segment.reps} to standard`}
+                    disabled={!interactive}
+                    title="standard rest"
+                    className={cn(
+                      "inline-flex min-w-3 justify-center rounded-[3px] border border-transparent text-[#8a8374] hover:border-[#ebe4d6] hover:bg-[#eee8da] hover:text-[#373226]",
+                      !interactive && "pointer-events-none",
+                    )}
+                    onClick={() => onUseStandardRestBefore?.(segment.id)}
+                  >
+                    +
+                  </button>
+                ) : null}
+                {segment.showWeight ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!interactive}
+                      className={cn(
+                        "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
+                        field === "weight" &&
+                          segment.active &&
+                          interactive &&
+                          "bg-[#eee8da]",
+                        !interactive && "pointer-events-none",
+                      )}
+                      onClick={() => {
+                        if (onSelectSegmentField) {
+                          onSelectSegmentField(segment.id, "weight");
+                        } else {
+                          onFieldChange?.("weight");
+                        }
+                      }}
+                    >
+                      {segment.weight}
+                    </button>
+                    <span className="text-[#8a8374]">×</span>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={!interactive}
+                  className={cn(
+                    "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
+                    field === "reps" &&
+                      segment.active &&
+                      interactive &&
+                      "bg-[#eee8da]",
+                    !interactive && "pointer-events-none",
+                  )}
+                  onClick={() => {
+                    if (onSelectSegmentField) {
+                      onSelectSegmentField(segment.id, "reps");
+                    } else {
+                      onFieldChange?.("reps");
+                    }
+                  }}
+                >
+                  {segment.reps}
+                </button>
+              </span>
+            ))}
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {confirmingDelete ? (

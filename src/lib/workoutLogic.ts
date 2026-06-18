@@ -22,6 +22,7 @@ export interface Note {
 }
 
 export interface WorkoutSet {
+  clientId?: string;
   weight: number | null; // lb
   reps: number | null;
   completed: boolean;
@@ -740,6 +741,7 @@ export type Action =
     }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
+  | { type: "UPDATE_USER_EXERCISE_NOTE"; exerciseIndex: number; note: string }
   | { type: "ADD_EXERCISE_NOTE"; exerciseIndex: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
   | { type: "UPDATE_NOTES"; exerciseIndex: number; notes: string }
@@ -1394,6 +1396,25 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       };
     }
 
+    case "UPDATE_USER_EXERCISE_NOTE": {
+      const exercise = state.exercises[action.exerciseIndex];
+      if (!exercise) return state;
+
+      const updatedExercise: WorkoutExercise = {
+        ...exercise,
+        exerciseNotes: action.note.trim(),
+      };
+
+      return {
+        ...state,
+        exercises: replaceExercise(
+          state.exercises,
+          action.exerciseIndex,
+          updatedExercise,
+        ),
+      };
+    }
+
     case "ADD_EXERCISE_NOTE": {
       const { exerciseIndex, text } = action;
 
@@ -1786,15 +1807,18 @@ export function finalizeWorkout(
   const completedExercises: CompletedExercise[] = state.exercises
     .map((ex, exIndex) => {
       const completedSets: CompletedSet[] = ex.sets.map((set, index) => {
-        const weight = set.weight ?? set.prevWeight;
-        const reps = set.reps ?? set.prevReps;
+        const previousSet = ex.previousSets[index];
+        const weight =
+          set.weight ?? set.prevWeight ?? previousSet?.weight ?? null;
+        const reps = set.reps ?? set.prevReps ?? previousSet?.reps ?? null;
 
         return {
           weight,
           reps,
           modifier: set.modifier ?? null,
-          weightModifier: set.weightModifier ?? null,
-          restBefore: set.restBefore ?? null,
+          weightModifier:
+            set.weightModifier ?? previousSet?.weightModifier ?? null,
+          restBefore: set.restBefore ?? previousSet?.restBefore ?? null,
           notes: set.notes,
           rir: set.rir ?? null,
           order: index + 1,
@@ -1807,7 +1831,7 @@ export function finalizeWorkout(
         name: ex.name,
         sets: completedSets,
         exerciseNotes: ex.exerciseNotes ?? undefined,
-        exerciseNotesSnapshot: ex.exerciseNotes ?? undefined,
+        exerciseNotesSnapshot: ex.exerciseNotes?.trim() || undefined,
         notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
         order: exIndex + 1,
       };

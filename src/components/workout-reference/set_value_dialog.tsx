@@ -16,6 +16,7 @@ import type {
   CurrentExerciseSet,
   EditorField,
   RestType,
+  SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
 
 type SetValueDialogProps = {
@@ -27,10 +28,13 @@ type SetValueDialogProps = {
   setLabel: string;
   onDelete: () => void;
   onAddSet: () => void;
+  onAddShortRestSet: (setId: string) => void;
+  onCycleRestBefore: (setId: string) => void;
+  onUseStandardRestBefore: (setId: string) => void;
   onSelectSet: (setId: string) => void;
   onOpenChange: (open: boolean) => void;
   onFieldChange: (field: EditorField) => void;
-  onUpdate: (set: CurrentExerciseSet) => void;
+  onUpdate: (set: CurrentExerciseSet, options?: SetChangeOptions) => void;
 };
 
 export function SetValueDialog({
@@ -42,6 +46,9 @@ export function SetValueDialog({
   setLabel,
   onDelete,
   onAddSet,
+  onAddShortRestSet,
+  onCycleRestBefore,
+  onUseStandardRestBefore,
   onSelectSet,
   onOpenChange,
   onFieldChange,
@@ -68,6 +75,9 @@ export function SetValueDialog({
             field={field}
             onDelete={onDelete}
             onAddSet={onAddSet}
+            onAddShortRestSet={onAddShortRestSet}
+            onCycleRestBefore={onCycleRestBefore}
+            onUseStandardRestBefore={onUseStandardRestBefore}
             onSelectSet={onSelectSet}
             onOpenChange={onOpenChange}
             onFieldChange={onFieldChange}
@@ -95,6 +105,9 @@ function SetValueDialogContent({
   field,
   onDelete,
   onAddSet,
+  onAddShortRestSet,
+  onCycleRestBefore,
+  onUseStandardRestBefore,
   onSelectSet,
   onOpenChange,
   onFieldChange,
@@ -116,6 +129,8 @@ function SetValueDialogContent({
         onEditNote={() => onFieldChange("note")}
         onDelete={onDelete}
         onAddSet={onAddSet}
+        onCycleRestBefore={onCycleRestBefore}
+        onUseStandardRestBefore={onUseStandardRestBefore}
         onSelectSet={onSelectSet}
         onToggleWarmup={() =>
           onUpdate({
@@ -126,6 +141,7 @@ function SetValueDialogContent({
       />
       {field === "note" ? (
         <SetNoteEditor
+          key={set.id}
           set={set}
           setLabel={setLabel}
           onDelete={() => {
@@ -144,11 +160,15 @@ function SetValueDialogContent({
         />
       ) : (
         <SetEditorKeyboard
+          key={`${set.id}-${field}`}
           field={field}
           set={set}
+          onAddShortRest={
+            field === "reps" ? () => onAddShortRestSet(set.id) : undefined
+          }
           onDone={() => onOpenChange(false)}
           onNext={() => onFieldChange(field === "weight" ? "reps" : "weight")}
-          onUpdate={onUpdate}
+          onUpdate={(nextSet) => onUpdate(nextSet, { deferHistory: true })}
         />
       )}
     </>

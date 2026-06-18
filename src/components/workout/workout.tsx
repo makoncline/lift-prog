@@ -6,9 +6,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/trpc/react";
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
-import { formatDuration } from "@/lib/utils";
 import { NoteEditorDialog } from "@/components/workout/note_editor_dialog";
 import { DeleteExerciseDialog } from "@/components/workout/delete_exercise_dialog";
+import { DeleteWorkoutDialog } from "@/components/workout/delete_workout_dialog";
 import { WorkoutExercisePlan } from "@/components/workout/workout_exercise_plan";
 import {
   currentSetToWorkoutSet,
@@ -71,13 +71,20 @@ type WorkoutDraftSession = {
   present: WorkoutDraft;
   future: WorkoutDraft[];
   saved: WorkoutDraft;
+  pendingHistoryBase?: WorkoutDraft;
 };
 
 type WorkoutDraftAction =
-  | { type: "APPLY_WORKOUT_ACTION"; action: Action; track?: boolean }
+  | {
+      type: "APPLY_WORKOUT_ACTION";
+      action: Action;
+      track?: boolean;
+      deferHistory?: boolean;
+    }
   | { type: "SET_COMPLETED_AT"; completedAt: Date }
   | { type: "SET_TIME_RANGE"; startTime: number; completedAt: Date }
   | { type: "REPLACE_DRAFT"; draft: WorkoutDraft }
+  | { type: "COMMIT_PENDING_HISTORY" }
   | { type: "MARK_SAVED" }
   | { type: "UNDO" }
   | { type: "REDO" };
@@ -95,14 +102,24 @@ function workoutDraftReducer(
   action: WorkoutDraftAction,
 ): WorkoutDraftSession {
   if (action.type === "UNDO") {
+    if (session.pendingHistoryBase) {
+      return {
+        ...session,
+        present: cloneWorkoutDraft(session.pendingHistoryBase),
+        future: [cloneWorkoutDraft(session.present), ...session.future],
+        pendingHistoryBase: undefined,
+      };
+    }
+
     const previous = session.past[session.past.length - 1];
     if (!previous) return session;
 
     return {
       ...session,
       past: session.past.slice(0, -1),
-      present: previous,
-      future: [session.present, ...session.future],
+      present: cloneWorkoutDraft(previous),
+      future: [cloneWorkoutDraft(session.present), ...session.future],
+      pendingHistoryBase: undefined,
     };
   }
 
@@ -112,18 +129,42 @@ function workoutDraftReducer(
 
     return {
       ...session,
-      past: [...session.past, session.present].slice(-MAX_DRAFT_HISTORY),
-      present: next,
+      past: [...session.past, cloneWorkoutDraft(session.present)].slice(
+        -MAX_DRAFT_HISTORY,
+      ),
+      present: cloneWorkoutDraft(next),
       future,
+      pendingHistoryBase: undefined,
     };
   }
 
   if (action.type === "REPLACE_DRAFT") {
+    const draft = cloneWorkoutDraft(action.draft);
     return {
       past: [],
-      present: action.draft,
+      present: draft,
       future: [],
-      saved: action.draft,
+      saved: draft,
+      pendingHistoryBase: undefined,
+    };
+  }
+
+  if (action.type === "COMMIT_PENDING_HISTORY") {
+    if (!session.pendingHistoryBase) return session;
+
+    if (isSameDraft(session.pendingHistoryBase, session.present)) {
+      return {
+        ...session,
+        pendingHistoryBase: undefined,
+      };
+    }
+
+    return {
+      ...session,
+      past: [...session.past, cloneWorkoutDraft(session.pendingHistoryBase)]
+        .slice(-MAX_DRAFT_HISTORY),
+      future: [],
+      pendingHistoryBase: undefined,
     };
   }
 
@@ -132,7 +173,8 @@ function workoutDraftReducer(
       ...session,
       past: [],
       future: [],
-      saved: session.present,
+      saved: cloneWorkoutDraft(session.present),
+      pendingHistoryBase: undefined,
     };
   }
 
@@ -165,21 +207,56 @@ function workoutDraftReducer(
     action.type === "SET_TIME_RANGE" ||
     (action.track ?? !EPHEMERAL_WORKOUT_ACTIONS.has(action.action.type));
 
+  if (action.type === "APPLY_WORKOUT_ACTION" && action.deferHistory) {
+    return {
+      ...session,
+      present: nextDraft,
+      future: [],
+      pendingHistoryBase:
+        session.pendingHistoryBase ?? cloneWorkoutDraft(session.present),
+    };
+  }
+
+  const committedPast =
+    shouldTrack &&
+    session.pendingHistoryBase &&
+    !isSameDraft(session.pendingHistoryBase, session.present)
+      ? [...session.past, cloneWorkoutDraft(session.pendingHistoryBase)]
+      : session.past;
+
   return {
     ...session,
     past: shouldTrack
-      ? [...session.past, session.present].slice(-MAX_DRAFT_HISTORY)
-      : session.past,
+      ? [...committedPast, cloneWorkoutDraft(session.present)].slice(
+          -MAX_DRAFT_HISTORY,
+        )
+      : committedPast.slice(-MAX_DRAFT_HISTORY),
     present: nextDraft,
     future: shouldTrack ? [] : session.future,
+    pendingHistoryBase: shouldTrack ? undefined : session.pendingHistoryBase,
   };
 }
 
 function isSameDraft(a: WorkoutDraft, b: WorkoutDraft) {
   return (
-    a.workout === b.workout &&
-    a.completedAt.getTime() === b.completedAt.getTime()
+    a.completedAt.getTime() === b.completedAt.getTime() &&
+    JSON.stringify(a.workout) === JSON.stringify(b.workout)
   );
+}
+
+function cloneWorkoutDraft(draft: WorkoutDraft): WorkoutDraft {
+  return {
+    workout: cloneWorkout(draft.workout),
+    completedAt: new Date(draft.completedAt.getTime()),
+  };
+}
+
+function cloneWorkout(workout: Workout): Workout {
+  if (typeof structuredClone === "function") {
+    return structuredClone(workout) as Workout;
+  }
+
+  return JSON.parse(JSON.stringify(workout)) as Workout;
 }
 
 export function WorkoutComponent({ ...props }: WorkoutProps) {
@@ -256,12 +333,20 @@ function WorkoutComponentInner({
     draftSession.present,
     draftSession.saved,
   );
-  const dispatch = (action: Action, options?: { track?: boolean }) =>
+  const dispatch = (
+    action: Action,
+    options?: { track?: boolean; deferHistory?: boolean },
+  ) =>
     dispatchDraft({
       type: "APPLY_WORKOUT_ACTION",
       action,
       ...(options?.track === undefined ? {} : { track: options.track }),
+      ...(options?.deferHistory === undefined
+        ? {}
+        : { deferHistory: options.deferHistory }),
     });
+  const commitPendingHistory = () =>
+    dispatchDraft({ type: "COMMIT_PENDING_HISTORY" });
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editableName, setEditableName] = useState(state.name);
@@ -321,6 +406,8 @@ function WorkoutComponentInner({
   });
 
   const [workoutNoteEditorOpen, setWorkoutNoteEditorOpen] = useState(false);
+  const [deleteWorkoutDialogOpen, setDeleteWorkoutDialogOpen] =
+    useState(false);
   const [addingExerciseName, setAddingExerciseName] = useState<string | null>(
     null,
   );
@@ -332,12 +419,14 @@ function WorkoutComponentInner({
   });
 
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
-    onSuccess: (_data, variables) => {
+    onSuccess: async () => {
       toast.success("Workout saved successfully!");
       dispatchDraft({ type: "MARK_SAVED" });
       if (typeof window !== "undefined")
         localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
-      finishDialog.setFinishedWorkout(variables);
+      await utils.workout.listRecent.invalidate();
+      finishDialog.reset();
+      router.push("/");
     },
     onError: (error) => {
       toast.error(`Error saving workout: ${error.message}`);
@@ -355,6 +444,21 @@ function WorkoutComponentInner({
       toast.error(`Error updating workout: ${error.message}`);
     },
   });
+  const deleteWorkoutMutation = api.workout.deleteWorkout.useMutation({
+    onSuccess: async () => {
+      toast.success("Workout deleted.");
+      dispatchDraft({ type: "MARK_SAVED" });
+      setDeleteWorkoutDialogOpen(false);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
+      }
+      await utils.workout.listRecent.invalidate();
+      router.push("/");
+    },
+    onError: (error) => {
+      toast.error(`Error deleting workout: ${error.message}`);
+    },
+  });
   const addExerciseMutation = api.exercise.add.useMutation({
     onSuccess: async () => {
       await utils.exercise.list.invalidate();
@@ -363,6 +467,14 @@ function WorkoutComponentInner({
       if (!error.message.includes("already exists")) {
         toast.error(`Error creating exercise: ${error.message}`);
       }
+    },
+  });
+  const updateUserExerciseNoteMutation = api.exercise.updateNote.useMutation({
+    onSuccess: async () => {
+      await utils.exercise.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`Error updating exercise note: ${error.message}`);
     },
   });
 
@@ -374,6 +486,20 @@ function WorkoutComponentInner({
       return;
     }
 
+    router.push("/");
+  };
+
+  const deleteWorkout = () => {
+    if (workoutId) {
+      deleteWorkoutMutation.mutate({ workoutId });
+      return;
+    }
+
+    dispatchDraft({ type: "MARK_SAVED" });
+    setDeleteWorkoutDialogOpen(false);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
+    }
     router.push("/");
   };
 
@@ -460,6 +586,48 @@ function WorkoutComponentInner({
     }
   };
 
+  const updateUserExerciseNote = (exerciseIndex: number, note: string) => {
+    const exercise = state.exercises[exerciseIndex];
+    if (!exercise) return;
+
+    const nextNote = note.trim();
+    dispatch({
+      type: "UPDATE_USER_EXERCISE_NOTE",
+      exerciseIndex,
+      note: nextNote,
+    });
+
+    if (exercise.userExerciseId) {
+      updateUserExerciseNoteMutation.mutate({
+        id: exercise.userExerciseId,
+        note: nextNote,
+      });
+    } else {
+      updateUserExerciseNoteMutation.mutate({
+        name: exercise.name,
+        note: nextNote,
+      });
+    }
+  };
+
+  const buildFinishedWorkoutPayload = (): CompletedWorkout => {
+    const durationInSeconds = finishDialog.getDurationInSeconds(
+      state.startTime,
+    );
+    const completionDate = finishDialog.getCompletedAt();
+    const startedAt = new Date(
+      completionDate.getTime() - durationInSeconds * 1000,
+    );
+    const base = finalizeWorkout(state, getWorkoutNoteText());
+    const payload: CompletedWorkout = {
+      ...base,
+      startedAt,
+      completedAt: completionDate,
+    };
+
+    return payload;
+  };
+
   const handleFinishWorkout = () => {
     if (!canSaveWorkout || !userStateLoaded) {
       toast.error("User not loaded. Cannot save workout.");
@@ -478,40 +646,8 @@ function WorkoutComponentInner({
       return;
     }
 
-    const durationInSeconds = finishDialog.getDurationInSeconds(
-      state.startTime,
-    );
-    const completionDate = finishDialog.getCompletedAt();
-    const startedAt = new Date(
-      completionDate.getTime() - durationInSeconds * 1000,
-    );
-    const base = finalizeWorkout(state, getWorkoutNoteText());
-    const payload: CompletedWorkout = {
-      ...base,
-      startedAt,
-      completedAt: completionDate,
-    };
+    const payload = buildFinishedWorkoutPayload();
     saveWorkoutMutation.mutate(payload);
-  };
-
-  const copyWorkoutToClipboard = (): Promise<void> => {
-    if (!finishDialog.finishedWorkout) return Promise.resolve();
-    const finishedWorkout = finishDialog.finishedWorkout;
-    const workoutSummary =
-      `\nWorkout: ${finishedWorkout.name}\nDate: ${finishedWorkout.completedAt.toLocaleDateString()}\nDuration: ${formatDuration((finishedWorkout.completedAt.getTime() - finishedWorkout.startedAt.getTime()) / 1000)}\n\nExercises:\n${finishedWorkout.exercises
-        .map(
-          (ex) =>
-            `  - ${ex.name}:\n${ex.sets.map((s) => `    - ${s.weight ?? "-"} lbs x ${s.reps ?? "-"} reps ${s.modifier ? `(${s.modifier})` : ""}`).join("\n")}`,
-        )
-        .join("\n\n")}`.trim();
-    return navigator.clipboard
-      .writeText(workoutSummary)
-      .then(() => {
-        toast.success("Workout summary copied to clipboard!");
-      })
-      .catch(() => {
-        // swallow to satisfy Promise<void>
-      });
   };
 
   return (
@@ -543,7 +679,11 @@ function WorkoutComponentInner({
         workoutNote={getWorkoutNoteText()}
         isInProgress={!workoutId}
         showDiscardAction={Boolean(workoutId)}
-        canUndo={draftSession.past.length > 0}
+        showDeleteAction
+        canUndo={
+          draftSession.past.length > 0 ||
+          Boolean(draftSession.pendingHistoryBase)
+        }
         canRedo={draftSession.future.length > 0}
         onStartTimeChange={handleStartTimeChange}
         onCompletedAtChange={(nextCompletedAt) =>
@@ -558,6 +698,7 @@ function WorkoutComponentInner({
         onSaveName={handleWorkoutNameUpdate}
         onEditWorkoutNote={() => setWorkoutNoteEditorOpen(true)}
         onDiscardWorkout={discardWorkoutChanges}
+        onDeleteWorkout={() => setDeleteWorkoutDialogOpen(true)}
         onUndo={() => dispatchDraft({ type: "UNDO" })}
         onRedo={() => dispatchDraft({ type: "REDO" })}
         onFinishWorkout={() => {
@@ -596,43 +737,32 @@ function WorkoutComponentInner({
 
       <WorkoutExerciseList
         exercises={state.exercises}
+        onExerciseNoteChange={updateUserExerciseNote}
         onWorkoutExerciseNoteChange={updateWorkoutExerciseNote}
-        onCurrentSetsChange={(exerciseIndex, sets) =>
-          dispatch({
-            type: "REPLACE_EXERCISE_SETS",
-            exerciseIndex,
-            sets: normalizeCurrentSetOrder(sets).map(currentSetToWorkoutSet),
-          })
+        onCommitPendingHistory={commitPendingHistory}
+        onCurrentSetsChange={(exerciseIndex, sets, options) =>
+          dispatch(
+            {
+              type: "REPLACE_EXERCISE_SETS",
+              exerciseIndex,
+              sets: normalizeCurrentSetOrder(sets).map(currentSetToWorkoutSet),
+            },
+            options,
+          )
         }
       />
 
       <FinishDialog
         open={finishDialog.open}
         isSaving={saveWorkoutMutation.isPending}
-        finishedWorkout={finishDialog.finishedWorkout}
-        date={finishDialog.date}
-        startTime={finishDialog.startTime}
-        endTime={finishDialog.endTime}
-        duration={finishDialog.duration}
-        setDate={finishDialog.setDate}
-        setStartTime={finishDialog.setStartTime}
-        setEndTime={finishDialog.setEndTime}
-        setDuration={finishDialog.setDuration}
+        workout={finishDialog.open ? buildFinishedWorkoutPayload() : null}
         onOpenChange={(open) =>
           finishDialog.handleOpenChange(open, saveWorkoutMutation.isPending)
         }
-        onCopy={copyWorkoutToClipboard}
-        onSetEndToNow={finishDialog.setEndTimeToNow}
+        onBack={() =>
+          finishDialog.handleOpenChange(false, saveWorkoutMutation.isPending)
+        }
         onSave={handleFinishWorkout}
-        onDone={() => {
-          if (typeof window !== "undefined") {
-            try {
-              localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
-            } catch {}
-          }
-          finishDialog.reset();
-          router.push("/");
-        }}
       />
 
       <NoteEditorDialog
@@ -664,6 +794,13 @@ function WorkoutComponentInner({
           });
           setPendingDeleteExerciseIndex(null);
         }}
+      />
+      <DeleteWorkoutDialog
+        open={deleteWorkoutDialogOpen}
+        workoutName={state.name}
+        isDeleting={deleteWorkoutMutation.isPending}
+        onOpenChange={setDeleteWorkoutDialogOpen}
+        onConfirm={deleteWorkout}
       />
     </div>
   );
