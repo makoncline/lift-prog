@@ -121,6 +121,9 @@ function WorkoutComponentInner({
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editableName, setEditableName] = useState(state.name);
+  const [workoutCompletedAt, setWorkoutCompletedAt] = useState(
+    () => completedAt ?? new Date(),
+  );
   const [draggingExerciseIndex, setDraggingExerciseIndex] = useState<
     number | null
   >(null);
@@ -136,6 +139,14 @@ function WorkoutComponentInner({
       setEditableName(state.name);
       setIsEditingName(false);
     }
+  };
+
+  const handleStartTimeChange = (nextStartTime: number) => {
+    const durationMs = workoutCompletedAt.getTime() - state.startTime;
+    dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime: nextStartTime });
+    setWorkoutCompletedAt(
+      new Date(nextStartTime + Math.max(60_000, durationMs)),
+    );
   };
 
   const handleStartEditingName = () => {
@@ -280,7 +291,7 @@ function WorkoutComponentInner({
         workoutId,
         workout: {
           ...payload,
-          completedAt: completedAt ?? payload.completedAt,
+          completedAt: workoutCompletedAt,
         },
       });
       return;
@@ -344,13 +355,13 @@ function WorkoutComponentInner({
       <WorkoutHeader
         name={state.name}
         startTime={state.startTime}
+        completedAt={workoutCompletedAt}
         contextLabel={contextLabel}
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
-        onStartTimeChange={(startTime) =>
-          dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime })
-        }
+        onStartTimeChange={handleStartTimeChange}
+        onCompletedAtChange={setWorkoutCompletedAt}
         onEditableNameChange={setEditableName}
         onStartEditingName={handleStartEditingName}
         onCancelEditingName={handleCancelEditingName}
@@ -442,7 +453,7 @@ function WorkoutComponentInner({
         exerciseName={
           pendingDeleteExerciseIndex == null
             ? ""
-            : state.exercises[pendingDeleteExerciseIndex]?.name ?? ""
+            : (state.exercises[pendingDeleteExerciseIndex]?.name ?? "")
         }
         open={pendingDeleteExerciseIndex != null}
         onOpenChange={(open) => {
