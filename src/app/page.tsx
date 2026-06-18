@@ -34,6 +34,9 @@ import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
 
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 const localDevMode = process.env.NODE_ENV === "development";
+const INITIAL_WORKOUT_HISTORY_LIMIT = 6;
+const WORKOUT_HISTORY_LIMIT_INCREMENT = 6;
+const MAX_WORKOUT_HISTORY_LIMIT = 50;
 
 const formatWorkoutDate = (date: Date): string => {
   return `${date.getMonth() + 1}/${date.getDate()}`;
@@ -93,6 +96,9 @@ function AuthenticatedHomePage({
   const [showBuilder, setShowBuilder] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState("");
   const [selectedExercises, setSelectedExercises] = useState<string[]>([]);
+  const [visibleWorkoutLimit, setVisibleWorkoutLimit] = useState(
+    INITIAL_WORKOUT_HISTORY_LIMIT,
+  );
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -118,7 +124,7 @@ function AuthenticatedHomePage({
 
   // Fetch recent workouts using tRPC query hook
   const recentWorkoutsQuery = api.workout.listRecent.useQuery(
-    { limit: 6 }, // Fetch up to 6 recent workouts
+    { limit: visibleWorkoutLimit },
     {
       // Optional: configure query behavior (e.g., refetching)
       // refetchOnWindowFocus: false,
@@ -203,8 +209,7 @@ function AuthenticatedHomePage({
     if (!trimmedSearch) return;
 
     const exact = exercisesQuery.data?.find(
-      (exercise) =>
-        exercise.name.toLowerCase() === trimmedSearch.toLowerCase(),
+      (exercise) => exercise.name.toLowerCase() === trimmedSearch.toLowerCase(),
     );
     const exerciseName = exact?.name ?? trimmedSearch;
     addSelectedExercise(exerciseName);
@@ -218,6 +223,10 @@ function AuthenticatedHomePage({
   const workouts = historyEnabled
     ? (recentWorkoutsQuery.data ?? [])
     : sampleWorkouts;
+  const canShowMoreWorkouts =
+    historyEnabled &&
+    workouts.length >= visibleWorkoutLimit &&
+    visibleWorkoutLimit < MAX_WORKOUT_HISTORY_LIMIT;
   const showLoading = historyEnabled && recentWorkoutsQuery.isLoading;
   const showError = historyEnabled && recentWorkoutsQuery.isError;
 
@@ -441,6 +450,23 @@ function AuthenticatedHomePage({
                   ) : null}
                 </article>
               ))}
+              {canShowMoreWorkouts ? (
+                <button
+                  type="button"
+                  className="text-[13px] leading-tight text-stone-500 hover:text-stone-950 disabled:opacity-50"
+                  disabled={recentWorkoutsQuery.isFetching}
+                  onClick={() =>
+                    setVisibleWorkoutLimit((limit) =>
+                      Math.min(
+                        limit + WORKOUT_HISTORY_LIMIT_INCREMENT,
+                        MAX_WORKOUT_HISTORY_LIMIT,
+                      ),
+                    )
+                  }
+                >
+                  {recentWorkoutsQuery.isFetching ? "loading..." : "show more"}
+                </button>
+              ) : null}
             </div>
           ) : (
             <P className="text-muted-foreground text-sm">
