@@ -49,6 +49,7 @@ export function SetValueDialog({
 }: SetValueDialogProps) {
   const open = Boolean(editor && set);
   const field = editor?.field ?? "weight";
+  const displaySets = groupSetsForEditor(sets);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,7 +62,7 @@ export function SetValueDialog({
           <SetValueDialogContent
             exerciseName={exerciseName}
             set={set}
-            sets={sets}
+            sets={displaySets}
             restTypes={restTypes}
             setLabel={setLabel}
             field={field}
@@ -76,6 +77,13 @@ export function SetValueDialog({
       </WorkoutEditorContent>
     </Dialog>
   );
+}
+
+function groupSetsForEditor(sets: CurrentExerciseSet[]) {
+  return [
+    ...sets.filter((candidateSet) => candidateSet.kind === "warmup"),
+    ...sets.filter((candidateSet) => candidateSet.kind === "working"),
+  ];
 }
 
 function SetValueDialogContent({
