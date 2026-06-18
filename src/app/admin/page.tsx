@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2, Trash2, UserCog } from "lucide-react";
-import type { User, Exercise } from "@prisma/client"; // Import generated types
+import type { User } from "@prisma/client"; // Import generated types
 import { api } from "@/trpc/react";
 
 // --- Exercise Management --- //
@@ -32,9 +32,10 @@ import { api } from "@/trpc/react";
 function ExerciseManager() {
   const utils = api.useUtils(); // For invalidating cache
   const [newExerciseName, setNewExerciseName] = useState("");
-  const [exerciseToDelete, setExerciseToDelete] = useState<Exercise | null>(
-    null,
-  );
+  const [exerciseToDelete, setExerciseToDelete] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
 
   const exercisesQuery = api.exercise.list.useQuery();
 

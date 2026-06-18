@@ -1,7 +1,11 @@
 import { z } from "zod";
+import type { PrismaClient } from "@prisma/client";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
-import { CompletedWorkoutSchema } from "@/lib/schemas/workout-schema";
+import {
+  CompletedWorkoutSchema,
+  type CompletedExercise,
+} from "@/lib/schemas/workout-schema";
 import { summarizeWorkingSets } from "@/lib/workout-summary";
 import {
   buildInitialExercisesForNames,
@@ -20,6 +24,73 @@ const PrepareInitialWorkoutInput = z.discriminatedUnion("mode", [
   }),
 ]);
 
+async function resolveUserExerciseIds({
+  prisma,
+  userId,
+  exercises,
+}: {
+  prisma: PrismaClient;
+  userId: string;
+  exercises: CompletedExercise[];
+}) {
+  const userExerciseIdByName = new Map<string, number>();
+
+  for (const exerciseInput of exercises) {
+    const notesUpdate =
+      exerciseInput.exerciseNotes === undefined
+        ? {}
+        : { notes: exerciseInput.exerciseNotes.trim() || null };
+
+    const existingById = exerciseInput.userExerciseId
+      ? await prisma.userExercise.findFirst({
+          where: {
+            id: exerciseInput.userExerciseId,
+            userId,
+          },
+          select: { id: true },
+        })
+      : null;
+
+    if (existingById) {
+      const rec = await prisma.userExercise.update({
+        where: { id: existingById.id },
+        data: {
+          name: exerciseInput.name,
+          ...notesUpdate,
+        },
+        select: { id: true, name: true },
+      });
+      userExerciseIdByName.set(rec.name, rec.id);
+      continue;
+    }
+
+    const catalogExercise = await prisma.exercise.findUnique({
+      where: { name: exerciseInput.name },
+      select: { id: true },
+    });
+
+    const rec = await prisma.userExercise.upsert({
+      where: {
+        userId_name: {
+          userId,
+          name: exerciseInput.name,
+        },
+      },
+      update: notesUpdate,
+      create: {
+        userId,
+        name: exerciseInput.name,
+        exerciseId: catalogExercise?.id ?? null,
+        ...notesUpdate,
+      },
+      select: { id: true, name: true },
+    });
+    userExerciseIdByName.set(rec.name, rec.id);
+  }
+
+  return userExerciseIdByName;
+}
+
 export const workoutRouter = createTRPCRouter({
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
@@ -35,26 +106,11 @@ export const workoutRouter = createTRPCRouter({
         });
       }
 
-      // 1. Find or create Exercise records based on names
-      const exerciseNameToIdMap = new Map<string, number>();
-
-      for (const exerciseInput of exercises) {
-        const rec = await prisma.exercise.upsert({
-          where: { name: exerciseInput.name },
-          update:
-            exerciseInput.exerciseNotes === undefined
-              ? {}
-              : { notes: exerciseInput.exerciseNotes },
-          create: {
-            name: exerciseInput.name,
-            ...(exerciseInput.exerciseNotes === undefined
-              ? {}
-              : { notes: exerciseInput.exerciseNotes }),
-          },
-          select: { id: true, name: true },
-        });
-        exerciseNameToIdMap.set(rec.name, rec.id);
-      }
+      const userExerciseIdByName = await resolveUserExerciseIds({
+        prisma,
+        userId,
+        exercises,
+      });
 
       // 2. Use Prisma transaction to save the workout atomically
       return prisma.$transaction(async (tx) => {
@@ -70,11 +126,11 @@ export const workoutRouter = createTRPCRouter({
         });
 
         for (const exerciseInput of exercises) {
-          const exerciseId = exerciseNameToIdMap.get(exerciseInput.name);
-          if (!exerciseId) {
+          const userExerciseId = userExerciseIdByName.get(exerciseInput.name);
+          if (!userExerciseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `Exercise ID not found for: ${exerciseInput.name}`,
+              message: `User exercise ID not found for: ${exerciseInput.name}`,
             });
           }
 
@@ -89,7 +145,7 @@ export const workoutRouter = createTRPCRouter({
           const workoutExercise = await tx.workoutExercise.create({
             data: {
               workoutSessionId: workout.id,
-              exerciseId: exerciseId,
+              userExerciseId,
               order: exerciseInput.order,
               notes: exerciseInput.notes,
               ...(exerciseInput.exerciseNotesSnapshot === undefined
@@ -160,25 +216,11 @@ export const workoutRouter = createTRPCRouter({
       }
 
       const { name, exercises, notes, completedAt, startedAt } = input.workout;
-      const exerciseNameToIdMap = new Map<string, number>();
-
-      for (const exerciseInput of exercises) {
-        const rec = await prisma.exercise.upsert({
-          where: { name: exerciseInput.name },
-          update:
-            exerciseInput.exerciseNotes === undefined
-              ? {}
-              : { notes: exerciseInput.exerciseNotes },
-          create: {
-            name: exerciseInput.name,
-            ...(exerciseInput.exerciseNotes === undefined
-              ? {}
-              : { notes: exerciseInput.exerciseNotes }),
-          },
-          select: { id: true, name: true },
-        });
-        exerciseNameToIdMap.set(rec.name, rec.id);
-      }
+      const userExerciseIdByName = await resolveUserExerciseIds({
+        prisma,
+        userId,
+        exercises,
+      });
 
       return prisma.$transaction(async (tx) => {
         await tx.workout.update({
@@ -196,11 +238,11 @@ export const workoutRouter = createTRPCRouter({
         });
 
         for (const exerciseInput of exercises) {
-          const exerciseId = exerciseNameToIdMap.get(exerciseInput.name);
-          if (!exerciseId) {
+          const userExerciseId = userExerciseIdByName.get(exerciseInput.name);
+          if (!userExerciseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `Exercise ID not found for: ${exerciseInput.name}`,
+              message: `User exercise ID not found for: ${exerciseInput.name}`,
             });
           }
 
@@ -213,7 +255,7 @@ export const workoutRouter = createTRPCRouter({
           const workoutExercise = await tx.workoutExercise.create({
             data: {
               workoutSessionId: input.workoutId,
-              exerciseId,
+              userExerciseId,
               order: exerciseInput.order,
               notes: exerciseInput.notes,
               ...(exerciseInput.exerciseNotesSnapshot === undefined
@@ -278,7 +320,7 @@ export const workoutRouter = createTRPCRouter({
           workoutExercises: {
             orderBy: { order: "asc" },
             select: {
-              exercise: { select: { name: true } },
+              userExercise: { select: { name: true } },
               sets: {
                 orderBy: { order: "asc" },
                 select: {
@@ -302,7 +344,7 @@ export const workoutRouter = createTRPCRouter({
         const summaries = workout.workoutExercises
           .map((exercise) =>
             summarizeWorkingSets(
-              exercise.exercise.name,
+              exercise.userExercise.name,
               exercise.sets.map((set) => ({
                 weight: set.weight,
                 reps: set.reps,

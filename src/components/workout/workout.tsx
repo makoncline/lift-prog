@@ -31,6 +31,7 @@ import { WorkoutExerciseList } from "@/components/workout/workout_exercise_list"
 import type { CompletedWorkout } from "@/lib/schemas/workout-schema";
 
 interface PreviousExerciseData {
+  userExerciseId?: number;
   name: string;
   sets: Array<{
     weight: number | null;

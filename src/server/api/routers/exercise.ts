@@ -1,49 +1,73 @@
 import { z } from "zod";
-import {
-  createTRPCRouter,
-  protectedProcedure,
-  publicProcedure,
-} from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 
 export const exerciseRouter = createTRPCRouter({
-  // Procedure to list all exercises
-  list: publicProcedure.query(async ({ ctx }) => {
-    return ctx.db.exercise.findMany({
+  // Procedure to list the signed-in user's exercise library
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.session.userId;
+    if (!userId) throw new Error("User not found.");
+
+    return ctx.db.userExercise.findMany({
+      where: { userId },
       orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        notes: true,
+        exerciseId: true,
+      },
     });
   }),
 
-  // Procedure to add a new exercise
+  // Procedure to add a new user exercise, optionally linked to a catalog exercise
   add: protectedProcedure
     .input(z.object({ name: z.string().min(1, "Name cannot be empty") }))
     .mutation(async ({ ctx, input }) => {
-      // Check if exercise already exists (case-insensitive check might be better)
-      const existing = await ctx.db.exercise.findUnique({
-        where: { name: input.name },
+      const userId = ctx.session.userId;
+      if (!userId) throw new Error("User not found.");
+
+      const name = input.name.trim();
+      const existing = await ctx.db.userExercise.findUnique({
+        where: {
+          userId_name: {
+            userId,
+            name,
+          },
+        },
       });
       if (existing) {
         throw new Error(`Exercise named "${input.name}" already exists.`);
       }
-      return ctx.db.exercise.create({
+
+      const catalogExercise = await ctx.db.exercise.findUnique({
+        where: { name },
+        select: { id: true },
+      });
+
+      return ctx.db.userExercise.create({
         data: {
-          name: input.name,
+          userId,
+          name,
+          exerciseId: catalogExercise?.id ?? null,
         },
       });
     }),
 
-  // Procedure to delete an exercise
+  // Procedure to delete a user exercise
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      // TODO: Consider implications - deleting an exercise referenced by workouts?
-      // Maybe add a confirmation step or prevent deletion if referenced.
-      // For now, simple delete.
+      const userId = ctx.session.userId;
+      if (!userId) throw new Error("User not found.");
+
       try {
-        return await ctx.db.exercise.delete({
-          where: { id: input.id },
+        return await ctx.db.userExercise.deleteMany({
+          where: {
+            id: input.id,
+            userId,
+          },
         });
       } catch (error) {
-        // Handle potential errors, e.g., exercise not found or foreign key constraints
         console.error("Error deleting exercise:", error);
         throw new Error("Failed to delete exercise. It might be in use.");
       }

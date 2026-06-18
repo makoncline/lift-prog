@@ -3,11 +3,7 @@ import type {
   ExerciseSet as ReferenceExerciseSet,
   PreviousExercise,
 } from "@/components/workout-reference/workout_reference_types";
-import type {
-  Workout,
-  WorkoutSet,
-  WeightModifier,
-} from "@/lib/workoutLogic";
+import type { Workout, WorkoutSet, WeightModifier } from "@/lib/workoutLogic";
 
 export function workoutSetToCurrentSet(
   set: WorkoutSet,
@@ -48,7 +44,7 @@ export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
   const signedWeight =
     parsedWeight == null ? null : set.weightSign * parsedWeight;
   const weight =
-    set.weightMode === "bodyweight" ? signedWeight ?? 0 : parsedWeight;
+    set.weightMode === "bodyweight" ? (signedWeight ?? 0) : parsedWeight;
   const reps = set.reps.trim() === "" ? null : Number(set.reps);
 
   return {
@@ -98,8 +94,7 @@ export function buildReferenceHistory(
         ? { workoutExerciseNote: entry.workoutExerciseNote }
         : {}),
       ...(entry.exerciseNotesSnapshot &&
-      entry.exerciseNotesSnapshot !==
-        exercise.notes.map((note) => note.text).join(" ")
+      entry.exerciseNotesSnapshot !== exercise.exerciseNotes
         ? {
             exerciseNoteChanged: true,
             historicalExerciseNote: entry.exerciseNotesSnapshot,

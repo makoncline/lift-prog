@@ -56,7 +56,7 @@ function WorkoutExerciseReference({
   return (
     <PreviousWorkoutExercise
       exerciseName={exercise.name}
-      exerciseNote=""
+      exerciseNote={exercise.exerciseNotes ?? ""}
       history={buildReferenceHistory(exercise)}
       shellClassName="min-h-0 max-w-none bg-transparent p-0"
       workoutExerciseNote={exercise.notes[0]?.text ?? ""}

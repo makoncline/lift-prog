@@ -128,23 +128,23 @@ export async function buildInitialExercisesForNames({
 }): Promise<PreviousExerciseData[]> {
   if (exerciseNames.length === 0) return [];
 
-  const existingExercises = await prisma.exercise.findMany({
-    where: { name: { in: exerciseNames } },
+  const userExercises = await prisma.userExercise.findMany({
+    where: {
+      userId,
+      name: { in: exerciseNames },
+    },
     select: { id: true, name: true, notes: true },
   });
 
-  const exerciseIdByName = new Map(
-    existingExercises.map((ex) => [ex.name, ex.id]),
-  );
-  const exerciseNotesByName = new Map(
-    existingExercises.map((ex) => [ex.name, ex.notes]),
+  const userExerciseByName = new Map(
+    userExercises.map((exercise) => [exercise.name, exercise]),
   );
 
   const results = await Promise.all(
     exerciseNames.map(async (exerciseName) => {
-      const exerciseId = exerciseIdByName.get(exerciseName);
+      const userExercise = userExerciseByName.get(exerciseName);
 
-      if (!exerciseId) {
+      if (!userExercise) {
         return {
           name: exerciseName,
           sets: DEFAULT_EXERCISE_SETS.map((set) => ({ ...set })),
@@ -154,7 +154,7 @@ export async function buildInitialExercisesForNames({
 
       const exerciseHistory = await prisma.workoutExercise.findMany({
         where: {
-          exerciseId,
+          userExerciseId: userExercise.id,
           workout: {
             userId,
             completedAt: { not: null },
@@ -194,11 +194,12 @@ export async function buildInitialExercisesForNames({
       const latestExercise = exerciseHistory[0] ?? null;
       const completedSets = latestExercise?.sets.filter((set) => set.completed);
       const previousNotes = latestExercise?.notes ?? null;
-      const exerciseNotes = exerciseNotesByName.get(exerciseName) ?? null;
+      const exerciseNotes = userExercise.notes ?? null;
       const history = mapHistory(exerciseHistory);
 
       if (!latestExercise || !completedSets || completedSets.length === 0) {
         return {
+          userExerciseId: userExercise.id,
           name: exerciseName,
           sets: DEFAULT_EXERCISE_SETS.map((set) => ({ ...set })),
           ...(exerciseNotes ? { exerciseNotes } : {}),
@@ -211,6 +212,7 @@ export async function buildInitialExercisesForNames({
       }
 
       return {
+        userExerciseId: userExercise.id,
         name: exerciseName,
         sets: completedSets.map(mapSet),
         ...(exerciseNotes ? { exerciseNotes } : {}),
@@ -252,7 +254,7 @@ export async function buildInitialExercisesFromWorkout({
         select: {
           notes: true,
           exerciseNotesSnapshot: true,
-          exercise: {
+          userExercise: {
             select: { id: true, name: true, notes: true },
           },
           sets: {
@@ -278,11 +280,11 @@ export async function buildInitialExercisesFromWorkout({
 
   const exercises: PreviousExerciseData[] = await Promise.all(
     workout.workoutExercises.map(async (workoutExercise) => {
-      const name = workoutExercise.exercise.name;
+      const name = workoutExercise.userExercise.name;
       const sets = workoutExercise.sets.map(mapSet);
       const exerciseHistory = await prisma.workoutExercise.findMany({
         where: {
-          exerciseId: workoutExercise.exercise.id,
+          userExerciseId: workoutExercise.userExercise.id,
           workout: {
             userId,
             completedAt: { not: null },
@@ -321,10 +323,11 @@ export async function buildInitialExercisesFromWorkout({
 
       if (sets.length > 0) {
         return {
+          userExerciseId: workoutExercise.userExercise.id,
           name,
           sets,
-          ...(workoutExercise.exercise.notes
-            ? { exerciseNotes: workoutExercise.exercise.notes }
+          ...(workoutExercise.userExercise.notes
+            ? { exerciseNotes: workoutExercise.userExercise.notes }
             : {}),
           notes: workoutExercise.notes ?? null,
           ...(workoutExercise.exerciseNotesSnapshot
@@ -343,10 +346,11 @@ export async function buildInitialExercisesFromWorkout({
       return (
         fallback ??
         ({
+          userExerciseId: workoutExercise.userExercise.id,
           name,
           sets: DEFAULT_EXERCISE_SETS.map((set) => ({ ...set })),
-          ...(workoutExercise.exercise.notes
-            ? { exerciseNotes: workoutExercise.exercise.notes }
+          ...(workoutExercise.userExercise.notes
+            ? { exerciseNotes: workoutExercise.userExercise.notes }
             : {}),
           notes: null,
         } satisfies PreviousExerciseData)

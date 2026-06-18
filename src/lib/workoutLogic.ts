@@ -37,7 +37,9 @@ export interface WorkoutSet {
 }
 
 export interface WorkoutExercise {
+  userExerciseId?: number;
   name: string;
+  exerciseNotes?: string | null;
   sets: WorkoutSet[];
   previousSets: Array<{
     weight: number | null;
@@ -127,7 +129,10 @@ const makeCompletedSet = ({
 const parseRepToken = (
   token: string,
 ): Array<{ reps: number; restBefore?: SetRestType; notes?: string }> => {
-  const parts = token.split("+").map((part) => part.trim()).filter(Boolean);
+  const parts = token
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
   return parts.flatMap((part, index) => {
     const match = part.match(/^(\d+)(?:\(([^)]+)\)|([a-zA-Z]+))?$/);
     if (!match) return [];
@@ -520,6 +525,7 @@ export type PreviousExerciseData = Parameters<
 
 export const initialiseExercises = (
   previous: {
+    userExerciseId?: number;
     name: string;
     sets: Array<{
       weight: number | null;
@@ -552,7 +558,9 @@ export const initialiseExercises = (
     const previousNotes = ex.notes ?? undefined;
 
     return {
+      userExerciseId: ex.userExerciseId,
       name: ex.name,
+      exerciseNotes: ex.exerciseNotes,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
         const isPrevBodyweight = s.weightModifier === "bodyweight";
@@ -1122,7 +1130,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       };
       return {
         ...state,
-        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
       };
     }
 
@@ -1134,7 +1147,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = { ...set, rir };
       return {
         ...state,
-        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
       };
     }
 
@@ -1146,7 +1164,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = { ...set, restBefore };
       return {
         ...state,
-        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
       };
     }
 
@@ -1163,7 +1186,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       };
       return {
         ...state,
-        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
       };
     }
 
@@ -1180,7 +1208,12 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       };
       return {
         ...state,
-        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, updatedSet),
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
       };
     }
 
@@ -1310,10 +1343,18 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
       const remapIndex = (index: number) => {
         if (index === exerciseIndex) return targetIndex;
-        if (exerciseIndex < targetIndex && index > exerciseIndex && index <= targetIndex) {
+        if (
+          exerciseIndex < targetIndex &&
+          index > exerciseIndex &&
+          index <= targetIndex
+        ) {
           return index - 1;
         }
-        if (exerciseIndex > targetIndex && index >= targetIndex && index < exerciseIndex) {
+        if (
+          exerciseIndex > targetIndex &&
+          index >= targetIndex &&
+          index < exerciseIndex
+        ) {
           return index + 1;
         }
         return index;
@@ -1762,8 +1803,11 @@ export function finalizeWorkout(
       });
 
       return {
+        userExerciseId: ex.userExerciseId,
         name: ex.name,
         sets: completedSets,
+        exerciseNotes: ex.exerciseNotes ?? undefined,
+        exerciseNotesSnapshot: ex.exerciseNotes ?? undefined,
         notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
         order: exIndex + 1,
       };

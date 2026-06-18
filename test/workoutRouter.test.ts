@@ -5,12 +5,21 @@ vi.mock("@/server/db", () => ({ db: {} }));
 import { createCaller } from "@/server/api/root";
 
 const makeCaller = () => {
-  const exerciseUpsert = vi
+  const exerciseFindUnique = vi.fn().mockResolvedValue(null);
+  const userExerciseFindFirst = vi.fn().mockResolvedValue(null);
+  const userExerciseUpsert = vi
     .fn()
-    .mockImplementation(async ({ where }: { where: { name: string } }) => ({
-      id: where.name.length,
-      name: where.name,
-    }));
+    .mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { userId_name: { userId: string; name: string } };
+      }) => ({
+        id: where.userId_name.name.length,
+        name: where.userId_name.name,
+      }),
+    );
+  const userExerciseUpdate = vi.fn();
 
   const workoutCreate = vi.fn().mockResolvedValue({ id: 101 });
   const workoutFindMany = vi.fn().mockResolvedValue([]);
@@ -29,7 +38,12 @@ const makeCaller = () => {
 
   const caller = createCaller(async () => ({
     db: {
-      exercise: { upsert: exerciseUpsert },
+      exercise: { findUnique: exerciseFindUnique },
+      userExercise: {
+        findFirst: userExerciseFindFirst,
+        upsert: userExerciseUpsert,
+        update: userExerciseUpdate,
+      },
       workout: { findMany: workoutFindMany },
       $transaction: transaction,
     } as any,
@@ -40,7 +54,10 @@ const makeCaller = () => {
   return {
     caller,
     spies: {
-      exerciseUpsert,
+      exerciseFindUnique,
+      userExerciseFindFirst,
+      userExerciseUpsert,
+      userExerciseUpdate,
       workoutCreate,
       workoutFindMany,
       workoutExerciseCreate,
@@ -177,12 +194,14 @@ describe("workout.saveWorkout", () => {
       notes: "Pull day felt low energy",
     });
 
-    expect(spies.exerciseUpsert).toHaveBeenCalledWith(
+    expect(spies.userExerciseUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { name: "Pull Up" },
+        where: { userId_name: { userId: "user_123", name: "Pull Up" } },
         update: { notes: "Hold dumbbell in thighs" },
         create: {
+          userId: "user_123",
           name: "Pull Up",
+          exerciseId: null,
           notes: "Hold dumbbell in thighs",
         },
       }),
@@ -190,7 +209,7 @@ describe("workout.saveWorkout", () => {
     expect(spies.workoutExerciseCreate).toHaveBeenCalledWith({
       data: {
         workoutSessionId: 101,
-        exerciseId: "Pull Up".length,
+        userExerciseId: "Pull Up".length,
         order: 0,
         notes: "Feeling weak today",
         exerciseNotesSnapshot: "Old machine setup",
@@ -237,7 +256,7 @@ describe("workout.listRecent", () => {
         startedAt: new Date("2026-03-26T12:00:00"),
         workoutExercises: [
           {
-            exercise: { name: "Pull-ups" },
+            userExercise: { name: "Pull-ups" },
             sets: [
               {
                 weight: 0,
@@ -277,7 +296,7 @@ describe("workout.listRecent", () => {
             ],
           },
           {
-            exercise: { name: "Tricep overhead" },
+            userExercise: { name: "Tricep overhead" },
             sets: [
               {
                 weight: 40,

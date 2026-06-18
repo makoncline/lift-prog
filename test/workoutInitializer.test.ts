@@ -22,14 +22,14 @@ afterEach(() => {
 });
 
 type PrismaMocks = {
-  exercise: { findMany: ReturnType<typeof vi.fn> };
+  userExercise: { findMany: ReturnType<typeof vi.fn> };
   workoutExercise: { findMany: ReturnType<typeof vi.fn> };
   workout: { findFirst: ReturnType<typeof vi.fn> };
 };
 
 const createPrismaMock = (): { prisma: PrismaClient; mocks: PrismaMocks } => {
   const mocks: PrismaMocks = {
-    exercise: { findMany: vi.fn() },
+    userExercise: { findMany: vi.fn() },
     workoutExercise: { findMany: vi.fn() },
     workout: { findFirst: vi.fn() },
   };
@@ -43,7 +43,7 @@ const createPrismaMock = (): { prisma: PrismaClient; mocks: PrismaMocks } => {
 describe("buildInitialExercisesForNames", () => {
   it("provides default sets when exercise history is missing", async () => {
     const { prisma, mocks } = createPrismaMock();
-    mocks.exercise.findMany.mockResolvedValue([]);
+    mocks.userExercise.findMany.mockResolvedValue([]);
 
     const result = await buildInitialExercisesForNames({
       prisma,
@@ -63,7 +63,9 @@ describe("buildInitialExercisesForNames", () => {
 
   it("reuses sets from the most recent workout when available", async () => {
     const { prisma, mocks } = createPrismaMock();
-    mocks.exercise.findMany.mockResolvedValue([{ id: 1, name: "Bench Press" }]);
+    mocks.userExercise.findMany.mockResolvedValue([
+      { id: 1, name: "Bench Press", notes: null },
+    ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
         sets: [
@@ -103,6 +105,7 @@ describe("buildInitialExercisesForNames", () => {
 
     expect(result).toEqual([
       {
+        userExerciseId: 1,
         name: "Bench Press",
         sets: [
           { weight: 45, reps: 12, modifier: "warmup" },
@@ -129,7 +132,7 @@ describe("buildInitialExercisesForNames", () => {
 
   it("includes set notes, rest, rir, and exercise notes from history", async () => {
     const { prisma, mocks } = createPrismaMock();
-    mocks.exercise.findMany.mockResolvedValue([
+    mocks.userExercise.findMany.mockResolvedValue([
       { id: 2, name: "Pull Up", notes: "Hold dumbbell in thighs" },
     ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
@@ -173,6 +176,7 @@ describe("buildInitialExercisesForNames", () => {
 
     expect(result).toEqual([
       {
+        userExerciseId: 2,
         name: "Pull Up",
         exerciseNotes: "Hold dumbbell in thighs",
         exerciseNotesSnapshot: "Old machine setup",
@@ -227,7 +231,9 @@ describe("buildInitialExercisesForNames", () => {
 
   it("falls back to defaults if no sets were completed last time", async () => {
     const { prisma, mocks } = createPrismaMock();
-    mocks.exercise.findMany.mockResolvedValue([{ id: 5, name: "Squat" }]);
+    mocks.userExercise.findMany.mockResolvedValue([
+      { id: 5, name: "Squat", notes: null },
+    ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
         sets: [
@@ -253,6 +259,7 @@ describe("buildInitialExercisesForNames", () => {
 
     expect(result).toEqual([
       {
+        userExerciseId: 5,
         name: "Squat",
         sets: DEFAULT_SETS,
         notes: null,
@@ -270,7 +277,7 @@ describe("buildInitialExercisesFromWorkout", () => {
       name: "Upper Body",
       workoutExercises: [
         {
-          exercise: { id: 1, name: "Bench Press" },
+          userExercise: { id: 1, name: "Bench Press", notes: null },
           sets: [
             {
               weight: 135,
@@ -282,7 +289,7 @@ describe("buildInitialExercisesFromWorkout", () => {
           notes: "Wide grip",
         },
         {
-          exercise: { id: 2, name: "Pull Up" },
+          userExercise: { id: 2, name: "Pull Up", notes: null },
           sets: [
             {
               weight: -10,
@@ -296,13 +303,8 @@ describe("buildInitialExercisesFromWorkout", () => {
       ],
     });
 
-    mocks.exercise.findMany.mockResolvedValue([
-      { id: 1, name: "Bench Press" },
-      { id: 2, name: "Pull Up" },
-    ]);
-
     mocks.workoutExercise.findMany.mockImplementation(async (args) => {
-      switch (args.where?.exerciseId) {
+      switch (args.where?.userExerciseId) {
         case 1:
           return [
             {
@@ -357,6 +359,7 @@ describe("buildInitialExercisesFromWorkout", () => {
     expect(result.workoutName).toBe("Upper Body");
     expect(result.exercises).toEqual([
       {
+        userExerciseId: 1,
         name: "Bench Press",
         sets: [{ weight: 135, reps: 8 }],
         notes: "Wide grip",
@@ -371,6 +374,7 @@ describe("buildInitialExercisesFromWorkout", () => {
         ],
       },
       {
+        userExerciseId: 2,
         name: "Pull Up",
         sets: [{ weight: -10, reps: 8, weightModifier: "bodyweight" }],
         notes: null,

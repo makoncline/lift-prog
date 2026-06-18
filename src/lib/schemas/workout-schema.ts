@@ -14,6 +14,7 @@ export const CompletedSetSchema = z.object({
 });
 
 export const CompletedExerciseSchema = z.object({
+  userExerciseId: z.number().optional(),
   name: z.string(),
   order: z.number(),
   exerciseNotes: z.string().optional(),
