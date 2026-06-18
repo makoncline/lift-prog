@@ -30,6 +30,22 @@ export function SetNoteEditor({
   onDone: () => void;
   onUpdate: (set: CurrentExerciseSet) => void;
 }) {
+  function blurActiveInput() {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
+  function doneAfterBlur() {
+    blurActiveInput();
+    window.requestAnimationFrame(onDone);
+  }
+
+  function deleteAfterBlur() {
+    blurActiveInput();
+    window.requestAnimationFrame(onDelete);
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[11px] leading-4 text-[#716b5d]">
@@ -39,7 +55,7 @@ export function SetNoteEditor({
         aria-label="Set note"
         autoFocus
         value={set.note ?? ""}
-        className="min-h-20 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[13px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
+        className="min-h-20 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[16px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
         onChange={(event) =>
           onUpdate({
             ...set,
@@ -47,16 +63,16 @@ export function SetNoteEditor({
           })
         }
       />
-      <NoteEditorActions onDone={onDone}>
+      <NoteEditorActions onDone={doneAfterBlur}>
         {set.note?.trim() ? (
           <ConfirmableNoteDeleteAction
             deleteLabel="Delete set note"
-            onDelete={onDelete}
+            onDelete={deleteAfterBlur}
           />
         ) : (
           <ImmediateNoteDeleteAction
             deleteLabel="Delete set note"
-            onDelete={onDelete}
+            onDelete={deleteAfterBlur}
           />
         )}
       </NoteEditorActions>

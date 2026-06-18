@@ -76,14 +76,25 @@ function NoteEditorDialogContent({
 }) {
   const [draft, setDraft] = useState(note);
 
+  function blurActiveInput() {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
+  function closeAfterBlur() {
+    blurActiveInput();
+    window.requestAnimationFrame(() => onOpenChange(false));
+  }
+
   function save() {
     onSave(draft.trim());
-    onOpenChange(false);
+    closeAfterBlur();
   }
 
   function deleteNote() {
     onDelete();
-    onOpenChange(false);
+    closeAfterBlur();
   }
 
   return (
