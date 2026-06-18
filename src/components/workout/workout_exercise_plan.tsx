@@ -146,7 +146,7 @@ function WorkoutExercisePlanAddForm({
           value={exerciseName}
           onChange={(event) => onExerciseNameChange(event.target.value)}
           placeholder="exercise name"
-          className="h-7 min-w-0 flex-1 rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[12px] leading-4 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
+          className="h-7 min-w-0 flex-1 rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[16px] leading-4 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
         />
         <Button
           type="submit"

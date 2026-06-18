@@ -60,7 +60,7 @@ export function TitleEditor({
               if (e.key === "Enter") onSave();
               if (e.key === "Escape") onCancel();
             }}
-            className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[14px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
+            className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[16px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
             placeholder="Workout name"
           />
           <WorkoutEditorActionRow>

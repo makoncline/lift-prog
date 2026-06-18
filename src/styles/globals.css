@@ -150,6 +150,10 @@
     @apply bg-background text-foreground;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    user-select: none;
+    -webkit-user-select: none;
     touch-action: pan-y;
     position: fixed;
     width: 100%;
