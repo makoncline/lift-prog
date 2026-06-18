@@ -4,6 +4,7 @@ import { PreviousWorkoutExercise } from "@/components/workout-reference/previous
 import type { CurrentExerciseSet } from "@/components/workout-reference/workout_reference_types";
 import {
   buildReferenceHistory,
+  normalizeCurrentSetOrder,
   workoutSetToCurrentSet,
 } from "@/components/workout/workout_reference_adapters";
 import type { Workout } from "@/lib/workoutLogic";
@@ -62,8 +63,10 @@ function WorkoutExerciseReference({
       onWorkoutExerciseNoteChange={(note) =>
         onWorkoutExerciseNoteChange(exerciseIndex, note)
       }
-      initialCurrentSets={exercise.sets.map((set, setIndex) =>
-        workoutSetToCurrentSet(set, exercise, exerciseIndex, setIndex),
+      initialCurrentSets={normalizeCurrentSetOrder(
+        exercise.sets.map((set, setIndex) =>
+          workoutSetToCurrentSet(set, exercise, exerciseIndex, setIndex),
+        ),
       )}
       onCurrentSetsChange={(sets) => onCurrentSetsChange(exerciseIndex, sets)}
     />

@@ -18,6 +18,8 @@ export function workoutSetToCurrentSet(
   const previousSet = exercise.previousSets[setIndex];
   const displayWeight = set.weight ?? set.prevWeight ?? previousSet?.weight;
   const displayReps = set.reps ?? set.prevReps ?? previousSet?.reps;
+  const displayNote = set.notes ?? previousSet?.notes;
+  const displayRestBefore = set.restBefore ?? previousSet?.restBefore;
   const rawWeight = displayWeight ?? 0;
   const weightModifier = set.weightModifier ?? previousSet?.weightModifier;
   const isBodyweight = weightModifier === "bodyweight";
@@ -32,9 +34,9 @@ export function workoutSetToCurrentSet(
         : String(Math.abs(rawWeight)),
     weightSign: rawWeight < 0 ? -1 : 1,
     reps: displayReps == null ? "" : String(displayReps),
-    ...(set.notes ? { note: set.notes } : {}),
-    ...(set.restBefore
-      ? { restBefore: set.restBefore === "short" ? "short" : "default" }
+    ...(displayNote ? { note: displayNote } : {}),
+    ...(displayRestBefore
+      ? { restBefore: displayRestBefore === "short" ? "short" : "default" }
       : {}),
     completed: set.completed,
   };
@@ -46,7 +48,7 @@ export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
   const signedWeight =
     parsedWeight == null ? null : set.weightSign * parsedWeight;
   const weight =
-    set.weightMode === "bodyweight" ? signedWeight ?? 0 : signedWeight;
+    set.weightMode === "bodyweight" ? signedWeight ?? 0 : parsedWeight;
   const reps = set.reps.trim() === "" ? null : Number(set.reps);
 
   return {
@@ -66,6 +68,21 @@ export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
       : {}),
     ...(set.note?.trim() ? { notes: set.note.trim() } : {}),
   };
+}
+
+export function normalizeCurrentSetOrder(sets: CurrentExerciseSet[]) {
+  const groupedSets = [
+    ...sets.filter((set) => set.kind === "warmup"),
+    ...sets.filter((set) => set.kind === "working"),
+  ];
+
+  return groupedSets.map((set, index, allSets) => {
+    const previousSet = allSets[index - 1];
+    if (!previousSet || previousSet.kind !== set.kind) {
+      return { ...set, restBefore: undefined };
+    }
+    return set;
+  });
 }
 
 export function buildReferenceHistory(

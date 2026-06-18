@@ -10,7 +10,10 @@ import { formatDuration } from "@/lib/utils";
 import { NoteEditorDialog } from "@/components/workout/note_editor_dialog";
 import { DeleteExerciseDialog } from "@/components/workout/delete_exercise_dialog";
 import { WorkoutExercisePlan } from "@/components/workout/workout_exercise_plan";
-import { currentSetToWorkoutSet } from "@/components/workout/workout_reference_adapters";
+import {
+  currentSetToWorkoutSet,
+  normalizeCurrentSetOrder,
+} from "@/components/workout/workout_reference_adapters";
 import {
   initialiseExercises,
   workoutReducer,
@@ -390,7 +393,7 @@ function WorkoutComponentInner({
           dispatch({
             type: "REPLACE_EXERCISE_SETS",
             exerciseIndex,
-            sets: sets.map(currentSetToWorkoutSet),
+            sets: normalizeCurrentSetOrder(sets).map(currentSetToWorkoutSet),
           })
         }
       />
