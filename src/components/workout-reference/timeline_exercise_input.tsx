@@ -51,8 +51,9 @@ export function TimelineExerciseInput({
     : null;
   const warmupSets = sets.filter((set) => set.kind === "warmup");
   const workingSets = sets.filter((set) => set.kind === "working");
+  const displaySets = [...warmupSets, ...workingSets];
   const activeSetLabel = editor
-    ? getCurrentSetLabel(sets, editor.setId, restTypes)
+    ? getCurrentSetLabel(displaySets, editor.setId, restTypes)
     : "";
 
   function commitSets(nextSets: CurrentExerciseSet[]) {
@@ -172,7 +173,7 @@ export function TimelineExerciseInput({
         editor={editor}
         exerciseName={exerciseName}
         set={activeSet}
-        sets={sets}
+        sets={displaySets}
         restTypes={restTypes}
         setLabel={activeSetLabel}
         onDelete={() => {
