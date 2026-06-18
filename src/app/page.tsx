@@ -8,10 +8,10 @@ import { Button } from "@/components/ui/button";
 import {
   ChevronDown,
   ChevronUp,
+  Copy,
   Dumbbell,
   LogIn,
   Pencil,
-  Play,
   Plus,
   Trash2,
   X,
@@ -398,13 +398,13 @@ function AuthenticatedHomePage({
                     </div>
                     <div className="flex shrink-0 gap-1 pt-1">
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="icon"
                         onClick={() => handleSelectRecent(workout.id)}
-                        aria-label={`Start from ${workout.name}`}
-                        className="h-8 w-8 rounded-sm"
+                        aria-label={`Copy ${workout.name} into a new workout`}
+                        className="text-muted-foreground h-8 w-8 rounded-sm"
                       >
-                        <Play className="h-4 w-4" />
+                        <Copy className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
