@@ -39,7 +39,6 @@ export function WorkoutExercisePlan({
   onDropExercise: (targetIndex: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const summary = exercises.length > 0 ? exercises.join(", ") : "no exercises";
 
   return (
     <section className="mb-3 text-[#17150f]" aria-label="Workout exercises">
@@ -55,9 +54,6 @@ export function WorkoutExercisePlan({
           <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
         )}
         <span className="shrink-0">exercises</span>
-        <span className="min-w-0 flex-1 truncate text-[#8a8373]">
-          {summary}
-        </span>
       </button>
       {expanded ? (
         <div className="mt-0.5">
