@@ -19,9 +19,11 @@ import {
 export function WorkoutHeader({
   name,
   startTime,
+  contextLabel,
   editableName,
   isEditingName,
   workoutNote,
+  showFinishAction = true,
   onStartTimeChange,
   onEditableNameChange,
   onStartEditingName,
@@ -32,9 +34,11 @@ export function WorkoutHeader({
 }: {
   name: string;
   startTime: number;
+  contextLabel?: string;
   editableName: string;
   isEditingName: boolean;
   workoutNote: string;
+  showFinishAction?: boolean;
   onStartTimeChange: (startTime: number) => void;
   onEditableNameChange: (name: string) => void;
   onStartEditingName: () => void;
@@ -61,6 +65,11 @@ export function WorkoutHeader({
             onCancel={onCancelEditingName}
             onSave={onSaveName}
           />
+          {contextLabel ? (
+            <div className="mt-0.5 font-mono text-[10px] leading-3 text-[#8a8373]">
+              {contextLabel}
+            </div>
+          ) : null}
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] leading-4 text-[#716b5d]">
             <button
               type="button"
@@ -92,15 +101,17 @@ export function WorkoutHeader({
           >
             <Pencil className="size-3.5" aria-hidden="true" />
           </button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onFinishWorkout}
-            aria-label="Finish workout"
-            className="size-7 shrink-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-0 font-mono text-[12px] font-normal text-[#373226] shadow-none"
-          >
-            <Save className="h-3.5 w-3.5" />
-          </Button>
+          {showFinishAction ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onFinishWorkout}
+              aria-label="Finish workout"
+              className="size-7 shrink-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-0 font-mono text-[12px] font-normal text-[#373226] shadow-none"
+            >
+              <Save className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
         </div>
       </div>
       <StartTimePartEditor

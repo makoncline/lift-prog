@@ -47,6 +47,11 @@ type WorkoutProps = {
   workoutName?: string;
   exercises?: PreviousExerciseData[];
   autoRestore?: boolean;
+  startTime?: number;
+  workoutNote?: string;
+  contextLabel?: string;
+  persistDraft?: boolean;
+  showFinishAction?: boolean;
   onInitialSave?: () => void;
 };
 
@@ -73,6 +78,11 @@ function WorkoutComponentInner({
   workoutName = "",
   exercises: initialExercises = [],
   autoRestore = false,
+  startTime = Date.now(),
+  workoutNote = "",
+  contextLabel,
+  persistDraft = true,
+  showFinishAction = true,
   onInitialSave,
   canSaveWorkout,
   userStateLoaded,
@@ -93,8 +103,8 @@ function WorkoutComponentInner({
         })),
       })),
     ),
-    notes: [],
-    startTime: Date.now(),
+    notes: workoutNote.trim() ? [{ text: workoutNote.trim() }] : [],
+    startTime,
     name: workoutName || "Workout",
     isInProgress: true,
     activeField: { exerciseIndex: null, setIndex: null, field: null },
@@ -136,6 +146,7 @@ function WorkoutComponentInner({
   const { restoreWorkout } = useWorkoutPersistence({
     state,
     autoRestore,
+    enabled: persistDraft,
     onInitialSave,
     initialExerciseCount: initialExercises.length,
     onRestore: (restoredState) => {
@@ -305,9 +316,11 @@ function WorkoutComponentInner({
       <WorkoutHeader
         name={state.name}
         startTime={state.startTime}
+        contextLabel={contextLabel}
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
+        showFinishAction={showFinishAction}
         onStartTimeChange={(startTime) =>
           dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime })
         }

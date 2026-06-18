@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Dumbbell,
   LogIn,
+  Pencil,
   Play,
   Plus,
   Trash2,
@@ -150,6 +151,14 @@ function AuthenticatedHomePage({
       return;
     }
     router.push(`/workout?basedOn=${workoutId}`);
+  };
+
+  const handleEditWorkout = (workoutId: number) => {
+    if (workoutId < 0) {
+      router.push("/workout-reference");
+      return;
+    }
+    router.push(`/workout/${workoutId}/edit`);
   };
 
   const addSelectedExercise = (exerciseName: string) => {
@@ -387,6 +396,15 @@ function AuthenticatedHomePage({
                         className="h-8 w-8 rounded-sm"
                       >
                         <Play className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleEditWorkout(workout.id)}
+                        aria-label={`Edit ${workout.name}`}
+                        className="text-muted-foreground h-8 w-8 rounded-sm"
+                      >
+                        <Pencil className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"

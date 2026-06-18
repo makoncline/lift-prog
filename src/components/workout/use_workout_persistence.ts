@@ -8,6 +8,7 @@ import type { Workout } from "@/lib/workoutLogic";
 export function useWorkoutPersistence({
   state,
   autoRestore,
+  enabled = true,
   onInitialSave,
   initialExerciseCount,
   onRestore,
@@ -15,6 +16,7 @@ export function useWorkoutPersistence({
 }: {
   state: Workout;
   autoRestore: boolean;
+  enabled?: boolean;
   onInitialSave?: () => void;
   initialExerciseCount: number;
   onRestore: (state: Workout) => void;
@@ -38,6 +40,8 @@ export function useWorkoutPersistence({
   }
 
   useEffect(() => {
+    if (!enabled) return;
+
     const savedWorkout =
       typeof window !== "undefined"
         ? localStorage.getItem(LOCAL_STORAGE_WORKOUT_KEY)
@@ -46,14 +50,16 @@ export function useWorkoutPersistence({
       if (autoRestore) restoreWorkout();
       else onRestorePrompt();
     }
-  }, [autoRestore]);
+  }, [autoRestore, enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
+
     if (state.exercises.length > 0 && typeof window !== "undefined") {
       localStorage.setItem(LOCAL_STORAGE_WORKOUT_KEY, JSON.stringify(state));
       if (onInitialSave && initialExerciseCount > 0) onInitialSave();
     }
-  }, [state, onInitialSave, initialExerciseCount]);
+  }, [state, enabled, onInitialSave, initialExerciseCount]);
 
   return { restoreWorkout };
 }

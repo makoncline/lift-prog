@@ -234,7 +234,13 @@ export async function buildInitialExercisesFromWorkout({
   prisma: PrismaClient;
   userId: string;
   workoutId: number;
-}): Promise<{ workoutName: string; exercises: PreviousExerciseData[] }> {
+}): Promise<{
+  workoutName: string;
+  exercises: PreviousExerciseData[];
+  startedAt: Date;
+  completedAt: Date | null;
+  notes: string | null;
+}> {
   const workout = await prisma.workout.findFirst({
     where: {
       id: workoutId,
@@ -351,5 +357,8 @@ export async function buildInitialExercisesFromWorkout({
   return {
     workoutName: workout.name,
     exercises,
+    startedAt: workout.startedAt,
+    completedAt: workout.completedAt,
+    notes: workout.notes,
   };
 }
