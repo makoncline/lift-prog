@@ -45,13 +45,16 @@ export default function EditWorkoutPage() {
 
   return (
     <WorkoutComponent
+      workoutId={workoutId}
       workoutName={workout.workoutName}
       exercises={workout.exercises}
       startTime={new Date(workout.startedAt).getTime()}
+      completedAt={
+        workout.completedAt ? new Date(workout.completedAt) : undefined
+      }
       workoutNote={workout.notes ?? ""}
       contextLabel={`editing past workout #${workoutId}`}
       persistDraft={false}
-      showFinishAction={false}
     />
   );
 }

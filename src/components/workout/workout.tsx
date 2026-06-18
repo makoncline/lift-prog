@@ -44,14 +44,15 @@ interface PreviousExerciseData {
 }
 
 type WorkoutProps = {
+  workoutId?: number;
   workoutName?: string;
   exercises?: PreviousExerciseData[];
   autoRestore?: boolean;
   startTime?: number;
+  completedAt?: Date;
   workoutNote?: string;
   contextLabel?: string;
   persistDraft?: boolean;
-  showFinishAction?: boolean;
   onInitialSave?: () => void;
 };
 
@@ -75,14 +76,15 @@ function ClerkWorkoutComponent(props: WorkoutProps) {
 }
 
 function WorkoutComponentInner({
+  workoutId,
   workoutName = "",
   exercises: initialExercises = [],
   autoRestore = false,
   startTime = Date.now(),
+  completedAt,
   workoutNote = "",
   contextLabel,
   persistDraft = true,
-  showFinishAction = true,
   onInitialSave,
   canSaveWorkout,
   userStateLoaded,
@@ -162,6 +164,7 @@ function WorkoutComponentInner({
   );
   const [newExerciseName, setNewExerciseName] = useState("");
   const finishDialog = useWorkoutFinishDialog();
+  const utils = api.useUtils();
 
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
     onSuccess: (_data, variables) => {
@@ -175,8 +178,17 @@ function WorkoutComponentInner({
       finishDialog.setFinishedWorkout(null);
     },
   });
+  const updateWorkoutMutation = api.workout.updateWorkout.useMutation({
+    onSuccess: async () => {
+      toast.success("Workout updated successfully.");
+      await utils.workout.listRecent.invalidate();
+      router.push("/");
+    },
+    onError: (error) => {
+      toast.error(`Error updating workout: ${error.message}`);
+    },
+  });
 
-  const utils = api.useUtils();
   const handleAddExercise = async (exerciseName: string) => {
     const trimmedName = exerciseName.trim();
     if (!trimmedName) return;
@@ -258,6 +270,19 @@ function WorkoutComponentInner({
       toast.error("User not loaded. Cannot save workout.");
       return;
     }
+
+    if (workoutId) {
+      const payload = finalizeWorkout(state, getWorkoutNoteText());
+      updateWorkoutMutation.mutate({
+        workoutId,
+        workout: {
+          ...payload,
+          completedAt: completedAt ?? payload.completedAt,
+        },
+      });
+      return;
+    }
+
     const durationInSeconds = finishDialog.getDurationInSeconds(
       state.startTime,
     );
@@ -320,7 +345,6 @@ function WorkoutComponentInner({
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
-        showFinishAction={showFinishAction}
         onStartTimeChange={(startTime) =>
           dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime })
         }
@@ -330,6 +354,10 @@ function WorkoutComponentInner({
         onSaveName={handleWorkoutNameUpdate}
         onEditWorkoutNote={() => setWorkoutNoteEditorOpen(true)}
         onFinishWorkout={() => {
+          if (workoutId) {
+            handleFinishWorkout();
+            return;
+          }
           finishDialog.openForWorkout(state.startTime);
         }}
       />

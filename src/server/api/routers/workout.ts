@@ -126,6 +126,130 @@ export const workoutRouter = createTRPCRouter({
       });
     }),
 
+  updateWorkout: protectedProcedure
+    .input(
+      z.object({
+        workoutId: z.number(),
+        workout: CompletedWorkoutSchema,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const prisma = ctx.db;
+      const userId = ctx.session.userId;
+
+      if (!userId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Unauthorized: User ID mismatch",
+        });
+      }
+
+      const existingWorkout = await prisma.workout.findFirst({
+        where: {
+          id: input.workoutId,
+          userId,
+        },
+        select: { id: true },
+      });
+
+      if (!existingWorkout) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Workout with ID ${input.workoutId} not found or access denied.`,
+        });
+      }
+
+      const { name, exercises, notes, completedAt, startedAt } = input.workout;
+      const exerciseNameToIdMap = new Map<string, number>();
+
+      for (const exerciseInput of exercises) {
+        const rec = await prisma.exercise.upsert({
+          where: { name: exerciseInput.name },
+          update:
+            exerciseInput.exerciseNotes === undefined
+              ? {}
+              : { notes: exerciseInput.exerciseNotes },
+          create: {
+            name: exerciseInput.name,
+            ...(exerciseInput.exerciseNotes === undefined
+              ? {}
+              : { notes: exerciseInput.exerciseNotes }),
+          },
+          select: { id: true, name: true },
+        });
+        exerciseNameToIdMap.set(rec.name, rec.id);
+      }
+
+      return prisma.$transaction(async (tx) => {
+        await tx.workout.update({
+          where: { id: input.workoutId },
+          data: {
+            name,
+            notes,
+            startedAt,
+            completedAt,
+          },
+        });
+
+        await tx.workoutExercise.deleteMany({
+          where: { workoutSessionId: input.workoutId },
+        });
+
+        for (const exerciseInput of exercises) {
+          const exerciseId = exerciseNameToIdMap.get(exerciseInput.name);
+          if (!exerciseId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Exercise ID not found for: ${exerciseInput.name}`,
+            });
+          }
+
+          const completedSets = exerciseInput.sets.filter(
+            (set) => set.completed,
+          );
+
+          if (completedSets.length === 0) continue;
+
+          const workoutExercise = await tx.workoutExercise.create({
+            data: {
+              workoutSessionId: input.workoutId,
+              exerciseId,
+              order: exerciseInput.order,
+              notes: exerciseInput.notes,
+              ...(exerciseInput.exerciseNotesSnapshot === undefined
+                ? {}
+                : {
+                    exerciseNotesSnapshot: exerciseInput.exerciseNotesSnapshot,
+                  }),
+            },
+          });
+
+          const setsData = completedSets.map((set) => ({
+            workoutExerciseId: workoutExercise.id,
+            order: set.order,
+            weight: set.weight,
+            reps: set.reps,
+            modifier: set.modifier,
+            weightModifier: set.weightModifier ?? null,
+            ...(set.restBefore === undefined
+              ? {}
+              : { restBefore: set.restBefore }),
+            ...(set.notes === undefined ? {} : { notes: set.notes }),
+            ...(set.rir === undefined ? {} : { rir: set.rir }),
+            completed: true,
+          }));
+
+          if (setsData.length > 0) {
+            await tx.workoutExerciseSet.createMany({
+              data: setsData,
+            });
+          }
+        }
+
+        return { success: true, workoutId: input.workoutId };
+      });
+    }),
+
   // New procedure to list recent workouts for the logged-in user
   listRecent: protectedProcedure
     .input(
