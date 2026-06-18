@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Pencil, Save } from "lucide-react";
+import { Pencil, Redo2, Save, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -21,6 +21,9 @@ export function WorkoutHeader({
   isEditingName,
   workoutNote,
   showFinishAction = true,
+  showDiscardAction = false,
+  canUndo = false,
+  canRedo = false,
   onStartTimeChange,
   onCompletedAtChange,
   onEditableNameChange,
@@ -29,6 +32,9 @@ export function WorkoutHeader({
   onSaveName,
   onEditWorkoutNote,
   onFinishWorkout,
+  onDiscardWorkout,
+  onUndo,
+  onRedo,
 }: {
   name: string;
   startTime: number;
@@ -38,6 +44,9 @@ export function WorkoutHeader({
   isEditingName: boolean;
   workoutNote: string;
   showFinishAction?: boolean;
+  showDiscardAction?: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
   onStartTimeChange: (startTime: number) => void;
   onCompletedAtChange: (completedAt: Date) => void;
   onEditableNameChange: (name: string) => void;
@@ -46,6 +55,9 @@ export function WorkoutHeader({
   onSaveName: () => void;
   onEditWorkoutNote: () => void;
   onFinishWorkout: () => void;
+  onDiscardWorkout?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   const [editingTimePart, setEditingTimePart] = useState<TimeEditorPart>(null);
   const startDate = new Date(startTime);
@@ -109,6 +121,34 @@ export function WorkoutHeader({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {showDiscardAction ? (
+            <button
+              type="button"
+              aria-label="Discard changes"
+              className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da]"
+              onClick={onDiscardWorkout}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label="Undo"
+            className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] disabled:opacity-35"
+            disabled={!canUndo}
+            onClick={onUndo}
+          >
+            <Undo2 className="size-3.5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label="Redo"
+            className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] disabled:opacity-35"
+            disabled={!canRedo}
+            onClick={onRedo}
+          >
+            <Redo2 className="size-3.5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             aria-label={workoutNote ? "Edit workout note" : "Add workout note"}

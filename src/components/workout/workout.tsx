@@ -18,6 +18,7 @@ import {
   initialiseExercises,
   workoutReducer,
   finalizeWorkout,
+  type Action,
   type Workout,
   type WeightModifier,
   type SetModifier,
@@ -58,6 +59,127 @@ type WorkoutProps = {
   persistDraft?: boolean;
   onInitialSave?: () => void;
 };
+
+type WorkoutDraft = {
+  workout: Workout;
+  completedAt: Date;
+};
+
+type WorkoutDraftSession = {
+  past: WorkoutDraft[];
+  present: WorkoutDraft;
+  future: WorkoutDraft[];
+  saved: WorkoutDraft;
+};
+
+type WorkoutDraftAction =
+  | { type: "APPLY_WORKOUT_ACTION"; action: Action; track?: boolean }
+  | { type: "SET_COMPLETED_AT"; completedAt: Date }
+  | { type: "SET_TIME_RANGE"; startTime: number; completedAt: Date }
+  | { type: "REPLACE_DRAFT"; draft: WorkoutDraft }
+  | { type: "MARK_SAVED" }
+  | { type: "UNDO" }
+  | { type: "REDO" };
+
+const MAX_DRAFT_HISTORY = 100;
+const EPHEMERAL_WORKOUT_ACTIONS = new Set<Action["type"]>([
+  "FOCUS_FIELD",
+  "COLLAPSE_KEYBOARD",
+  "NAV_EXERCISE",
+  "REPLACE_STATE",
+]);
+
+function workoutDraftReducer(
+  session: WorkoutDraftSession,
+  action: WorkoutDraftAction,
+): WorkoutDraftSession {
+  if (action.type === "UNDO") {
+    const previous = session.past[session.past.length - 1];
+    if (!previous) return session;
+
+    return {
+      ...session,
+      past: session.past.slice(0, -1),
+      present: previous,
+      future: [session.present, ...session.future],
+    };
+  }
+
+  if (action.type === "REDO") {
+    const [next, ...future] = session.future;
+    if (!next) return session;
+
+    return {
+      ...session,
+      past: [...session.past, session.present].slice(-MAX_DRAFT_HISTORY),
+      present: next,
+      future,
+    };
+  }
+
+  if (action.type === "REPLACE_DRAFT") {
+    return {
+      past: [],
+      present: action.draft,
+      future: [],
+      saved: action.draft,
+    };
+  }
+
+  if (action.type === "MARK_SAVED") {
+    return {
+      ...session,
+      past: [],
+      future: [],
+      saved: session.present,
+    };
+  }
+
+  const nextDraft =
+    action.type === "SET_COMPLETED_AT"
+      ? { ...session.present, completedAt: action.completedAt }
+      : action.type === "SET_TIME_RANGE"
+        ? {
+            ...session.present,
+            workout: {
+              ...session.present.workout,
+              startTime: action.startTime,
+            },
+            completedAt: action.completedAt,
+          }
+        : {
+            ...session.present,
+            workout: workoutReducer(session.present.workout, action.action),
+          };
+
+  if (
+    nextDraft === session.present ||
+    isSameDraft(nextDraft, session.present)
+  ) {
+    return session;
+  }
+
+  const shouldTrack =
+    action.type === "SET_COMPLETED_AT" ||
+    action.type === "SET_TIME_RANGE" ||
+    (action.track ?? !EPHEMERAL_WORKOUT_ACTIONS.has(action.action.type));
+
+  return {
+    ...session,
+    past: shouldTrack
+      ? [...session.past, session.present].slice(-MAX_DRAFT_HISTORY)
+      : session.past,
+    present: nextDraft,
+    future: shouldTrack ? [] : session.future,
+  };
+}
+
+function isSameDraft(a: WorkoutDraft, b: WorkoutDraft) {
+  return (
+    a.workout === b.workout &&
+    a.completedAt.getTime() === b.completedAt.getTime()
+  );
+}
 
 export function WorkoutComponent({ ...props }: WorkoutProps) {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -117,13 +239,31 @@ function WorkoutComponentInner({
     isFirstInteraction: false,
   };
 
-  const [state, dispatch] = useReducer(workoutReducer, initialState);
+  const initialDraft: WorkoutDraft = {
+    workout: initialState,
+    completedAt: completedAt ?? new Date(),
+  };
+  const [draftSession, dispatchDraft] = useReducer(workoutDraftReducer, {
+    past: [],
+    present: initialDraft,
+    future: [],
+    saved: initialDraft,
+  });
+  const state = draftSession.present.workout;
+  const workoutCompletedAt = draftSession.present.completedAt;
+  const hasUnsavedChanges = !isSameDraft(
+    draftSession.present,
+    draftSession.saved,
+  );
+  const dispatch = (action: Action, options?: { track?: boolean }) =>
+    dispatchDraft({
+      type: "APPLY_WORKOUT_ACTION",
+      action,
+      ...(options?.track === undefined ? {} : { track: options.track }),
+    });
   const [showRestore, setShowRestore] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editableName, setEditableName] = useState(state.name);
-  const [workoutCompletedAt, setWorkoutCompletedAt] = useState(
-    () => completedAt ?? new Date(),
-  );
   const [draggingExerciseIndex, setDraggingExerciseIndex] = useState<
     number | null
   >(null);
@@ -143,10 +283,11 @@ function WorkoutComponentInner({
 
   const handleStartTimeChange = (nextStartTime: number) => {
     const durationMs = workoutCompletedAt.getTime() - state.startTime;
-    dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime: nextStartTime });
-    setWorkoutCompletedAt(
-      new Date(nextStartTime + Math.max(60_000, durationMs)),
-    );
+    dispatchDraft({
+      type: "SET_TIME_RANGE",
+      startTime: nextStartTime,
+      completedAt: new Date(nextStartTime + Math.max(60_000, durationMs)),
+    });
   };
 
   const handleStartEditingName = () => {
@@ -166,7 +307,13 @@ function WorkoutComponentInner({
     onInitialSave,
     initialExerciseCount: initialExercises.length,
     onRestore: (restoredState) => {
-      dispatch({ type: "REPLACE_STATE", state: restoredState });
+      dispatchDraft({
+        type: "REPLACE_DRAFT",
+        draft: {
+          workout: restoredState,
+          completedAt: workoutCompletedAt,
+        },
+      });
       setShowRestore(false);
     },
     onRestorePrompt: () => setShowRestore(true),
@@ -186,6 +333,7 @@ function WorkoutComponentInner({
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Workout saved successfully!");
+      dispatchDraft({ type: "MARK_SAVED" });
       if (typeof window !== "undefined")
         localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
       finishDialog.setFinishedWorkout(variables);
@@ -198,6 +346,7 @@ function WorkoutComponentInner({
   const updateWorkoutMutation = api.workout.updateWorkout.useMutation({
     onSuccess: async () => {
       toast.success("Workout updated successfully.");
+      dispatchDraft({ type: "MARK_SAVED" });
       await utils.workout.listRecent.invalidate();
       router.push("/");
     },
@@ -215,6 +364,17 @@ function WorkoutComponentInner({
       }
     },
   });
+
+  const discardWorkoutChanges = () => {
+    if (
+      hasUnsavedChanges &&
+      !window.confirm("Discard unsaved workout changes?")
+    ) {
+      return;
+    }
+
+    router.push("/");
+  };
 
   const handleAddExercise = async (exerciseName: string) => {
     const trimmedName = exerciseName.trim();
@@ -380,13 +540,24 @@ function WorkoutComponentInner({
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
+        showDiscardAction={Boolean(workoutId)}
+        canUndo={draftSession.past.length > 0}
+        canRedo={draftSession.future.length > 0}
         onStartTimeChange={handleStartTimeChange}
-        onCompletedAtChange={setWorkoutCompletedAt}
+        onCompletedAtChange={(nextCompletedAt) =>
+          dispatchDraft({
+            type: "SET_COMPLETED_AT",
+            completedAt: nextCompletedAt,
+          })
+        }
         onEditableNameChange={setEditableName}
         onStartEditingName={handleStartEditingName}
         onCancelEditingName={handleCancelEditingName}
         onSaveName={handleWorkoutNameUpdate}
         onEditWorkoutNote={() => setWorkoutNoteEditorOpen(true)}
+        onDiscardWorkout={discardWorkoutChanges}
+        onUndo={() => dispatchDraft({ type: "UNDO" })}
+        onRedo={() => dispatchDraft({ type: "REDO" })}
         onFinishWorkout={() => {
           if (workoutId) {
             handleFinishWorkout();
