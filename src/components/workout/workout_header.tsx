@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,27 +69,35 @@ export function WorkoutHeader({
               {contextLabel}
             </div>
           ) : null}
-          <div className="mt-1 grid max-w-[280px] grid-cols-[auto_1fr] gap-x-2 gap-y-px font-mono text-[11px] leading-4">
-            <TimeFieldButton
-              label="start date"
-              value={formatStartDate(startDate)}
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+            <TimeTextButton
+              ariaLabel="Edit start date"
               onClick={() => setEditingTimePart("start-date")}
-            />
-            <TimeFieldButton
-              label="start time"
-              value={formatStartTime(startDate)}
+            >
+              {formatStartDate(startDate)}
+            </TimeTextButton>
+            <span className="px-1"> </span>
+            <TimeTextButton
+              ariaLabel="Edit start time"
               onClick={() => setEditingTimePart("start-time")}
-            />
-            <TimeFieldButton
-              label="end time"
-              value={formatStartTime(completedAt)}
+            >
+              {formatStartTime(startDate)}
+            </TimeTextButton>
+            <span className="px-1">-</span>
+            <TimeTextButton
+              ariaLabel="Edit end time"
               onClick={() => setEditingTimePart("end-time")}
-            />
-            <TimeFieldButton
-              label="duration"
-              value={formatDurationMinutes(durationMinutes)}
+            >
+              {formatStartTime(completedAt)}
+            </TimeTextButton>
+            <span className="pl-1">(</span>
+            <TimeTextButton
+              ariaLabel="Edit duration"
               onClick={() => setEditingTimePart("duration")}
-            />
+            >
+              {formatDurationMinutes(durationMinutes)}
+            </TimeTextButton>
+            <span>)</span>
           </div>
           {workoutNote ? (
             <div className="mt-1 inline-flex max-w-full rounded-[4px] bg-[#eee8da] px-1.5 py-0.5 text-[12px] leading-4 text-[#433e33]">
@@ -140,32 +148,24 @@ type TimeEditorPart =
   | "duration"
   | null;
 
-function TimeFieldButton({
-  label,
-  value,
+function TimeTextButton({
+  ariaLabel,
+  children,
   onClick,
 }: {
-  label: string;
-  value: string;
+  ariaLabel: string;
+  children: ReactNode;
   onClick: () => void;
 }) {
   return (
-    <>
-      <button
-        type="button"
-        className="text-left text-[#8a8373] hover:text-[#373226]"
-        onClick={onClick}
-      >
-        {label}
-      </button>
-      <button
-        type="button"
-        className="min-w-0 rounded-[3px] px-0.5 text-left text-[#373226] hover:bg-[#eee8da]"
-        onClick={onClick}
-      >
-        {value}
-      </button>
-    </>
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      className="rounded-[3px] px-0.5 text-left hover:bg-[#eee8da] hover:text-[#373226]"
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -278,18 +278,23 @@ function WorkoutTimePartEditor({
 }
 
 function formatStartDate(date: Date) {
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return date
+    .toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+    .toLowerCase();
 }
 
 function formatStartTime(date: Date) {
-  return date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return date
+    .toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    .toLowerCase()
+    .replace(/\s/g, "");
 }
 
 function getDurationMinutes(startDate: Date, completedAt: Date) {
