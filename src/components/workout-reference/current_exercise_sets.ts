@@ -47,14 +47,18 @@ export function normalizeRestBlocks(
 ) {
   const defaultRestTypeId = getDefaultRestTypeId(restTypes);
 
-  return sets.map((set, index) => ({
-    ...set,
-    restBefore:
-      index === 0
+  return sets.map((set, index) => {
+    const previousSet = sets[index - 1];
+    const startsNewSetGroup = !previousSet || previousSet.kind !== set.kind;
+
+    return {
+      ...set,
+      restBefore: startsNewSetGroup
         ? undefined
         : (getResolvedRestTypeId(set.restBefore, restTypes) ??
           defaultRestTypeId),
-  }));
+    };
+  });
 }
 
 export function getDefaultRestTypeId(restTypes: RestType[]) {

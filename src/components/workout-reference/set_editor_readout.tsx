@@ -221,13 +221,17 @@ function SetEditorSummaryLine({
       <div className="flex min-h-6 min-w-0 flex-wrap items-baseline gap-x-0 gap-y-1 text-[13px] leading-5 text-[#696457]">
         {sets.map((set, index) => {
           const previousSet = sets[index - 1];
+          const sameKindAsPrevious = previousSet?.kind === set.kind;
           const weight = formatCompactCurrentWeight(set);
           const previousWeight = previousSet
             ? formatCompactCurrentWeight(previousSet)
             : "";
-          const showWeight = index === 0 || previousWeight !== weight;
+          const showWeight =
+            index === 0 || !sameKindAsPrevious || previousWeight !== weight;
           const active = set.id === activeSetId;
           const separatorIsActive = active && activeField === "rest";
+          const isCompound =
+            sameKindAsPrevious && isCompoundRest(set.restBefore, restTypes);
 
           return (
             <span key={set.id} className="inline-flex items-baseline gap-0">
@@ -242,7 +246,7 @@ function SetEditorSummaryLine({
                   )}
                   onClick={() => onEdit(set.id, "rest")}
                 >
-                  {isCompoundRest(set.restBefore, restTypes) ? "+" : ","}
+                  {isCompound ? "+" : ","}
                 </button>
               ) : null}
               {index === 0 && set.kind === "warmup" ? (
