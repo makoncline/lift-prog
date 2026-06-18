@@ -50,6 +50,7 @@ export function WorkoutHeader({
   const [editingTimePart, setEditingTimePart] = useState<TimeEditorPart>(null);
   const startDate = new Date(startTime);
   const durationMinutes = getDurationMinutes(startDate, completedAt);
+  const relativeDate = formatRelativeDate(startDate);
 
   return (
     <>
@@ -70,6 +71,8 @@ export function WorkoutHeader({
             </div>
           ) : null}
           <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+            <span>{relativeDate}</span>
+            <span className="px-1">·</span>
             <TimeTextButton
               ariaLabel="Edit start date"
               onClick={() => setEditingTimePart("start-date")}
@@ -285,6 +288,25 @@ function formatStartDate(date: Date) {
       year: "numeric",
     })
     .toLowerCase();
+}
+
+function formatRelativeDate(date: Date, now = new Date()) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startOfDate = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  );
+  const startOfNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysAgo = Math.round(
+    (startOfNow.getTime() - startOfDate.getTime()) / dayMs,
+  );
+
+  if (daysAgo === 0) return "today";
+  if (daysAgo === 1) return "1 day ago";
+  if (daysAgo > 1) return `${daysAgo} days ago`;
+  if (daysAgo === -1) return "tomorrow";
+  return `in ${Math.abs(daysAgo)} days`;
 }
 
 function formatStartTime(date: Date) {
