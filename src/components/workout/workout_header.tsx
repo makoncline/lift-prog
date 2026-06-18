@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Pencil, Redo2, Save, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ export function WorkoutHeader({
   editableName,
   isEditingName,
   workoutNote,
+  isInProgress = false,
   showFinishAction = true,
   showDiscardAction = false,
   canUndo = false,
@@ -43,6 +44,7 @@ export function WorkoutHeader({
   editableName: string;
   isEditingName: boolean;
   workoutNote: string;
+  isInProgress?: boolean;
   showFinishAction?: boolean;
   showDiscardAction?: boolean;
   canUndo?: boolean;
@@ -60,67 +62,23 @@ export function WorkoutHeader({
   onRedo?: () => void;
 }) {
   const [editingTimePart, setEditingTimePart] = useState<TimeEditorPart>(null);
+  const [now, setNow] = useState(() => new Date());
   const startDate = new Date(startTime);
-  const durationMinutes = getDurationMinutes(startDate, completedAt);
+  const displayEnd = isInProgress ? now : completedAt;
+  const durationMinutes = getDurationMinutes(startDate, displayEnd);
   const relativeDate = formatRelativeDate(startDate);
+
+  useEffect(() => {
+    if (!isInProgress) return;
+
+    const interval = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(interval);
+  }, [isInProgress]);
 
   return (
     <>
-      <div className="mb-4 flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <TitleEditor
-            name={name}
-            editableName={editableName}
-            isEditing={isEditingName}
-            onChange={onEditableNameChange}
-            onStartEditing={onStartEditingName}
-            onCancel={onCancelEditingName}
-            onSave={onSaveName}
-          />
-          {contextLabel ? (
-            <div className="mt-0.5 font-mono text-[10px] leading-3 text-[#8a8373]">
-              {contextLabel}
-            </div>
-          ) : null}
-          <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
-            <span>{relativeDate}</span>
-            <span className="px-1">·</span>
-            <TimeTextButton
-              ariaLabel="Edit start date"
-              onClick={() => setEditingTimePart("start-date")}
-            >
-              {formatStartDate(startDate)}
-            </TimeTextButton>
-            <span className="px-1"> </span>
-            <TimeTextButton
-              ariaLabel="Edit start time"
-              onClick={() => setEditingTimePart("start-time")}
-            >
-              {formatStartTime(startDate)}
-            </TimeTextButton>
-            <span className="px-1">-</span>
-            <TimeTextButton
-              ariaLabel="Edit end time"
-              onClick={() => setEditingTimePart("end-time")}
-            >
-              {formatStartTime(completedAt)}
-            </TimeTextButton>
-            <span className="pl-1">(</span>
-            <TimeTextButton
-              ariaLabel="Edit duration"
-              onClick={() => setEditingTimePart("duration")}
-            >
-              {formatDurationMinutes(durationMinutes)}
-            </TimeTextButton>
-            <span>)</span>
-          </div>
-          {workoutNote ? (
-            <div className="mt-1 inline-flex max-w-full rounded-[4px] bg-[#eee8da] px-1.5 py-0.5 text-[12px] leading-4 text-[#433e33]">
-              {workoutNote}
-            </div>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+      <div className="mb-4">
+        <div className="mb-1 flex items-center justify-end gap-1">
           {showDiscardAction ? (
             <button
               type="button"
@@ -169,6 +127,67 @@ export function WorkoutHeader({
             </Button>
           ) : null}
         </div>
+        <TitleEditor
+          name={name}
+          editableName={editableName}
+          isEditing={isEditingName}
+          onChange={onEditableNameChange}
+          onStartEditing={onStartEditingName}
+          onCancel={onCancelEditingName}
+          onSave={onSaveName}
+        />
+        {contextLabel ? (
+          <div className="mt-0.5 font-mono text-[10px] leading-3 text-[#8a8373]">
+            {contextLabel}
+          </div>
+        ) : null}
+        <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+          <span>{relativeDate}</span>
+          <span className="px-1">·</span>
+          <TimeTextButton
+            ariaLabel="Edit start date"
+            onClick={() => setEditingTimePart("start-date")}
+          >
+            {formatStartDate(startDate)}
+          </TimeTextButton>
+          <span className="px-1"> </span>
+          <TimeTextButton
+            ariaLabel="Edit start time"
+            onClick={() => setEditingTimePart("start-time")}
+          >
+            {formatStartTime(startDate)}
+          </TimeTextButton>
+          {isInProgress ? (
+            <>
+              <span className="pl-1">(</span>
+              <span>{formatDurationMinutes(durationMinutes)}</span>
+              <span>)</span>
+            </>
+          ) : (
+            <>
+              <span className="px-1">-</span>
+              <TimeTextButton
+                ariaLabel="Edit end time"
+                onClick={() => setEditingTimePart("end-time")}
+              >
+                {formatStartTime(completedAt)}
+              </TimeTextButton>
+              <span className="pl-1">(</span>
+              <TimeTextButton
+                ariaLabel="Edit duration"
+                onClick={() => setEditingTimePart("duration")}
+              >
+                {formatDurationMinutes(durationMinutes)}
+              </TimeTextButton>
+              <span>)</span>
+            </>
+          )}
+        </div>
+        {workoutNote ? (
+          <div className="mt-1 inline-flex max-w-full rounded-[4px] bg-[#eee8da] px-1.5 py-0.5 text-[12px] leading-4 text-[#433e33]">
+            {workoutNote}
+          </div>
+        ) : null}
       </div>
       <WorkoutTimePartEditor
         part={editingTimePart}

@@ -540,6 +540,7 @@ function WorkoutComponentInner({
         editableName={editableName}
         isEditingName={isEditingName}
         workoutNote={getWorkoutNoteText()}
+        isInProgress={!workoutId}
         showDiscardAction={Boolean(workoutId)}
         canUndo={draftSession.past.length > 0}
         canRedo={draftSession.future.length > 0}
