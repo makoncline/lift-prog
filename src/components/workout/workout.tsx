@@ -179,6 +179,9 @@ function WorkoutComponentInner({
   const [newExerciseName, setNewExerciseName] = useState("");
   const finishDialog = useWorkoutFinishDialog();
   const utils = api.useUtils();
+  const exercisesQuery = api.exercise.list.useQuery(undefined, {
+    staleTime: Infinity,
+  });
 
   const saveWorkoutMutation = api.workout.saveWorkout.useMutation({
     onSuccess: (_data, variables) => {
@@ -200,6 +203,16 @@ function WorkoutComponentInner({
     },
     onError: (error) => {
       toast.error(`Error updating workout: ${error.message}`);
+    },
+  });
+  const addExerciseMutation = api.exercise.add.useMutation({
+    onSuccess: async () => {
+      await utils.exercise.list.invalidate();
+    },
+    onError: (error) => {
+      if (!error.message.includes("already exists")) {
+        toast.error(`Error creating exercise: ${error.message}`);
+      }
     },
   });
 
@@ -226,6 +239,13 @@ function WorkoutComponentInner({
       }
       dispatch({ type: "ADD_EXERCISE", exercise });
       setNewExerciseName("");
+      const exact = exercisesQuery.data?.some(
+        (existingExercise) =>
+          existingExercise.name.toLowerCase() === trimmedName.toLowerCase(),
+      );
+      if (!exact) {
+        addExerciseMutation.mutate({ name: trimmedName });
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -381,6 +401,10 @@ function WorkoutComponentInner({
         draggingIndex={draggingExerciseIndex}
         newExerciseName={newExerciseName}
         addingExerciseName={addingExerciseName}
+        exerciseSuggestions={
+          exercisesQuery.data?.map((exercise) => exercise.name) ?? []
+        }
+        exerciseSuggestionsLoaded={Boolean(exercisesQuery.data)}
         onNewExerciseNameChange={setNewExerciseName}
         onAddExercise={(exerciseName) => void handleAddExercise(exerciseName)}
         onDeleteExercise={setPendingDeleteExerciseIndex}

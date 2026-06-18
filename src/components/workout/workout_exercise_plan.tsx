@@ -16,6 +16,8 @@ export function WorkoutExercisePlan({
   draggingIndex,
   newExerciseName,
   addingExerciseName,
+  exerciseSuggestions,
+  exerciseSuggestionsLoaded,
   onNewExerciseNameChange,
   onAddExercise,
   onDeleteExercise,
@@ -27,6 +29,8 @@ export function WorkoutExercisePlan({
   draggingIndex: number | null;
   newExerciseName: string;
   addingExerciseName: string | null;
+  exerciseSuggestions: string[];
+  exerciseSuggestionsLoaded: boolean;
   onNewExerciseNameChange: (name: string) => void;
   onAddExercise: (name: string) => void;
   onDeleteExercise: (exerciseIndex: number) => void;
@@ -74,6 +78,8 @@ export function WorkoutExercisePlan({
           <WorkoutExercisePlanAddForm
             exerciseName={newExerciseName}
             addingExerciseName={addingExerciseName}
+            exerciseSuggestions={exerciseSuggestions}
+            exerciseSuggestionsLoaded={exerciseSuggestionsLoaded}
             onExerciseNameChange={onNewExerciseNameChange}
             onAddExercise={onAddExercise}
           />
@@ -146,14 +152,30 @@ function WorkoutExercisePlanItem({
 function WorkoutExercisePlanAddForm({
   exerciseName,
   addingExerciseName,
+  exerciseSuggestions,
+  exerciseSuggestionsLoaded,
   onExerciseNameChange,
   onAddExercise,
 }: {
   exerciseName: string;
   addingExerciseName: string | null;
+  exerciseSuggestions: string[];
+  exerciseSuggestionsLoaded: boolean;
   onExerciseNameChange: (name: string) => void;
   onAddExercise: (name: string) => void;
 }) {
+  const trimmedName = exerciseName.trim();
+  const matchingSuggestions = trimmedName
+    ? exerciseSuggestions
+        .filter((name) =>
+          name.toLowerCase().includes(trimmedName.toLowerCase()),
+        )
+        .slice(0, 8)
+    : [];
+  const hasExactMatch = matchingSuggestions.some(
+    (name) => name.toLowerCase() === trimmedName.toLowerCase(),
+  );
+
   return (
     <div className="mt-1.5">
       <form
@@ -166,7 +188,7 @@ function WorkoutExercisePlanAddForm({
         <input
           value={exerciseName}
           onChange={(event) => onExerciseNameChange(event.target.value)}
-          placeholder="exercise name"
+          placeholder="search or create exercise"
           className="h-7 min-w-0 flex-1 rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[16px] leading-4 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
         />
         <Button
@@ -180,6 +202,29 @@ function WorkoutExercisePlanAddForm({
           add
         </Button>
       </form>
+      {trimmedName ? (
+        <div className="mt-1 flex max-h-32 flex-col overflow-y-auto font-mono text-[13px] leading-5">
+          {matchingSuggestions.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className="rounded-[3px] px-1.5 py-0.5 text-left text-[#373226] hover:bg-[#eee8da]"
+              onClick={() => onAddExercise(name)}
+            >
+              {name}
+            </button>
+          ))}
+          {exerciseSuggestionsLoaded && !hasExactMatch ? (
+            <button
+              type="button"
+              className="rounded-[3px] px-1.5 py-0.5 text-left text-[#8a8373] hover:bg-[#eee8da] hover:text-[#373226]"
+              onClick={() => onAddExercise(trimmedName)}
+            >
+              create {trimmedName}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
