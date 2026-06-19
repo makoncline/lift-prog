@@ -40,7 +40,9 @@ const makeCaller = () => {
 describe("exercise.add", () => {
   it("rejects a new exercise when an existing name differs only by case", async () => {
     const { caller, spies } = makeCaller();
-    spies.userExerciseFindMany.mockResolvedValue([{ id: 44, name: "Pull-ups" }]);
+    spies.userExerciseFindMany.mockResolvedValue([
+      { id: 44, name: "Pull-ups" },
+    ]);
 
     await expect(caller.exercise.add({ name: "pull-ups" })).rejects.toThrow(
       'Exercise named "Pull-ups" already exists.',
@@ -53,7 +55,9 @@ describe("exercise.add", () => {
 describe("exercise.updateNote", () => {
   it("updates an existing exercise when name fallback differs only by case", async () => {
     const { caller, spies } = makeCaller();
-    spies.userExerciseFindMany.mockResolvedValue([{ id: 44, name: "Pull-ups" }]);
+    spies.userExerciseFindMany.mockResolvedValue([
+      { id: 44, name: "Pull-ups" },
+    ]);
 
     await caller.exercise.updateNote({
       name: "pull-ups",
@@ -69,7 +73,9 @@ describe("exercise.updateNote", () => {
 
   it("rejects when name fallback resolves but no row is updated", async () => {
     const { caller, spies } = makeCaller();
-    spies.userExerciseFindMany.mockResolvedValue([{ id: 44, name: "Pull-ups" }]);
+    spies.userExerciseFindMany.mockResolvedValue([
+      { id: 44, name: "Pull-ups" },
+    ]);
     spies.userExerciseUpdateMany.mockResolvedValue({ count: 0 });
 
     await expect(
@@ -78,5 +84,29 @@ describe("exercise.updateNote", () => {
         note: "Hold dumbbell in thighs",
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("exercise.updatePlateDefaults", () => {
+  it("updates an existing exercise when name fallback differs only by case", async () => {
+    const { caller, spies } = makeCaller();
+    spies.userExerciseFindMany.mockResolvedValue([
+      { id: 44, name: "Pull-ups" },
+    ]);
+
+    await caller.exercise.updatePlateDefaults({
+      name: "pull-ups",
+      plateStartingWeight: 45,
+      plateLoadMode: "equal-sides",
+    });
+
+    expect(spies.userExerciseUpdateMany).toHaveBeenCalledWith({
+      where: { id: 44, userId: "user_123" },
+      data: {
+        plateStartingWeight: 45,
+        plateLoadMode: "equal-sides",
+      },
+    });
+    expect(spies.userExerciseUpsert).not.toHaveBeenCalled();
   });
 });

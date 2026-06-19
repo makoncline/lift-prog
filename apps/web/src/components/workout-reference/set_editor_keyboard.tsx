@@ -23,8 +23,10 @@ import { cn } from "@/lib/utils";
 import {
   IncreaseWeightDialog,
   PlateCalculatorDialog,
+  type PlateSettings,
   type WeightSuggestion,
 } from "@/components/workout-reference/weight_helper_dialog";
+import type { PlateMode } from "@/lib/weight-helper";
 import type { CurrentExerciseSet } from "@/components/workout-reference/workout_reference_types";
 
 export function SetEditorKeyboard({
@@ -34,6 +36,9 @@ export function SetEditorKeyboard({
   onAddShortRest,
   onNext,
   onUpdate,
+  plateStartingWeight,
+  plateLoadMode,
+  onPlateSettingsChange,
 }: {
   field: "weight" | "reps";
   set: CurrentExerciseSet;
@@ -41,6 +46,9 @@ export function SetEditorKeyboard({
   onAddShortRest?: () => void;
   onNext: () => void;
   onUpdate: (set: CurrentExerciseSet) => void;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: PlateMode | null;
+  onPlateSettingsChange?: (settings: PlateSettings) => void;
 }) {
   const [draftSet, setDraftSet] = useState(set);
   const draftSetRef = useRef(set);
@@ -110,12 +118,21 @@ export function SetEditorKeyboard({
           className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
           style={{ gridArea: "action1" }}
         >
-          <IncreaseWeightDialog set={draftSet} onUse={applyWeightSuggestion}>
+          <IncreaseWeightDialog
+            set={draftSet}
+            defaultLoadMode={plateLoadMode}
+            onUse={applyWeightSuggestion}
+          >
             <KeypadTriggerButton label="increase weight helper">
               <TrendingUp className="size-4" aria-hidden="true" />
             </KeypadTriggerButton>
           </IncreaseWeightDialog>
-          <PlateCalculatorDialog set={draftSet}>
+          <PlateCalculatorDialog
+            set={draftSet}
+            defaultStartingWeight={plateStartingWeight}
+            defaultLoadMode={plateLoadMode}
+            onSettingsChange={onPlateSettingsChange}
+          >
             <KeypadTriggerButton label="plate calculator">
               <Disc3 className="size-4" aria-hidden="true" />
             </KeypadTriggerButton>

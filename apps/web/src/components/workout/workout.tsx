@@ -30,6 +30,7 @@ import { WorkoutHeader } from "@/components/workout/workout_header";
 import { useWorkoutPersistence } from "@/components/workout/use_workout_persistence";
 import { useWorkoutFinishDialog } from "@/components/workout/use_workout_finish_dialog";
 import { WorkoutExerciseList } from "@/components/workout/workout_exercise_list";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
 
 interface PreviousExerciseData {
   userExerciseId?: number;
@@ -46,6 +47,8 @@ interface PreviousExerciseData {
   exerciseNotes?: string | null;
   notes?: string | null;
   exerciseNotesSnapshot?: string | null;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: string | null;
   history?: Workout["exercises"][number]["history"];
 }
 
@@ -162,8 +165,10 @@ function workoutDraftReducer(
 
     return {
       ...session,
-      past: [...session.past, cloneWorkoutDraft(session.pendingHistoryBase)]
-        .slice(-MAX_DRAFT_HISTORY),
+      past: [
+        ...session.past,
+        cloneWorkoutDraft(session.pendingHistoryBase),
+      ].slice(-MAX_DRAFT_HISTORY),
       future: [],
       pendingHistoryBase: undefined,
     };
@@ -407,8 +412,7 @@ function WorkoutComponentInner({
   });
 
   const [workoutNoteEditorOpen, setWorkoutNoteEditorOpen] = useState(false);
-  const [deleteWorkoutDialogOpen, setDeleteWorkoutDialogOpen] =
-    useState(false);
+  const [deleteWorkoutDialogOpen, setDeleteWorkoutDialogOpen] = useState(false);
   const [addingExerciseName, setAddingExerciseName] = useState<string | null>(
     null,
   );
@@ -478,6 +482,15 @@ function WorkoutComponentInner({
       toast.error(`Error updating exercise note: ${error.message}`);
     },
   });
+  const updateUserExercisePlateDefaultsMutation =
+    api.exercise.updatePlateDefaults.useMutation({
+      onSuccess: async () => {
+        await utils.exercise.list.invalidate();
+      },
+      onError: (error) => {
+        toast.error(`Error updating plate defaults: ${error.message}`);
+      },
+    });
 
   const discardWorkoutChanges = () => {
     if (
@@ -621,6 +634,41 @@ function WorkoutComponentInner({
     }
   };
 
+  const updateUserExercisePlateDefaults = (
+    exerciseIndex: number,
+    settings: PlateSettings,
+  ) => {
+    const exercise = state.exercises[exerciseIndex];
+    if (!exercise) return;
+
+    dispatch(
+      {
+        type: "UPDATE_USER_EXERCISE_PLATE_DEFAULTS",
+        exerciseIndex,
+        plateStartingWeight: settings.startingWeight,
+        plateLoadMode: settings.loadMode,
+      },
+      { track: false },
+    );
+
+    const payload = {
+      plateStartingWeight: settings.startingWeight,
+      plateLoadMode: settings.loadMode,
+    };
+
+    if (exercise.userExerciseId) {
+      updateUserExercisePlateDefaultsMutation.mutate({
+        id: exercise.userExerciseId,
+        ...payload,
+      });
+    } else {
+      updateUserExercisePlateDefaultsMutation.mutate({
+        name: exercise.name,
+        ...payload,
+      });
+    }
+  };
+
   const buildFinishedWorkoutPayload = (): CompletedWorkout => {
     const durationInSeconds = finishDialog.getDurationInSeconds(
       state.startTime,
@@ -749,6 +797,7 @@ function WorkoutComponentInner({
       <WorkoutExerciseList
         exercises={state.exercises}
         onExerciseNoteChange={updateUserExerciseNote}
+        onPlateSettingsChange={updateUserExercisePlateDefaults}
         onWorkoutExerciseNoteChange={updateWorkoutExerciseNote}
         onCommitPendingHistory={commitPendingHistory}
         onCurrentSetsChange={(exerciseIndex, sets, options) =>

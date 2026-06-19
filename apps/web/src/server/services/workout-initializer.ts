@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
+import { parsePlateLoadMode } from "@lift-prog/workout-core";
 import type {
   PreviousExerciseData,
   SetModifier,
@@ -206,11 +207,15 @@ function buildExerciseFromHistory({
   userExerciseId,
   name,
   exerciseNotes,
+  plateStartingWeight,
+  plateLoadMode,
   historyRecords,
 }: {
   userExerciseId: number;
   name: string;
   exerciseNotes: string | null;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: string | null;
   historyRecords: WorkoutExerciseHistoryRecord[];
 }): PreviousExerciseData {
   const latestExercise = historyRecords[0] ?? null;
@@ -224,6 +229,8 @@ function buildExerciseFromHistory({
       name,
       sets: DEFAULT_EXERCISE_SETS.map((set) => ({ ...set })),
       ...(exerciseNotes ? { exerciseNotes } : {}),
+      plateStartingWeight: plateStartingWeight ?? null,
+      plateLoadMode: plateLoadMode ? parsePlateLoadMode(plateLoadMode) : null,
       notes: previousNotes,
       ...(latestExercise?.exerciseNotesSnapshot
         ? { exerciseNotesSnapshot: latestExercise.exerciseNotesSnapshot }
@@ -237,6 +244,8 @@ function buildExerciseFromHistory({
     name,
     sets: completedSets.map((set) => mapSet(set)),
     ...(exerciseNotes ? { exerciseNotes } : {}),
+    plateStartingWeight: plateStartingWeight ?? null,
+    plateLoadMode: plateLoadMode ? parsePlateLoadMode(plateLoadMode) : null,
     notes: previousNotes,
     ...(latestExercise.exerciseNotesSnapshot
       ? { exerciseNotesSnapshot: latestExercise.exerciseNotesSnapshot }
@@ -265,16 +274,19 @@ export async function buildInitialExercisesForNames({
         userId,
       },
       orderBy: { name: "asc" },
-      select: { id: true, name: true, notes: true },
+      select: {
+        id: true,
+        name: true,
+        notes: true,
+        plateStartingWeight: true,
+        plateLoadMode: true,
+      },
     })
   ).filter((exercise) =>
     requestedNames.has(normalizeExerciseNameForCompare(exercise.name)),
   );
 
-  const userExerciseByName = new Map<
-    string,
-    (typeof userExercises)[number]
-  >();
+  const userExerciseByName = new Map<string, (typeof userExercises)[number]>();
   for (const exercise of userExercises) {
     const normalizedName = normalizeExerciseNameForCompare(exercise.name);
     if (userExerciseByName.has(normalizedName)) {
@@ -307,6 +319,8 @@ export async function buildInitialExercisesForNames({
       userExerciseId: userExercise.id,
       name: userExercise.name,
       exerciseNotes: userExercise.notes ?? null,
+      plateStartingWeight: userExercise.plateStartingWeight,
+      plateLoadMode: userExercise.plateLoadMode,
       historyRecords: historiesByUserExerciseId.get(userExercise.id) ?? [],
     });
   });
@@ -343,7 +357,13 @@ export async function buildInitialExercisesFromWorkout({
           notes: true,
           exerciseNotesSnapshot: true,
           userExercise: {
-            select: { id: true, name: true, notes: true },
+            select: {
+              id: true,
+              name: true,
+              notes: true,
+              plateStartingWeight: true,
+              plateLoadMode: true,
+            },
           },
           sets: {
             orderBy: { order: "asc" },
@@ -393,6 +413,11 @@ export async function buildInitialExercisesFromWorkout({
           ...(workoutExercise.userExercise.notes
             ? { exerciseNotes: workoutExercise.userExercise.notes }
             : {}),
+          plateStartingWeight:
+            workoutExercise.userExercise.plateStartingWeight ?? null,
+          plateLoadMode: workoutExercise.userExercise.plateLoadMode
+            ? parsePlateLoadMode(workoutExercise.userExercise.plateLoadMode)
+            : null,
           notes: preserveInstanceNotes ? workoutExercise.notes : null,
           ...(workoutExercise.exerciseNotesSnapshot
             ? { exerciseNotesSnapshot: workoutExercise.exerciseNotesSnapshot }
@@ -405,6 +430,9 @@ export async function buildInitialExercisesFromWorkout({
         userExerciseId: workoutExercise.userExercise.id,
         name,
         exerciseNotes: workoutExercise.userExercise.notes ?? null,
+        plateStartingWeight:
+          workoutExercise.userExercise.plateStartingWeight ?? null,
+        plateLoadMode: workoutExercise.userExercise.plateLoadMode,
         historyRecords: exerciseHistory,
       });
 

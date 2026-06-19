@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { PreviousWorkoutExercise } from "@/components/workout-reference/previous-workout-exercise";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
 import type {
   CurrentExerciseSet,
   PreviousExercise,
@@ -148,6 +149,11 @@ const sampleCurrentSets: CurrentExerciseSet[] = [
 ];
 
 export function PreviousWorkoutExerciseSandbox() {
+  const [plateSettings, setPlateSettings] = useState<PlateSettings>({
+    startingWeight: 0,
+    loadMode: "total",
+  });
+
   useEffect(() => {
     let metaViewport = document.querySelector('meta[name="viewport"]');
     const previousViewportContent =
@@ -186,8 +192,11 @@ export function PreviousWorkoutExerciseSandbox() {
       <PreviousWorkoutExercise
         exerciseName="Pull-ups"
         exerciseNote="Hold dumbbell in thighs"
+        plateStartingWeight={plateSettings.startingWeight}
+        plateLoadMode={plateSettings.loadMode}
         history={sampleHistory}
         initialCurrentSets={sampleCurrentSets}
+        onPlateSettingsChange={setPlateSettings}
       />
     </div>
   );
