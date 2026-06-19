@@ -1,7 +1,24 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkoutComponent } from "@/components/workout/workout";
+
+const trpcMocks = vi.hoisted(() => ({
+  exerciseListData: [] as Array<{
+    id: number;
+    name: string;
+    notes: string | null;
+    exerciseId: number | null;
+  }>,
+  exerciseListInvalidate: vi.fn(),
+  listRecentInvalidate: vi.fn(),
+  prepareInitialWorkoutFetch: vi.fn(),
+  addExerciseMutate: vi.fn(),
+  saveWorkoutMutate: vi.fn(),
+  updateWorkoutMutate: vi.fn(),
+  deleteWorkoutMutate: vi.fn(),
+  updateNoteMutate: vi.fn(),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   useUser: () => ({ user: { id: "user_1" }, isLoaded: true }),
@@ -28,30 +45,67 @@ vi.mock("@/trpc/react", () => ({
     useUtils: () => ({
       workout: {
         prepareInitialWorkout: {
-          fetch: vi.fn(async ({ exerciseNames }) => ({
-            workoutName: "Test Workout",
-            exercises: exerciseNames.map((name: string) => ({
-              name,
-              sets: [{ weight: null, reps: 8 }],
-            })),
-          })),
+          fetch: trpcMocks.prepareInitialWorkoutFetch,
         },
+        listRecent: { invalidate: trpcMocks.listRecentInvalidate },
+      },
+      exercise: {
+        list: { invalidate: trpcMocks.exerciseListInvalidate },
       },
     }),
     workout: {
       saveWorkout: {
         useMutation: (opts?: any) => ({
           isPending: false,
-          mutate: (payload: any) => opts?.onSuccess?.(null, payload, null),
+          mutate: (payload: any) => {
+            trpcMocks.saveWorkoutMutate(payload);
+            opts?.onSuccess?.(null, payload, null);
+          },
+        }),
+      },
+      updateWorkout: {
+        useMutation: (opts?: any) => ({
+          isPending: false,
+          mutate: (payload: any) => {
+            trpcMocks.updateWorkoutMutate(payload);
+            opts?.onSuccess?.(null, payload, null);
+          },
+        }),
+      },
+      deleteWorkout: {
+        useMutation: (opts?: any) => ({
+          isPending: false,
+          mutate: (payload: any) => {
+            trpcMocks.deleteWorkoutMutate(payload);
+            opts?.onSuccess?.(null, payload, null);
+          },
         }),
       },
     },
     exercise: {
       list: {
         useQuery: () => ({
-          data: [],
+          data: trpcMocks.exerciseListData,
           isLoading: false,
           isError: false,
+        }),
+      },
+      add: {
+        useMutation: (opts?: any) => ({
+          isPending: false,
+          mutate: (payload: any) => {
+            trpcMocks.addExerciseMutate(payload);
+            void opts?.onSuccess?.(null, payload, null);
+          },
+        }),
+      },
+      updateNote: {
+        useMutation: (opts?: any) => ({
+          isPending: false,
+          mutate: (payload: any) => {
+            trpcMocks.updateNoteMutate(payload);
+            void opts?.onSuccess?.(null, payload, null);
+          },
         }),
       },
     },
@@ -59,6 +113,28 @@ vi.mock("@/trpc/react", () => ({
 }));
 
 describe("WorkoutComponent", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    trpcMocks.exerciseListData = [];
+    trpcMocks.exerciseListInvalidate.mockReset();
+    trpcMocks.listRecentInvalidate.mockReset();
+    trpcMocks.addExerciseMutate.mockReset();
+    trpcMocks.saveWorkoutMutate.mockReset();
+    trpcMocks.updateWorkoutMutate.mockReset();
+    trpcMocks.deleteWorkoutMutate.mockReset();
+    trpcMocks.updateNoteMutate.mockReset();
+    trpcMocks.prepareInitialWorkoutFetch.mockReset();
+    trpcMocks.prepareInitialWorkoutFetch.mockImplementation(
+      async ({ exerciseNames }) => ({
+        workoutName: "Test Workout",
+        exercises: exerciseNames.map((name: string) => ({
+          name,
+          sets: [{ weight: null, reps: 8 }],
+        })),
+      }),
+    );
+  });
+
   it("supports the current workout entry flow", async () => {
     render(
       <WorkoutComponent
@@ -115,14 +191,40 @@ describe("WorkoutComponent", () => {
     fireEvent.click(screen.getByRole("button", { name: "done" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Finish workout" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Finish Workout",
+    const finishDialog = await screen.findByRole("dialog");
+    expect(finishDialog).toHaveTextContent("save workout");
+    expect(finishDialog).toHaveTextContent("1 exercise");
+    fireEvent.click(screen.getByRole("button", { name: "go back" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("adds an existing exercise with its stored capitalization", async () => {
+    trpcMocks.exerciseListData = [
+      { id: 1, name: "Pull-ups", notes: null, exerciseId: null },
+    ];
+
+    render(<WorkoutComponent workoutName="Test Workout" exercises={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "exercises" }));
+    fireEvent.change(
+      await screen.findByPlaceholderText("search or create exercise"),
+      {
+        target: { value: "pull-ups" },
+      },
     );
-    expect(screen.getByLabelText("Date")).toBeInTheDocument();
-    expect(screen.getByLabelText("Start Time")).toBeInTheDocument();
-    expect(screen.getByLabelText("End Time")).toBeInTheDocument();
-    expect(screen.getByLabelText("Duration (minutes)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Finish Workout")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Pull-ups" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(trpcMocks.prepareInitialWorkoutFetch).toHaveBeenCalledWith({
+        mode: "exerciseList",
+        workoutName: "Test Workout",
+        exerciseNames: ["Pull-ups"],
+      }),
+    );
+    expect(screen.queryByRole("heading", { name: "pull-ups" })).toBeNull();
+    expect(trpcMocks.addExerciseMutate).not.toHaveBeenCalled();
   });
 });

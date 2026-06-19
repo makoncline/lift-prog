@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/trpc/react";
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@/lib/constants";
+import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { NoteEditorDialog } from "@/components/workout/note_editor_dialog";
 import { DeleteExerciseDialog } from "@/components/workout/delete_exercise_dialog";
 import { DeleteWorkoutDialog } from "@/components/workout/delete_workout_dialog";
@@ -506,31 +507,41 @@ function WorkoutComponentInner({
   const handleAddExercise = async (exerciseName: string) => {
     const trimmedName = exerciseName.trim();
     if (!trimmedName) return;
+    const matchingExercise = exercisesQuery.data?.find(
+      (existingExercise) =>
+        normalizeExerciseNameForCompare(existingExercise.name) ===
+        normalizeExerciseNameForCompare(trimmedName),
+    );
+    const canonicalName = matchingExercise?.name ?? trimmedName;
+    const normalizedCanonicalName =
+      normalizeExerciseNameForCompare(canonicalName);
 
-    if (state.exercises.some((exercise) => exercise.name === trimmedName)) {
-      toast.error(`${trimmedName} is already in this workout.`);
+    if (
+      state.exercises.some(
+        (exercise) =>
+          normalizeExerciseNameForCompare(exercise.name) ===
+          normalizedCanonicalName,
+      )
+    ) {
+      toast.error(`${canonicalName} is already in this workout.`);
       return;
     }
 
-    setAddingExerciseName(trimmedName);
+    setAddingExerciseName(canonicalName);
     try {
       const prepared = await utils.workout.prepareInitialWorkout.fetch({
         mode: "exerciseList",
         workoutName: state.name,
-        exerciseNames: [trimmedName],
+        exerciseNames: [canonicalName],
       });
       const [exercise] = initialiseExercises(prepared.exercises);
       if (!exercise) {
-        toast.error(`Could not prepare ${trimmedName}.`);
+        toast.error(`Could not prepare ${canonicalName}.`);
         return;
       }
       dispatch({ type: "ADD_EXERCISE", exercise });
       setNewExerciseName("");
-      const exact = exercisesQuery.data?.some(
-        (existingExercise) =>
-          existingExercise.name.toLowerCase() === trimmedName.toLowerCase(),
-      );
-      if (!exact) {
+      if (!matchingExercise) {
         addExerciseMutation.mutate({ name: trimmedName });
       }
     } catch (error) {

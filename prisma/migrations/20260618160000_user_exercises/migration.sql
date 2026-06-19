@@ -34,6 +34,21 @@ SELECT
 FROM "User"
 CROSS JOIN "Exercise";
 
+CREATE TEMP TABLE "__migration_assert" (
+    "name" TEXT NOT NULL,
+    "ok" INTEGER NOT NULL CHECK ("ok" = 1)
+);
+
+INSERT INTO "__migration_assert" ("name", "ok")
+SELECT
+    'UserExercise backfill count',
+    CASE
+        WHEN (SELECT COUNT(*) FROM "UserExercise") =
+             ((SELECT COUNT(*) FROM "User") * (SELECT COUNT(*) FROM "Exercise"))
+        THEN 1
+        ELSE 0
+    END;
+
 -- CreateIndex
 CREATE UNIQUE INDEX "UserExercise_userId_name_key" ON "UserExercise"("userId", "name");
 
@@ -82,6 +97,16 @@ INNER JOIN "UserExercise" ON
     "UserExercise"."userId" = "Workout"."userId"
     AND "UserExercise"."exerciseId" = "WorkoutExercise"."exerciseId";
 
+INSERT INTO "__migration_assert" ("name", "ok")
+SELECT
+    'WorkoutExercise rebuild count',
+    CASE
+        WHEN (SELECT COUNT(*) FROM "WorkoutExercise") =
+             (SELECT COUNT(*) FROM "new_WorkoutExercise")
+        THEN 1
+        ELSE 0
+    END;
+
 DROP TABLE "WorkoutExercise";
 ALTER TABLE "new_WorkoutExercise" RENAME TO "WorkoutExercise";
 
@@ -118,10 +143,22 @@ SELECT
     "updatedAt"
 FROM "Exercise";
 
+INSERT INTO "__migration_assert" ("name", "ok")
+SELECT
+    'Exercise rebuild count',
+    CASE
+        WHEN (SELECT COUNT(*) FROM "Exercise") =
+             (SELECT COUNT(*) FROM "new_Exercise")
+        THEN 1
+        ELSE 0
+    END;
+
 DROP TABLE "Exercise";
 ALTER TABLE "new_Exercise" RENAME TO "Exercise";
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Exercise_name_key" ON "Exercise"("name");
+
+DROP TABLE "__migration_assert";
 
 PRAGMA foreign_keys=ON;

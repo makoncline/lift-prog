@@ -158,3 +158,24 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+const getAdminUserIds = () =>
+  new Set(
+    (process.env.ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((userId) => userId.trim())
+      .filter(Boolean),
+  );
+
+export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
+  const userId = ctx.session.userId;
+
+  if (!userId || !getAdminUserIds().has(userId)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Admin access required.",
+    });
+  }
+
+  return next({ ctx });
+});

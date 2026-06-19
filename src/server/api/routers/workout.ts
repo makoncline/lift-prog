@@ -6,6 +6,7 @@ import {
   CompletedWorkoutSchema,
   type CompletedExercise,
 } from "@/lib/schemas/workout-schema";
+import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { summarizeWorkingSets } from "@/lib/workout-summary";
 import {
   buildInitialExercisesForNames,
@@ -24,18 +25,65 @@ const PrepareInitialWorkoutInput = z.discriminatedUnion("mode", [
   }),
 ]);
 
+type WorkoutPrisma = Pick<PrismaClient, "exercise" | "userExercise">;
+
 async function resolveUserExerciseIds({
   prisma,
   userId,
   exercises,
 }: {
-  prisma: PrismaClient;
+  prisma: WorkoutPrisma;
   userId: string;
   exercises: CompletedExercise[];
 }) {
   const userExerciseIdByName = new Map<string, number>();
+  const existingUserExercises = await prisma.userExercise.findMany({
+    where: { userId },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+
+  const rememberUserExercise = (exercise: { id: number; name: string }) => {
+    const index = existingUserExercises.findIndex(
+      (existing) => existing.id === exercise.id,
+    );
+    if (index >= 0) {
+      existingUserExercises[index] = exercise;
+    } else {
+      existingUserExercises.push(exercise);
+    }
+    userExerciseIdByName.set(
+      normalizeExerciseNameForCompare(exercise.name),
+      exercise.id,
+    );
+  };
+
+  const findExistingByName = (name: string) => {
+    const normalizedName = normalizeExerciseNameForCompare(name);
+    const matches = existingUserExercises.filter(
+      (exercise) =>
+        normalizeExerciseNameForCompare(exercise.name) === normalizedName,
+    );
+
+    if (matches.length > 1) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `Multiple user exercises match "${name}". Merge duplicates before saving this workout.`,
+      });
+    }
+
+    return matches[0] ?? null;
+  };
 
   for (const exerciseInput of exercises) {
+    const exerciseName = exerciseInput.name.trim();
+    if (!exerciseName) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Exercise name cannot be empty.",
+      });
+    }
+
     const notesUpdate =
       exerciseInput.exerciseNotes === undefined
         ? {}
@@ -47,25 +95,47 @@ async function resolveUserExerciseIds({
             id: exerciseInput.userExerciseId,
             userId,
           },
-          select: { id: true },
+          select: { id: true, name: true },
         })
       : null;
 
     if (existingById) {
-      const rec = await prisma.userExercise.update({
-        where: { id: existingById.id },
-        data: {
-          name: exerciseInput.name,
-          ...notesUpdate,
-        },
-        select: { id: true, name: true },
-      });
-      userExerciseIdByName.set(rec.name, rec.id);
+      const rec =
+        exerciseInput.exerciseNotes === undefined
+          ? existingById
+          : await prisma.userExercise.update({
+              where: { id: existingById.id },
+              data: notesUpdate,
+              select: { id: true, name: true },
+            });
+      rememberUserExercise(rec);
+      userExerciseIdByName.set(
+        normalizeExerciseNameForCompare(exerciseName),
+        rec.id,
+      );
+      continue;
+    }
+
+    const existingByName = findExistingByName(exerciseName);
+    if (existingByName) {
+      const rec =
+        exerciseInput.exerciseNotes === undefined
+          ? existingByName
+          : await prisma.userExercise.update({
+              where: { id: existingByName.id },
+              data: notesUpdate,
+              select: { id: true, name: true },
+            });
+      rememberUserExercise(rec);
+      userExerciseIdByName.set(
+        normalizeExerciseNameForCompare(exerciseName),
+        rec.id,
+      );
       continue;
     }
 
     const catalogExercise = await prisma.exercise.findUnique({
-      where: { name: exerciseInput.name },
+      where: { name: exerciseName },
       select: { id: true },
     });
 
@@ -73,19 +143,23 @@ async function resolveUserExerciseIds({
       where: {
         userId_name: {
           userId,
-          name: exerciseInput.name,
+          name: exerciseName,
         },
       },
       update: notesUpdate,
       create: {
         userId,
-        name: exerciseInput.name,
+        name: exerciseName,
         exerciseId: catalogExercise?.id ?? null,
         ...notesUpdate,
       },
       select: { id: true, name: true },
     });
-    userExerciseIdByName.set(rec.name, rec.id);
+    rememberUserExercise(rec);
+    userExerciseIdByName.set(
+      normalizeExerciseNameForCompare(exerciseName),
+      rec.id,
+    );
   }
 
   return userExerciseIdByName;
@@ -106,14 +180,14 @@ export const workoutRouter = createTRPCRouter({
         });
       }
 
-      const userExerciseIdByName = await resolveUserExerciseIds({
-        prisma,
-        userId,
-        exercises,
-      });
-
       // 2. Use Prisma transaction to save the workout atomically
       return prisma.$transaction(async (tx) => {
+        const userExerciseIdByName = await resolveUserExerciseIds({
+          prisma: tx,
+          userId,
+          exercises,
+        });
+
         // Use the transaction client `tx`
         const workout = await tx.workout.create({
           data: {
@@ -126,7 +200,9 @@ export const workoutRouter = createTRPCRouter({
         });
 
         for (const exerciseInput of exercises) {
-          const userExerciseId = userExerciseIdByName.get(exerciseInput.name);
+          const userExerciseId = userExerciseIdByName.get(
+            normalizeExerciseNameForCompare(exerciseInput.name),
+          );
           if (!userExerciseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -216,13 +292,14 @@ export const workoutRouter = createTRPCRouter({
       }
 
       const { name, exercises, notes, completedAt, startedAt } = input.workout;
-      const userExerciseIdByName = await resolveUserExerciseIds({
-        prisma,
-        userId,
-        exercises,
-      });
 
       return prisma.$transaction(async (tx) => {
+        const userExerciseIdByName = await resolveUserExerciseIds({
+          prisma: tx,
+          userId,
+          exercises,
+        });
+
         await tx.workout.update({
           where: { id: input.workoutId },
           data: {
@@ -238,7 +315,9 @@ export const workoutRouter = createTRPCRouter({
         });
 
         for (const exerciseInput of exercises) {
-          const userExerciseId = userExerciseIdByName.get(exerciseInput.name);
+          const userExerciseId = userExerciseIdByName.get(
+            normalizeExerciseNameForCompare(exerciseInput.name),
+          );
           if (!userExerciseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -380,6 +459,7 @@ export const workoutRouter = createTRPCRouter({
           prisma: ctx.db,
           userId,
           workoutId: input.workoutId,
+          options: { preserveInstanceNotes: true },
         });
       } catch (error) {
         throw new TRPCError({
@@ -419,6 +499,7 @@ export const workoutRouter = createTRPCRouter({
           prisma: ctx.db,
           userId,
           workoutId: input.workoutId,
+          options: { preserveInstanceNotes: false },
         });
       } catch (error) {
         throw new TRPCError({

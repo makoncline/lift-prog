@@ -19,9 +19,15 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { estimate1RM, roundToStep } from "@/lib/workoutLogic";
+import {
+  PLATES,
+  buildAddedWeightRepRows,
+  calculatePlatePlan,
+  formatPlateWeight,
+} from "@/lib/weight-helper";
+import type { PlateMode, PlatePlan, PlateWeight } from "@/lib/weight-helper";
 import type { CurrentExerciseSet } from "@/components/workout-reference/workout_reference_types";
 
-const PLATES = [45, 35, 25, 10, 5, 2.5] as const;
 const BARS = [
   { value: "none", label: "none", weight: 0 },
   { value: "45", label: "45lb bar", weight: 45 },
@@ -32,7 +38,9 @@ const BARS = [
   { value: "custom", label: "custom", weight: null },
 ] as const;
 
-const PLATE_COLORS: Record<number, { background: string; border: string; text: string }> = {
+type PlateColor = { background: string; border: string; text: string };
+
+const PLATE_COLORS: Record<PlateWeight, PlateColor> = {
   45: { background: "#f04444", border: "#5f6570", text: "#fdfcf8" },
   35: { background: "#e8ebef", border: "#c5cbd4", text: "#373226" },
   25: { background: "#d8dee7", border: "#b5bdc9", text: "#373226" },
@@ -40,7 +48,7 @@ const PLATE_COLORS: Record<number, { background: string; border: string; text: s
   5: { background: "#9b5de5", border: "#5f6570", text: "#fdfcf8" },
   2.5: { background: "#d7cfbc", border: "#a79b83", text: "#17150f" },
 };
-const PLATE_HEIGHTS: Record<number, number> = {
+const PLATE_HEIGHTS: Record<PlateWeight, number> = {
   45: 64,
   35: 56,
   25: 49,
@@ -50,7 +58,6 @@ const PLATE_HEIGHTS: Record<number, number> = {
 };
 
 type StartingWeightValue = (typeof BARS)[number]["value"];
-type PlateMode = "equal-sides" | "total";
 export type WeightSuggestion = {
   weight: number;
   reps: number;
@@ -204,11 +211,7 @@ export function PlateLoadCalculator({
 
   if (!withSectionFrame) return calculator;
 
-  return (
-    <WeightHelperSection title="plates">
-      {calculator}
-    </WeightHelperSection>
-  );
+  return <WeightHelperSection title="plates">{calculator}</WeightHelperSection>;
 }
 
 function WeightHelperSection({
@@ -261,8 +264,7 @@ function AddedWeightRepsHelper({
     setSelectedKey(null);
     setAddedWeight((current) => {
       const step = getAddedWeightControlStep();
-      const next =
-        current + (direction === "up" ? step : -step);
+      const next = current + (direction === "up" ? step : -step);
       return Math.max(step, roundToStep(next, 0.5));
     });
   }
@@ -299,7 +301,7 @@ function AddedWeightRepsHelper({
             total load
           </SegmentedButton>
         </div>
-        <div className="grid min-w-0 grid-cols-[5.25rem_1.25rem_1fr] items-center gap-0.5 overflow-x-auto whitespace-nowrap pb-0.5 text-[12px] leading-5">
+        <div className="grid min-w-0 grid-cols-[5.25rem_1.25rem_1fr] items-center gap-0.5 overflow-x-auto pb-0.5 text-[12px] leading-5 whitespace-nowrap">
           <span className="inline-flex h-6 w-[5.25rem] items-center rounded-[4px] border border-[#ebe4d6] bg-[#fdfcf8] px-1 text-[16px] leading-none text-[#17150f]">
             +{formatNumber(addedWeight)}lb
           </span>
@@ -473,7 +475,10 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
         >
           equal sides
         </SegmentedButton>
-        <SegmentedButton active={mode === "total"} onClick={() => setMode("total")}>
+        <SegmentedButton
+          active={mode === "total"}
+          onClick={() => setMode("total")}
+        >
           total load
         </SegmentedButton>
       </div>
@@ -485,7 +490,9 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
             <HelperLine
               left="start"
               right={
-                startingWeight > 0 ? `${formatNumber(startingWeight)}lb` : "none"
+                startingWeight > 0
+                  ? `${formatNumber(startingWeight)}lb`
+                  : "none"
               }
             />
             <HelperLine
@@ -501,16 +508,10 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
 }
 
 function FieldLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="text-[11px] leading-3 text-[#716b5d]">{children}</div>
-  );
+  return <div className="text-[11px] leading-3 text-[#716b5d]">{children}</div>;
 }
 
-function PlatePlanDisplay({
-  plan,
-}: {
-  plan: ReturnType<typeof calculatePlatePlan>;
-}) {
+function PlatePlanDisplay({ plan }: { plan: PlatePlan }) {
   const plateBlocks = plan.plates.flatMap((plate) =>
     Array.from({ length: plate.count }, (_, index) => ({
       key: `${plate.weight}-${index}`,
@@ -535,9 +536,7 @@ function PlatePlanDisplay({
 
       <div className="grid gap-2 text-[12px] leading-5">
         <div>
-          <div className="text-[#716b5d]">
-            {formatPlateSummary(plan)}
-          </div>
+          <div className="text-[#716b5d]">{formatPlateSummary(plan)}</div>
           <PlateCountLegend plates={plan.plates} />
         </div>
       </div>
@@ -553,10 +552,10 @@ function BarVisual({ weight }: { weight: number }) {
   );
 }
 
-function PlateBlock({ weight }: { weight: number }) {
-  const height = PLATE_HEIGHTS[weight] ?? 30;
+function PlateBlock({ weight }: { weight: PlateWeight }) {
+  const height = PLATE_HEIGHTS[weight];
   const width = 12;
-  const color = PLATE_COLORS[weight] ?? PLATE_COLORS[2.5];
+  const color = getPlateColor(weight);
 
   return (
     <div
@@ -580,7 +579,7 @@ function PlateBlock({ weight }: { weight: number }) {
 function PlateCountLegend({
   plates,
 }: {
-  plates: Array<{ weight: number; count: number }>;
+  plates: Array<{ weight: PlateWeight; count: number }>;
 }) {
   const counts = new Map(plates.map((plate) => [plate.weight, plate.count]));
 
@@ -590,7 +589,10 @@ function PlateCountLegend({
         const count = counts.get(plate) ?? 0;
         const active = count > 0;
         return (
-          <div key={plate} className="flex min-w-6 flex-col items-center gap-0.5">
+          <div
+            key={plate}
+            className="flex min-w-6 flex-col items-center gap-0.5"
+          >
             <PlateChip weight={plate} active={active} />
             {active ? (
               <div className="text-[10px] leading-none text-[#17150f]">
@@ -606,8 +608,14 @@ function PlateCountLegend({
   );
 }
 
-function PlateChip({ weight, active }: { weight: number; active: boolean }) {
-  const color = PLATE_COLORS[weight] ?? PLATE_COLORS[2.5];
+function PlateChip({
+  weight,
+  active,
+}: {
+  weight: PlateWeight;
+  active: boolean;
+}) {
+  const color = getPlateColor(weight);
 
   return (
     <div
@@ -623,7 +631,11 @@ function PlateChip({ weight, active }: { weight: number; active: boolean }) {
   );
 }
 
-function formatPlateSummary(plan: ReturnType<typeof calculatePlatePlan>) {
+function getPlateColor(weight: PlateWeight): PlateColor {
+  return PLATE_COLORS[weight];
+}
+
+function formatPlateSummary(plan: PlatePlan) {
   return `${formatPlateWeight(plan.startingWeight)}lb start · ${formatPlateWeight(
     plan.loadWeight,
   )}lb ${plan.mode === "equal-sides" ? "per side" : "total"}`;
@@ -669,11 +681,13 @@ function NumericInput({
         value={value}
         aria-label={ariaLabel}
         inputMode="decimal"
-        className="min-w-[1ch] max-w-full flex-none bg-transparent font-mono text-[16px] leading-none outline-none"
+        className="max-w-full min-w-[1ch] flex-none bg-transparent font-mono text-[16px] leading-none outline-none"
         style={{ width: `${Math.max(value.length, 1)}ch` }}
         onChange={(event) => onChange(event.target.value)}
       />
-      {suffix ? <span className="text-[11px] text-[#716b5d]">{suffix}</span> : null}
+      {suffix ? (
+        <span className="text-[11px] text-[#716b5d]">{suffix}</span>
+      ) : null}
     </label>
   );
 }
@@ -750,122 +764,8 @@ function HelperLine({ left, right }: { left: string; right: string }) {
   );
 }
 
-function buildAddedWeightRepRows(
-  currentWeight: number,
-  currentOneRepMax: number,
-  addedWeight: number,
-  mode: PlateMode,
-) {
-  const targetWeight =
-    currentWeight + (mode === "equal-sides" ? addedWeight * 2 : addedWeight);
-  const candidates = Array.from({ length: 36 }, (_, index) => index + 1).map(
-    (targetReps) => {
-      const targetOneRepMax = estimate1RM(targetWeight, targetReps);
-      const percentChange =
-        ((targetOneRepMax - currentOneRepMax) / currentOneRepMax) * 100;
-
-      return {
-        key: `${mode}-${addedWeight}-${targetWeight}-${targetReps}`,
-        targetWeight,
-        targetReps,
-        targetOneRepMax,
-        percentChange,
-      };
-    },
-  );
-  const under = candidates
-    .filter((candidate) => candidate.percentChange <= 0)
-    .sort((a, b) => b.percentChange - a.percentChange)[0];
-  const over = candidates
-    .filter((candidate) => candidate.percentChange > 0)
-    .sort((a, b) => a.percentChange - b.percentChange)[0];
-
-  return [
-    under
-      ? {
-          ...under,
-          label: under.percentChange === 0 ? "exact" : "under",
-        }
-      : null,
-    over ? { ...over, label: "over" } : null,
-  ].filter((row): row is NonNullable<typeof row> => row !== null);
-}
-
 function getAddedWeightControlStep() {
   return 2.5;
-}
-
-function calculatePlatePlan(
-  targetWeight: number,
-  startingWeight: number,
-  mode: PlateMode,
-) {
-  const addedWeight = targetWeight - startingWeight;
-  const loadWeight = mode === "equal-sides" ? addedWeight / 2 : addedWeight;
-
-  if (addedWeight < 0) {
-    return {
-      mode,
-      targetWeight,
-      startingWeight,
-      loadWeight,
-      title: `${formatNumber(targetWeight)}lb`,
-      plates: [],
-      error: `below ${formatPlateWeight(startingWeight)}lb start`,
-    };
-  }
-
-  const plates = calculateLeastPlates(loadWeight);
-  const loadedWeight = plates.reduce(
-    (sum, plate) => sum + plate.weight * plate.count,
-    0,
-  );
-
-  if (Math.abs(loadedWeight - loadWeight) > 0.01) {
-    return {
-      mode,
-      targetWeight,
-      startingWeight,
-      loadWeight,
-      title:
-        mode === "equal-sides"
-          ? `${formatPlateWeight(loadWeight)}lb each side`
-          : `${formatPlateWeight(loadWeight)}lb added`,
-      plates: [],
-      error:
-        mode === "equal-sides"
-          ? "2.5lb plates need 5lb total jumps"
-          : "total load needs 2.5lb jumps",
-    };
-  }
-
-  return {
-    mode,
-    targetWeight,
-    startingWeight,
-    loadWeight,
-    title:
-      mode === "equal-sides"
-        ? `${formatPlateWeight(loadWeight)}lb each side`
-        : `${formatPlateWeight(loadWeight)}lb added`,
-    plates,
-    error: null,
-  };
-}
-
-function calculateLeastPlates(targetWeight: number) {
-  let remaining = targetWeight;
-  const plates: Array<{ weight: number; count: number }> = [];
-
-  for (const plate of PLATES) {
-    const count = Math.floor((remaining + 0.001) / plate);
-    if (count > 0) {
-      plates.push({ weight: plate, count });
-      remaining = Number((remaining - plate * count).toFixed(2));
-    }
-  }
-
-  return plates;
 }
 
 function getStartingWeight(
@@ -908,11 +808,6 @@ function parsePositiveInteger(value: string) {
 
 function formatNumber(value: number) {
   const rounded = Number(value.toFixed(1));
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
-}
-
-function formatPlateWeight(value: number) {
-  const rounded = Number(value.toFixed(2));
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }
 

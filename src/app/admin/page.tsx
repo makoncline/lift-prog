@@ -194,6 +194,9 @@ function ExerciseManager() {
 
 // --- User Management --- //
 
+const isUserManagementAccessError = (code: string | undefined) =>
+  code === "FORBIDDEN" || code === "UNAUTHORIZED";
+
 function UserManager() {
   const utils = api.useUtils();
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -209,7 +212,11 @@ function UserManager() {
       setNewUserClerkId(""); // Clear input
     },
     onError: (error) => {
-      toast.error(`Error adding user: ${error.message}`);
+      toast.error(
+        isUserManagementAccessError(error.data?.code)
+          ? "You do not have permission to manage users."
+          : `Error adding user: ${error.message}`,
+      );
     },
   });
 
@@ -220,9 +227,28 @@ function UserManager() {
       setUserToDelete(null);
     },
     onError: (error) => {
-      toast.error(`Error deleting user: ${error.message}`);
+      toast.error(
+        isUserManagementAccessError(error.data?.code)
+          ? "You do not have permission to manage users."
+          : `Error deleting user: ${error.message}`,
+      );
     },
   });
+
+  const usersQueryErrorCode = usersQuery.error?.data?.code;
+  const userManagementAccessDenied =
+    usersQuery.isError && isUserManagementAccessError(usersQueryErrorCode);
+
+  if (userManagementAccessDenied) {
+    return (
+      <section>
+        <H3 className="mb-4 border-b pb-2">Manage Users</H3>
+        <P className="text-destructive">
+          You do not have permission to manage users.
+        </P>
+      </section>
+    );
+  }
 
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();

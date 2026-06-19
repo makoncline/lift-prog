@@ -61,6 +61,29 @@ describe("buildInitialExercisesForNames", () => {
     expect(mocks.workoutExercise.findMany).not.toHaveBeenCalled();
   });
 
+  it("uses the existing exercise name when the request differs only by case", async () => {
+    const { prisma, mocks } = createPrismaMock();
+    mocks.userExercise.findMany.mockResolvedValue([
+      { id: 7, name: "Pull-ups", notes: null },
+    ]);
+    mocks.workoutExercise.findMany.mockResolvedValue([]);
+
+    const result = await buildInitialExercisesForNames({
+      prisma,
+      userId: "user-1",
+      exerciseNames: ["pull-ups"],
+    });
+
+    expect(result).toEqual([
+      {
+        userExerciseId: 7,
+        name: "Pull-ups",
+        sets: DEFAULT_SETS,
+        notes: null,
+      },
+    ]);
+  });
+
   it("reuses sets from the most recent workout when available", async () => {
     const { prisma, mocks } = createPrismaMock();
     mocks.userExercise.findMany.mockResolvedValue([
@@ -68,6 +91,7 @@ describe("buildInitialExercisesForNames", () => {
     ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
+        userExerciseId: 1,
         sets: [
           {
             weight: 45,
@@ -130,6 +154,75 @@ describe("buildInitialExercisesForNames", () => {
     ]);
   });
 
+  it("fetches histories for multiple exercises in one query and caps each history", async () => {
+    const { prisma, mocks } = createPrismaMock();
+    mocks.userExercise.findMany.mockResolvedValue([
+      { id: 1, name: "Bench Press", notes: null },
+      { id: 2, name: "Pull Up", notes: null },
+    ]);
+    mocks.workoutExercise.findMany.mockResolvedValue([
+      ...Array.from({ length: 7 }, (_, index) => ({
+        userExerciseId: 1,
+        sets: [
+          {
+            weight: 135 + index,
+            reps: 8,
+            modifier: null,
+            weightModifier: null,
+            completed: true,
+          },
+        ],
+        notes: `Bench note ${index}`,
+        exerciseNotesSnapshot: null,
+        workout: {
+          completedAt: new Date(`2026-06-${16 - index}T12:00:00Z`),
+          notes: null,
+        },
+      })),
+      {
+        userExerciseId: 2,
+        sets: [
+          {
+            weight: 0,
+            reps: 10,
+            modifier: null,
+            weightModifier: "bodyweight",
+            completed: true,
+          },
+        ],
+        notes: "Pull note",
+        exerciseNotesSnapshot: null,
+        workout: {
+          completedAt: new Date("2026-06-14T12:00:00Z"),
+          notes: null,
+        },
+      },
+    ]);
+
+    const result = await buildInitialExercisesForNames({
+      prisma,
+      userId: "user-2",
+      exerciseNames: ["Bench Press", "Pull Up"],
+    });
+
+    expect(mocks.workoutExercise.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.workoutExercise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userExerciseId: { in: [1, 2] },
+        }),
+        take: 12,
+      }),
+    );
+    expect(result).toHaveLength(2);
+    expect(result[0]?.history).toHaveLength(6);
+    expect(result[1]?.history).toHaveLength(1);
+    expect(result[0]?.sets).toEqual([{ weight: 135, reps: 8 }]);
+    expect(result[1]?.sets).toEqual([
+      { weight: 0, reps: 10, weightModifier: "bodyweight" },
+    ]);
+  });
+
   it("includes set notes, rest, rir, and exercise notes from history", async () => {
     const { prisma, mocks } = createPrismaMock();
     mocks.userExercise.findMany.mockResolvedValue([
@@ -137,6 +230,7 @@ describe("buildInitialExercisesForNames", () => {
     ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
+        userExerciseId: 2,
         sets: [
           {
             weight: 0,
@@ -236,6 +330,7 @@ describe("buildInitialExercisesForNames", () => {
     ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
+        userExerciseId: 5,
         sets: [
           {
             weight: 135,
@@ -269,27 +364,39 @@ describe("buildInitialExercisesForNames", () => {
 });
 
 describe("buildInitialExercisesFromWorkout", () => {
-  it("returns exercises in workout order using the latest history for each", async () => {
+  it("preserves exercise and set notes in edit mode while batching histories", async () => {
     const { prisma, mocks } = createPrismaMock();
 
     mocks.workout.findFirst.mockResolvedValue({
       id: 10,
       name: "Upper Body",
+      startedAt: new Date("2026-06-12T11:00:00Z"),
+      completedAt: new Date("2026-06-12T12:00:00Z"),
+      notes: "Upper felt good",
       workoutExercises: [
         {
-          userExercise: { id: 1, name: "Bench Press", notes: null },
+          userExercise: {
+            id: 1,
+            name: "Bench Press",
+            notes: "Use ring marks",
+          },
+          exerciseNotesSnapshot: "Old bench setup",
           sets: [
             {
               weight: 135,
               reps: 8,
               modifier: null,
               weightModifier: null,
+              restBefore: "short",
+              notes: "Keep elbows tucked",
+              rir: 1,
             },
           ],
-          notes: "Wide grip",
+          notes: "Wide grip today",
         },
         {
           userExercise: { id: 2, name: "Pull Up", notes: null },
+          exerciseNotesSnapshot: null,
           sets: [
             {
               weight: -10,
@@ -303,73 +410,88 @@ describe("buildInitialExercisesFromWorkout", () => {
       ],
     });
 
-    mocks.workoutExercise.findMany.mockImplementation(async (args) => {
-      switch (args.where?.userExerciseId) {
-        case 1:
-          return [
-            {
-              sets: [
-                {
-                  weight: 135,
-                  reps: 8,
-                  modifier: null,
-                  weightModifier: null,
-                  completed: true,
-                },
-              ],
-              notes: "Wide grip",
-              exerciseNotesSnapshot: null,
-              workout: {
-                completedAt: new Date("2026-06-10T12:00:00Z"),
-                notes: null,
-              },
-            },
-          ];
-        case 2:
-          return [
-            {
-              sets: [
-                {
-                  weight: -10,
-                  reps: 8,
-                  modifier: null,
-                  weightModifier: "bodyweight",
-                  completed: true,
-                },
-              ],
-              notes: null,
-              exerciseNotesSnapshot: null,
-              workout: {
-                completedAt: new Date("2026-06-10T12:00:00Z"),
-                notes: null,
-              },
-            },
-          ];
-        default:
-          return [];
-      }
-    });
+    mocks.workoutExercise.findMany.mockResolvedValue([
+      {
+        userExerciseId: 1,
+        sets: [
+          {
+            weight: 135,
+            reps: 8,
+            modifier: null,
+            weightModifier: null,
+            notes: "History set note",
+            completed: true,
+          },
+        ],
+        notes: "Wide grip history",
+        exerciseNotesSnapshot: "Older bench setup",
+        workout: {
+          completedAt: new Date("2026-06-10T12:00:00Z"),
+          notes: "History workout note",
+        },
+      },
+      {
+        userExerciseId: 2,
+        sets: [
+          {
+            weight: -10,
+            reps: 8,
+            modifier: null,
+            weightModifier: "bodyweight",
+            completed: true,
+          },
+        ],
+        notes: null,
+        exerciseNotesSnapshot: null,
+        workout: {
+          completedAt: new Date("2026-06-10T12:00:00Z"),
+          notes: null,
+        },
+      },
+    ]);
 
     const result = await buildInitialExercisesFromWorkout({
       prisma,
       userId: "user-3",
       workoutId: 10,
+      options: { preserveInstanceNotes: true },
     });
 
+    expect(mocks.workoutExercise.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.workoutExercise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userExerciseId: { in: [1, 2] },
+        }),
+        take: 12,
+      }),
+    );
     expect(result.workoutName).toBe("Upper Body");
     expect(result.exercises).toEqual([
       {
         userExerciseId: 1,
         name: "Bench Press",
-        sets: [{ weight: 135, reps: 8 }],
-        notes: "Wide grip",
+        exerciseNotes: "Use ring marks",
+        exerciseNotesSnapshot: "Old bench setup",
+        sets: [
+          {
+            weight: 135,
+            reps: 8,
+            restBefore: "short",
+            notes: "Keep elbows tucked",
+            rir: 1,
+          },
+        ],
+        notes: "Wide grip today",
         history: [
           {
             relation: "last time",
             relativeDate: "7 days ago",
             date: "6/10",
-            workoutExerciseNote: "Wide grip",
-            sets: [{ weight: 135, reps: 8 }],
+            workoutNote: "History workout note",
+            workoutExerciseNote: "Wide grip history",
+            exerciseNotesSnapshot: "Older bench setup",
+            sets: [{ weight: 135, reps: 8, notes: "History set note" }],
           },
         ],
       },
@@ -384,6 +506,90 @@ describe("buildInitialExercisesFromWorkout", () => {
             relativeDate: "7 days ago",
             date: "6/10",
             sets: [{ weight: -10, reps: 8, weightModifier: "bodyweight" }],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("strips current workout-exercise and set notes in copy mode but keeps them in history", async () => {
+    const { prisma, mocks } = createPrismaMock();
+
+    mocks.workout.findFirst.mockResolvedValue({
+      id: 20,
+      name: "Copied Upper",
+      startedAt: new Date("2026-06-12T11:00:00Z"),
+      completedAt: new Date("2026-06-12T12:00:00Z"),
+      notes: "Upper felt good",
+      workoutExercises: [
+        {
+          userExercise: {
+            id: 1,
+            name: "Bench Press",
+            notes: "Use ring marks",
+          },
+          exerciseNotesSnapshot: "Old bench setup",
+          sets: [
+            {
+              weight: 135,
+              reps: 8,
+              modifier: null,
+              weightModifier: null,
+              notes: "Do not copy this set note",
+              rir: 1,
+            },
+          ],
+          notes: "Do not copy this exercise note",
+        },
+      ],
+    });
+    mocks.workoutExercise.findMany.mockResolvedValue([
+      {
+        userExerciseId: 1,
+        sets: [
+          {
+            weight: 135,
+            reps: 8,
+            modifier: null,
+            weightModifier: null,
+            notes: "History set note",
+            completed: true,
+          },
+        ],
+        notes: "History exercise note",
+        exerciseNotesSnapshot: "History exercise setup",
+        workout: {
+          completedAt: new Date("2026-06-10T12:00:00Z"),
+          notes: "History workout note",
+        },
+      },
+    ]);
+
+    const result = await buildInitialExercisesFromWorkout({
+      prisma,
+      userId: "user-3",
+      workoutId: 20,
+      options: { preserveInstanceNotes: false },
+    });
+
+    expect(mocks.workoutExercise.findMany).toHaveBeenCalledTimes(1);
+    expect(result.exercises).toEqual([
+      {
+        userExerciseId: 1,
+        name: "Bench Press",
+        exerciseNotes: "Use ring marks",
+        exerciseNotesSnapshot: "Old bench setup",
+        sets: [{ weight: 135, reps: 8, rir: 1 }],
+        notes: null,
+        history: [
+          {
+            relation: "last time",
+            relativeDate: "7 days ago",
+            date: "6/10",
+            workoutNote: "History workout note",
+            workoutExerciseNote: "History exercise note",
+            exerciseNotesSnapshot: "History exercise setup",
+            sets: [{ weight: 135, reps: 8, notes: "History set note" }],
           },
         ],
       },

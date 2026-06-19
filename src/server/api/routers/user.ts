@@ -1,17 +1,17 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import { adminProcedure, createTRPCRouter } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
 
 export const userRouter = createTRPCRouter({
   // Procedure to list all users
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: adminProcedure.query(async ({ ctx }) => {
     return ctx.db.user.findMany({
       orderBy: { createdAt: "desc" }, // Show newest users first
     });
   }),
 
   // Procedure to add a new user by Clerk ID
-  add: protectedProcedure
+  add: adminProcedure
     .input(
       z.object({
         clerkUserId: z.string().min(1, "Clerk User ID cannot be empty"),
@@ -44,7 +44,7 @@ export const userRouter = createTRPCRouter({
     }),
 
   // Procedure to delete a user
-  delete: protectedProcedure
+  delete: adminProcedure
     .input(z.object({ id: z.string() })) // User ID is string (Clerk ID)
     .mutation(async ({ ctx, input }) => {
       // WARNING: Deleting a user will likely cascade delete their workouts

@@ -1,3 +1,5 @@
+Private source material: remove `docs/workout-notes-to-enter.txt` before a public repo or PR.
+
 # Workout Notes Entry Checklist
 
 Source: `docs/workout-notes-to-enter.txt`

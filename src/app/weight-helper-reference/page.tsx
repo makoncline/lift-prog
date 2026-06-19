@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import {
   OneRepMaxAddedWeightRepsCalculator,
   PlateLoadCalculator,
@@ -16,6 +17,10 @@ const sampleSet: CurrentExerciseSet = {
 };
 
 export default function WeightHelperReferencePage() {
+  if (process.env.NODE_ENV !== "development") {
+    notFound();
+  }
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-[390px] bg-[#fdfcf8] px-3 py-5 font-mono text-[#17150f]">
       <div className="mb-3">

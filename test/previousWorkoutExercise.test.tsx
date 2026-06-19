@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PreviousWorkoutExercise } from "@/components/workout-reference/previous-workout-exercise";
 
@@ -91,10 +91,10 @@ describe("PreviousWorkoutExercise", () => {
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     expect(screen.getAllByText("BW+20 lb")[0]).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
   });
 
-  it("edits rest type, adds set notes, and confirms set deletion", () => {
+  it("edits rest type, adds set notes, and confirms set deletion", async () => {
     renderPullups();
 
     fireEvent.click(
@@ -116,6 +116,9 @@ describe("PreviousWorkoutExercise", () => {
       target: { value: "keep elbows tight" },
     });
     fireEvent.click(screen.getByRole("button", { name: "done" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("keep elbows tight")).toBeVisible();
 
     fireEvent.click(

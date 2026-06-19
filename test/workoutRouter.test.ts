@@ -6,6 +6,8 @@ import { createCaller } from "@/server/api/root";
 
 const makeCaller = () => {
   const exerciseFindUnique = vi.fn().mockResolvedValue(null);
+  const txExerciseFindUnique = vi.fn().mockResolvedValue(null);
+  const userExerciseFindMany = vi.fn().mockResolvedValue([]);
   const userExerciseFindFirst = vi.fn().mockResolvedValue(null);
   const userExerciseUpsert = vi
     .fn()
@@ -20,9 +22,34 @@ const makeCaller = () => {
       }),
     );
   const userExerciseUpdate = vi.fn();
+  const txUserExerciseFindMany = vi.fn().mockResolvedValue([]);
+  const txUserExerciseFindFirst = vi.fn().mockResolvedValue(null);
+  const txUserExerciseUpsert = vi
+    .fn()
+    .mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { userId_name: { userId: string; name: string } };
+      }) => ({
+        id: where.userId_name.name.length,
+        name: where.userId_name.name,
+      }),
+    );
+  const txUserExerciseUpdate = vi
+    .fn()
+    .mockImplementation(
+      async ({ where }: { where: { id: number } }) => ({
+        id: where.id,
+        name: "Existing Exercise",
+      }),
+    );
 
   const workoutCreate = vi.fn().mockResolvedValue({ id: 101 });
   const workoutFindMany = vi.fn().mockResolvedValue([]);
+  const workoutFindFirst = vi.fn().mockResolvedValue({ id: 101 });
+  const workoutUpdate = vi.fn().mockResolvedValue({ id: 101 });
+  const workoutExerciseDeleteMany = vi.fn().mockResolvedValue({});
   const workoutExerciseCreate = vi.fn().mockResolvedValue({ id: 202 });
   const workoutExerciseSetCreateMany = vi.fn().mockResolvedValue({});
 
@@ -30,8 +57,18 @@ const makeCaller = () => {
     .fn()
     .mockImplementation(async (cb: (tx: any) => Promise<unknown>) =>
       cb({
-        workout: { create: workoutCreate },
-        workoutExercise: { create: workoutExerciseCreate },
+        exercise: { findUnique: txExerciseFindUnique },
+        userExercise: {
+          findMany: txUserExerciseFindMany,
+          findFirst: txUserExerciseFindFirst,
+          upsert: txUserExerciseUpsert,
+          update: txUserExerciseUpdate,
+        },
+        workout: { create: workoutCreate, update: workoutUpdate },
+        workoutExercise: {
+          create: workoutExerciseCreate,
+          deleteMany: workoutExerciseDeleteMany,
+        },
         workoutExerciseSet: { createMany: workoutExerciseSetCreateMany },
       }),
     );
@@ -40,11 +77,12 @@ const makeCaller = () => {
     db: {
       exercise: { findUnique: exerciseFindUnique },
       userExercise: {
+        findMany: userExerciseFindMany,
         findFirst: userExerciseFindFirst,
         upsert: userExerciseUpsert,
         update: userExerciseUpdate,
       },
-      workout: { findMany: workoutFindMany },
+      workout: { findMany: workoutFindMany, findFirst: workoutFindFirst },
       $transaction: transaction,
     } as any,
     session: { userId: "user_123" },
@@ -55,11 +93,20 @@ const makeCaller = () => {
     caller,
     spies: {
       exerciseFindUnique,
+      txExerciseFindUnique,
+      userExerciseFindMany,
       userExerciseFindFirst,
       userExerciseUpsert,
       userExerciseUpdate,
+      txUserExerciseFindMany,
+      txUserExerciseFindFirst,
+      txUserExerciseUpsert,
+      txUserExerciseUpdate,
       workoutCreate,
       workoutFindMany,
+      workoutFindFirst,
+      workoutUpdate,
+      workoutExerciseDeleteMany,
       workoutExerciseCreate,
       workoutExerciseSetCreateMany,
       transaction,
@@ -194,7 +241,7 @@ describe("workout.saveWorkout", () => {
       notes: "Pull day felt low energy",
     });
 
-    expect(spies.userExerciseUpsert).toHaveBeenCalledWith(
+    expect(spies.txUserExerciseUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId_name: { userId: "user_123", name: "Pull Up" } },
         update: { notes: "Hold dumbbell in thighs" },
@@ -241,6 +288,126 @@ describe("workout.saveWorkout", () => {
           completed: true,
         },
       ],
+    });
+  });
+
+  it("keeps user-exercise writes inside the workout transaction when save fails", async () => {
+    const { caller, spies } = makeCaller();
+    spies.workoutExerciseSetCreateMany.mockRejectedValueOnce(
+      new Error("set insert failed"),
+    );
+
+    await expect(
+      caller.workout.saveWorkout({
+        name: "Session",
+        startedAt: new Date(),
+        completedAt: new Date(),
+        exercises: [
+          {
+            name: "Bench",
+            order: 0,
+            notes: "",
+            sets: [
+              {
+                order: 0,
+                weight: 135,
+                reps: 8,
+                modifier: null,
+                weightModifier: null,
+                completed: true,
+              },
+            ],
+          },
+        ],
+        notes: "",
+      }),
+    ).rejects.toThrow("set insert failed");
+
+    expect(spies.txUserExerciseFindMany).toHaveBeenCalledTimes(1);
+    expect(spies.txUserExerciseUpsert).toHaveBeenCalledTimes(1);
+    expect(spies.userExerciseFindMany).not.toHaveBeenCalled();
+    expect(spies.userExerciseUpsert).not.toHaveBeenCalled();
+  });
+
+  it("reuses an existing user exercise when the payload differs only by case", async () => {
+    const { caller, spies } = makeCaller();
+    spies.txUserExerciseFindMany.mockResolvedValue([
+      { id: 77, name: "Pull-ups" },
+    ]);
+
+    await caller.workout.saveWorkout({
+      name: "Session",
+      startedAt: new Date(),
+      completedAt: new Date(),
+      exercises: [
+        {
+          name: "pull-ups",
+          order: 0,
+          notes: "",
+          sets: [
+            {
+              order: 0,
+              weight: 0,
+              reps: 10,
+              modifier: null,
+              weightModifier: "bodyweight",
+              completed: true,
+            },
+          ],
+        },
+      ],
+      notes: "",
+    });
+
+    expect(spies.txUserExerciseUpsert).not.toHaveBeenCalled();
+    expect(spies.workoutExerciseCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ userExerciseId: 77 }),
+      }),
+    );
+  });
+});
+
+describe("workout.updateWorkout", () => {
+  it("resolves user exercises inside the update transaction", async () => {
+    const { caller, spies } = makeCaller();
+
+    await caller.workout.updateWorkout({
+      workoutId: 101,
+      workout: {
+        name: "Edited Session",
+        startedAt: new Date(),
+        completedAt: new Date(),
+        exercises: [
+          {
+            name: "Squat",
+            order: 0,
+            notes: "",
+            sets: [
+              {
+                order: 0,
+                weight: 225,
+                reps: 5,
+                modifier: null,
+                weightModifier: null,
+                completed: true,
+              },
+            ],
+          },
+        ],
+        notes: "",
+      },
+    });
+
+    expect(spies.workoutFindFirst).toHaveBeenCalledWith({
+      where: { id: 101, userId: "user_123" },
+      select: { id: true },
+    });
+    expect(spies.txUserExerciseUpsert).toHaveBeenCalledTimes(1);
+    expect(spies.userExerciseUpsert).not.toHaveBeenCalled();
+    expect(spies.workoutUpdate).toHaveBeenCalledTimes(1);
+    expect(spies.workoutExerciseDeleteMany).toHaveBeenCalledWith({
+      where: { workoutSessionId: 101 },
     });
   });
 });
