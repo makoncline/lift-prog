@@ -24,7 +24,6 @@ import {
   type WeightModifier,
   type SetModifier,
   type CompletedWorkout,
-  type PlateLoadMode,
 } from "@lift-prog/workout-core";
 import { FinishDialog } from "./finish_dialog";
 import { WorkoutHeader } from "@/components/workout/workout_header";
@@ -49,7 +48,7 @@ interface PreviousExerciseData {
   notes?: string | null;
   exerciseNotesSnapshot?: string | null;
   plateStartingWeight?: number | null;
-  plateLoadMode?: PlateLoadMode | string | null;
+  plateLoadMode?: string | null;
   history?: Workout["exercises"][number]["history"];
 }
 
