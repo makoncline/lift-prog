@@ -55,6 +55,15 @@ describe("PreviousWorkoutExercise", () => {
     expect(screen.getAllByText("working sets").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Foot assist").length).toBeGreaterThan(0);
     expect(screen.getAllByText("solid first set").length).toBeGreaterThan(0);
+    expect(screen.getByText("stats · last 2 workouts")).toBeVisible();
+    expect(screen.getByText("expected 1rm")).toBeVisible();
+    expect(screen.getByText("volume")).toBeVisible();
+    expect(
+      screen.getByLabelText("expected 1rm: 23.2lb, 30lb"),
+    ).toBeVisible();
+    expect(screen.getByLabelText("volume: 240lb, 420lb")).toBeVisible();
+    expect(screen.getByText("best set")).toBeVisible();
+    expect(screen.queryByText("seen")).toBeNull();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Hide exercise history" }),
@@ -129,9 +138,7 @@ describe("PreviousWorkoutExercise", () => {
         .getAllByRole("button", { name: "Delete set 1" })
         .find((button) => !button.hasAttribute("disabled"))!,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Confirm Delete / }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm Delete / }));
 
     expect(screen.queryByText("keep elbows tight")).toBeNull();
   });

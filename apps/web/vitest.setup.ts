@@ -3,6 +3,38 @@ import { vi } from "vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+class ResizeObserverMock {
+  constructor(private callback: ResizeObserverCallback) {}
+
+  observe(target: Element) {
+    this.callback(
+      [
+        {
+          target,
+          contentRect: {
+            x: 0,
+            y: 0,
+            top: 0,
+            right: 320,
+            bottom: 48,
+            left: 0,
+            width: 320,
+            height: 48,
+            toJSON: () => ({}),
+          },
+        } as unknown as ResizeObserverEntry,
+      ],
+      this as unknown as ResizeObserver,
+    );
+  }
+
+  unobserve() {}
+  disconnect() {}
+}
+
+globalThis.ResizeObserver ??=
+  ResizeObserverMock as unknown as typeof ResizeObserver;
+
 // Mock the next/navigation hooks
 vi.mock("next/navigation", () => ({
   useRouter: () => ({

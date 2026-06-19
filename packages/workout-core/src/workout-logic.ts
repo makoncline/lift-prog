@@ -58,6 +58,7 @@ export interface WorkoutExercise {
     relation: string;
     relativeDate: string;
     date: string;
+    bodyWeightLb?: number | null;
     workoutNote?: string | null;
     workoutExerciseNote?: string | null;
     exerciseNotesSnapshot?: string | null;
@@ -90,6 +91,7 @@ export interface Workout {
   notes: Note[];
   startTime: number; // Added startTime
   name: string; // Added workout name
+  bodyWeightLb?: number | null;
   isInProgress: boolean; // Added to track if workout is active
 }
 
@@ -783,6 +785,7 @@ export type Action =
   | { type: "DELETE_WORKOUT_NOTE"; noteIndex: number }
   | { type: "REORDER_WORKOUT_NOTES"; fromIndex: number; toIndex: number }
   | { type: "UPDATE_WORKOUT_NAME"; name: string }
+  | { type: "UPDATE_BODY_WEIGHT"; bodyWeightLb: number | null }
   | { type: "REPLACE_STATE"; state: Workout };
 
 // --------------------------- Reducer -----------------------------------
@@ -806,6 +809,11 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return {
         ...state,
         name: action.name,
+      };
+    case "UPDATE_BODY_WEIGHT":
+      return {
+        ...state,
+        bodyWeightLb: action.bodyWeightLb,
       };
     case "FOCUS_FIELD": {
       const { exerciseIndex, setIndex, field } = action;
@@ -1883,6 +1891,7 @@ export function finalizeWorkout(
     name: state.name,
     startedAt: new Date(state.startTime),
     completedAt: new Date(),
+    bodyWeightLb: state.bodyWeightLb ?? null,
     notes: workoutNotesText,
     exercises: completedExercises,
   };

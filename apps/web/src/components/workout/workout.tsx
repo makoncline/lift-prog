@@ -59,6 +59,7 @@ type WorkoutProps = {
   autoRestore?: boolean;
   startTime?: number;
   completedAt?: Date;
+  bodyWeightLb?: number | null;
   workoutNote?: string;
   contextLabel?: string;
   persistDraft?: boolean;
@@ -291,6 +292,7 @@ function WorkoutComponentInner({
   autoRestore = false,
   startTime = Date.now(),
   completedAt,
+  bodyWeightLb,
   workoutNote = "",
   contextLabel,
   persistDraft = true,
@@ -317,6 +319,7 @@ function WorkoutComponentInner({
     notes: workoutNote.trim() ? [{ text: workoutNote.trim() }] : [],
     startTime,
     name: workoutName || "Workout",
+    bodyWeightLb: bodyWeightLb ?? null,
     isInProgress: true,
     activeField: { exerciseIndex: null, setIndex: null, field: null },
     inputValue: "",
@@ -379,6 +382,13 @@ function WorkoutComponentInner({
       type: "SET_TIME_RANGE",
       startTime: nextStartTime,
       completedAt: new Date(nextStartTime + Math.max(60_000, durationMs)),
+    });
+  };
+
+  const handleBodyWeightChange = (nextBodyWeightLb: number | null) => {
+    dispatch({
+      type: "UPDATE_BODY_WEIGHT",
+      bodyWeightLb: nextBodyWeightLb,
     });
   };
 
@@ -732,6 +742,8 @@ function WorkoutComponentInner({
         name={state.name}
         startTime={state.startTime}
         completedAt={workoutCompletedAt}
+        bodyWeightLb={state.bodyWeightLb ?? null}
+        showBodyWeight={shouldShowBodyWeight(state, Boolean(workoutId))}
         contextLabel={contextLabel}
         editableName={editableName}
         isEditingName={isEditingName}
@@ -745,6 +757,7 @@ function WorkoutComponentInner({
         }
         canRedo={draftSession.future.length > 0}
         onStartTimeChange={handleStartTimeChange}
+        onBodyWeightChange={handleBodyWeightChange}
         onCompletedAtChange={(nextCompletedAt) =>
           dispatchDraft({
             type: "SET_COMPLETED_AT",
@@ -864,4 +877,22 @@ function WorkoutComponentInner({
       />
     </div>
   );
+}
+
+function shouldShowBodyWeight(workout: Workout, isSavedWorkout: boolean) {
+  if (isSavedWorkout && workout.bodyWeightLb != null) return true;
+
+  return workout.exercises.some((exercise) => {
+    const hasCurrentBodyweight = exercise.sets.some(
+      (set) => set.weightModifier === "bodyweight",
+    );
+    const hasPreviousBodyweight = exercise.previousSets.some(
+      (set) => set.weightModifier === "bodyweight",
+    );
+    const hasHistoryBodyweight = exercise.history?.some((entry) =>
+      entry.sets.some((set) => set.weightModifier === "bodyweight"),
+    );
+
+    return hasCurrentBodyweight || hasPreviousBodyweight || hasHistoryBodyweight;
+  });
 }

@@ -15,6 +15,7 @@ import {
 import {
   buildInitialExercisesForNames,
   buildInitialExercisesFromWorkout,
+  getLatestWorkoutBodyWeightLb,
 } from "@/server/services/workout-initializer";
 
 type WorkoutPrisma = Pick<PrismaClient, "exercise" | "userExercise">;
@@ -161,7 +162,8 @@ export const workoutRouter = createTRPCRouter({
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
     .mutation(async ({ ctx, input }) => {
-      const { name, exercises, notes, completedAt, startedAt } = input;
+      const { name, exercises, notes, completedAt, startedAt, bodyWeightLb } =
+        input;
       const prisma = ctx.db; // Use prisma client from context
       const userId = ctx.session.userId;
 
@@ -197,6 +199,7 @@ export const workoutRouter = createTRPCRouter({
             notes: notes,
             completedAt: completedAt,
             startedAt: startedAt,
+            bodyWeightLb: bodyWeightLb ?? null,
           },
         });
 
@@ -292,7 +295,14 @@ export const workoutRouter = createTRPCRouter({
         });
       }
 
-      const { name, exercises, notes, completedAt, startedAt } = input.workout;
+      const {
+        name,
+        exercises,
+        notes,
+        completedAt,
+        startedAt,
+        bodyWeightLb,
+      } = input.workout;
 
       return prisma.$transaction(async (tx) => {
         const userExerciseIdByName = await resolveUserExerciseIds({
@@ -308,6 +318,7 @@ export const workoutRouter = createTRPCRouter({
             notes,
             startedAt,
             completedAt,
+            bodyWeightLb: bodyWeightLb ?? null,
           },
         });
 
@@ -395,6 +406,7 @@ export const workoutRouter = createTRPCRouter({
           name: true,
           completedAt: true,
           startedAt: true, // Add startedAt to calculate duration
+          bodyWeightLb: true,
           workoutExercises: {
             orderBy: { order: "asc" },
             select: {
@@ -439,6 +451,7 @@ export const workoutRouter = createTRPCRouter({
           name: workout.name,
           completedAt: workout.completedAt,
           startedAt: workout.startedAt,
+          bodyWeightLb: workout.bodyWeightLb,
           exerciseSummaries: summaries,
         };
       });
@@ -483,6 +496,10 @@ export const workoutRouter = createTRPCRouter({
       }
 
       if (input.mode === "exerciseList") {
+        const bodyWeightLb = await getLatestWorkoutBodyWeightLb({
+          prisma: ctx.db,
+          userId,
+        });
         const exercises = await buildInitialExercisesForNames({
           prisma: ctx.db,
           userId,
@@ -491,17 +508,29 @@ export const workoutRouter = createTRPCRouter({
 
         return {
           workoutName: input.workoutName ?? "Workout",
+          bodyWeightLb,
           exercises,
         };
       }
 
       try {
-        return await buildInitialExercisesFromWorkout({
-          prisma: ctx.db,
-          userId,
-          workoutId: input.workoutId,
-          options: { preserveInstanceNotes: false },
-        });
+        const [workout, bodyWeightLb] = await Promise.all([
+          buildInitialExercisesFromWorkout({
+            prisma: ctx.db,
+            userId,
+            workoutId: input.workoutId,
+            options: { preserveInstanceNotes: false },
+          }),
+          getLatestWorkoutBodyWeightLb({
+            prisma: ctx.db,
+            userId,
+          }),
+        ]);
+
+        return {
+          ...workout,
+          bodyWeightLb: bodyWeightLb ?? workout.bodyWeightLb,
+        };
       } catch (error) {
         throw new TRPCError({
           code: "NOT_FOUND",

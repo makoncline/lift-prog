@@ -16,6 +16,7 @@ export type PreviousExercise = {
   relation: string;
   relativeDate: string;
   date: string;
+  bodyWeightLb?: number | null;
   workoutNote?: string;
   workoutExerciseNote?: string;
   exerciseNoteChanged?: boolean;

@@ -16,6 +16,8 @@ export function WorkoutHeader({
   name,
   startTime,
   completedAt,
+  bodyWeightLb,
+  showBodyWeight = false,
   contextLabel,
   editableName,
   isEditingName,
@@ -27,6 +29,7 @@ export function WorkoutHeader({
   canUndo = false,
   canRedo = false,
   onStartTimeChange,
+  onBodyWeightChange,
   onCompletedAtChange,
   onEditableNameChange,
   onStartEditingName,
@@ -42,6 +45,8 @@ export function WorkoutHeader({
   name: string;
   startTime: number;
   completedAt: Date;
+  bodyWeightLb?: number | null;
+  showBodyWeight?: boolean;
   contextLabel?: string;
   editableName: string;
   isEditingName: boolean;
@@ -53,6 +58,7 @@ export function WorkoutHeader({
   canUndo?: boolean;
   canRedo?: boolean;
   onStartTimeChange: (startTime: number) => void;
+  onBodyWeightChange: (bodyWeightLb: number | null) => void;
   onCompletedAtChange: (completedAt: Date) => void;
   onEditableNameChange: (name: string) => void;
   onStartEditingName: () => void;
@@ -66,6 +72,8 @@ export function WorkoutHeader({
   onRedo?: () => void;
 }) {
   const [editingTimePart, setEditingTimePart] = useState<TimeEditorPart>(null);
+  const [bodyWeightEditorOpen, setBodyWeightEditorOpen] = useState(false);
+  const [bodyWeightInput, setBodyWeightInput] = useState("");
   const [now, setNow] = useState(() => new Date());
   const startDate = new Date(startTime);
   const displayEnd = isInProgress ? now : completedAt;
@@ -78,6 +86,17 @@ export function WorkoutHeader({
     const interval = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(interval);
   }, [isInProgress]);
+
+  function openBodyWeightEditor() {
+    setBodyWeightInput(bodyWeightLb == null ? "" : formatBodyWeight(bodyWeightLb));
+    setBodyWeightEditorOpen(true);
+  }
+
+  function saveBodyWeight() {
+    const nextValue = parseBodyWeightInput(bodyWeightInput);
+    onBodyWeightChange(nextValue);
+    setBodyWeightEditorOpen(false);
+  }
 
   return (
     <>
@@ -206,6 +225,18 @@ export function WorkoutHeader({
             </>
           )}
         </div>
+        {showBodyWeight ? (
+          <div className="mt-0.5 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+            <span>bw</span>
+            <span className="px-1">·</span>
+            <TimeTextButton
+              ariaLabel="Edit body weight"
+              onClick={openBodyWeightEditor}
+            >
+              {bodyWeightLb == null ? "set" : `${formatBodyWeight(bodyWeightLb)}lb`}
+            </TimeTextButton>
+          </div>
+        ) : null}
         {workoutNote ? (
           <div className="mt-1 inline-flex max-w-full rounded-[4px] bg-[#eee8da] px-1.5 py-0.5 text-[12px] leading-4 text-[#433e33]">
             {workoutNote}
@@ -222,6 +253,18 @@ export function WorkoutHeader({
         onOpenChange={(open) => {
           if (!open) setEditingTimePart(null);
         }}
+      />
+      <BodyWeightEditor
+        open={bodyWeightEditorOpen}
+        value={bodyWeightInput}
+        onValueChange={setBodyWeightInput}
+        onSave={saveBodyWeight}
+        onClear={() => {
+          onBodyWeightChange(null);
+          setBodyWeightInput("");
+          setBodyWeightEditorOpen(false);
+        }}
+        onOpenChange={(open) => setBodyWeightEditorOpen(open)}
       />
     </>
   );
@@ -370,6 +413,62 @@ function WorkoutTimePartEditor({
   );
 }
 
+function BodyWeightEditor({
+  open,
+  value,
+  onValueChange,
+  onSave,
+  onClear,
+  onOpenChange,
+}: {
+  open: boolean;
+  value: string;
+  onValueChange: (value: string) => void;
+  onSave: () => void;
+  onClear: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {open ? (
+        <WorkoutEditorContent>
+          <DialogTitle className="sr-only">Edit body weight</DialogTitle>
+          <DialogDescription className="sr-only">
+            Set an approximate body weight for this workout.
+          </DialogDescription>
+          <WorkoutEditorLabel>body weight</WorkoutEditorLabel>
+          <div className="flex items-baseline gap-1">
+            <Input
+              autoFocus
+              aria-label="Body weight"
+              type="number"
+              min={1}
+              step="0.1"
+              inputMode="decimal"
+              value={value}
+              onChange={(event) => onValueChange(event.target.value)}
+              className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[16px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
+            />
+            <span className="text-[12px] text-[#716b5d]">lb</span>
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-3 font-mono text-[12px] text-[#817a69] hover:bg-[#eee8da]"
+              onClick={onClear}
+            >
+              clear
+            </button>
+            <WorkoutEditorPrimaryAction onClick={onSave}>
+              done
+            </WorkoutEditorPrimaryAction>
+          </div>
+        </WorkoutEditorContent>
+      ) : null}
+    </Dialog>
+  );
+}
+
 function formatStartDate(date: Date) {
   return date
     .toLocaleDateString(undefined, {
@@ -423,6 +522,17 @@ function formatDurationMinutes(minutes: number) {
   return remainingMinutes === 0
     ? `${hours}h`
     : `${hours}h ${remainingMinutes}m`;
+}
+
+function parseBodyWeightInput(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(1));
+}
+
+function formatBodyWeight(value: number) {
+  const rounded = Number(value.toFixed(1));
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }
 
 function formatDateInputValue(date: Date) {
