@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PreviousWorkoutExercise } from "@/components/workout-reference/previous-workout-exercise";
 import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
+import { WorkoutHeader } from "@/components/workout/workout_header";
 import type {
   CurrentExerciseSet,
   PreviousExercise,
@@ -148,6 +149,10 @@ const sampleCurrentSets: CurrentExerciseSet[] = [
   },
 ];
 
+function noopSandboxAction() {
+  return undefined;
+}
+
 export function PreviousWorkoutExerciseSandbox() {
   const [plateSettings, setPlateSettings] = useState<PlateSettings>({
     startingWeight: 0,
@@ -189,6 +194,7 @@ export function PreviousWorkoutExerciseSandbox() {
 
   return (
     <div className="select-none">
+      <WorkoutBodyWeightSandbox />
       <PreviousWorkoutExercise
         exerciseName="Pull-ups"
         exerciseNote="Hold dumbbell in thighs"
@@ -197,6 +203,40 @@ export function PreviousWorkoutExerciseSandbox() {
         history={sampleHistory}
         initialCurrentSets={sampleCurrentSets}
         onPlateSettingsChange={setPlateSettings}
+      />
+    </div>
+  );
+}
+
+function WorkoutBodyWeightSandbox() {
+  const [bodyWeightLb, setBodyWeightLb] = useState<number | null>(null);
+  const [workoutName, setWorkoutName] = useState("Pull day");
+  const [isEditingName, setIsEditingName] = useState(false);
+  const startTime = new Date("2026-06-19T09:00:00").getTime();
+
+  return (
+    <div className="mx-auto mb-5 w-full max-w-[430px] px-3 pt-4">
+      <WorkoutHeader
+        name={workoutName}
+        startTime={startTime}
+        completedAt={new Date(startTime + 45 * 60_000)}
+        bodyWeightLb={bodyWeightLb}
+        showBodyWeight
+        editableName={workoutName}
+        isEditingName={isEditingName}
+        workoutNote=""
+        showFinishAction={false}
+        canUndo={false}
+        canRedo={false}
+        onStartTimeChange={noopSandboxAction}
+        onBodyWeightChange={setBodyWeightLb}
+        onCompletedAtChange={noopSandboxAction}
+        onEditableNameChange={setWorkoutName}
+        onStartEditingName={() => setIsEditingName(true)}
+        onCancelEditingName={() => setIsEditingName(false)}
+        onSaveName={() => setIsEditingName(false)}
+        onEditWorkoutNote={noopSandboxAction}
+        onFinishWorkout={noopSandboxAction}
       />
     </div>
   );

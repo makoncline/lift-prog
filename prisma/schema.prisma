@@ -69,6 +69,7 @@ model Workout {
   name             String
   startedAt        DateTime          @default(now())
   completedAt      DateTime?
+  bodyWeightLb     Float?
   notes            String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt

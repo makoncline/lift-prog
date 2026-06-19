@@ -95,6 +95,7 @@ export function buildReferenceHistory(
       relation: entry.relation,
       relativeDate: entry.relativeDate,
       date: entry.date,
+      ...(entry.bodyWeightLb != null ? { bodyWeightLb: entry.bodyWeightLb } : {}),
       ...(entry.workoutNote ? { workoutNote: entry.workoutNote } : {}),
       ...(entry.workoutExerciseNote
         ? { workoutExerciseNote: entry.workoutExerciseNote }

@@ -31,6 +31,7 @@ export const CompletedWorkoutSchema = z.object({
   notes: z.string().optional(),
   completedAt: z.coerce.date(),
   startedAt: z.coerce.date(),
+  bodyWeightLb: z.number().positive().nullable().optional(),
   exercises: z.array(CompletedExerciseSchema),
 });
 

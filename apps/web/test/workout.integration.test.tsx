@@ -18,6 +18,7 @@ const trpcMocks = vi.hoisted(() => ({
   updateWorkoutMutate: vi.fn(),
   deleteWorkoutMutate: vi.fn(),
   updateNoteMutate: vi.fn(),
+  updatePlateDefaultsMutate: vi.fn(),
 }));
 
 vi.mock("@clerk/nextjs", () => ({
@@ -108,6 +109,15 @@ vi.mock("@/trpc/react", () => ({
           },
         }),
       },
+      updatePlateDefaults: {
+        useMutation: (opts?: any) => ({
+          isPending: false,
+          mutate: (payload: any) => {
+            trpcMocks.updatePlateDefaultsMutate(payload);
+            void opts?.onSuccess?.(null, payload, null);
+          },
+        }),
+      },
     },
   },
 }));
@@ -123,6 +133,7 @@ describe("WorkoutComponent", () => {
     trpcMocks.updateWorkoutMutate.mockReset();
     trpcMocks.deleteWorkoutMutate.mockReset();
     trpcMocks.updateNoteMutate.mockReset();
+    trpcMocks.updatePlateDefaultsMutate.mockReset();
     trpcMocks.prepareInitialWorkoutFetch.mockReset();
     trpcMocks.prepareInitialWorkoutFetch.mockImplementation(
       async ({ exerciseNames }) => ({
@@ -226,5 +237,44 @@ describe("WorkoutComponent", () => {
     );
     expect(screen.queryByRole("heading", { name: "pull-ups" })).toBeNull();
     expect(trpcMocks.addExerciseMutate).not.toHaveBeenCalled();
+  });
+
+  it("sets approximate body weight for bodyweight workouts", async () => {
+    render(
+      <WorkoutComponent
+        workoutName="Pull day"
+        exercises={[
+          {
+            name: "Pull-ups",
+            sets: [
+              {
+                weight: 0,
+                reps: 15,
+                modifier: "warmup",
+                weightModifier: "bodyweight",
+              },
+              { weight: 20, reps: 8, weightModifier: "bodyweight" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit body weight" }));
+    fireEvent.change(await screen.findByRole("spinbutton", { name: "Body weight" }), {
+      target: { value: "195.5" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "done" }));
+
+    expect(await screen.findByText("195.5lb")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish workout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "save workout" }));
+
+    await waitFor(() =>
+      expect(trpcMocks.saveWorkoutMutate).toHaveBeenCalledWith(
+        expect.objectContaining({ bodyWeightLb: 195.5 }),
+      ),
+    );
   });
 });

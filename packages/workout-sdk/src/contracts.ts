@@ -32,6 +32,7 @@ export const PrepareInitialWorkoutInputSchema = z.discriminatedUnion("mode", [
 
 export const PrepareInitialWorkoutResultSchema = z.object({
   workoutName: z.string(),
+  bodyWeightLb: z.number().positive().nullable().optional(),
   exercises: z.array(PreviousExerciseDataSchema),
 });
 
@@ -44,6 +45,7 @@ export const RecentWorkoutSummarySchema = z.object({
   name: z.string(),
   completedAt: z.coerce.date(),
   startedAt: z.coerce.date(),
+  bodyWeightLb: z.number().positive().nullable().optional(),
   exerciseSummaries: z.array(z.string()),
 });
 

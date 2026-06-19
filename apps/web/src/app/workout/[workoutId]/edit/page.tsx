@@ -52,6 +52,7 @@ export default function EditWorkoutPage() {
       completedAt={
         workout.completedAt ? new Date(workout.completedAt) : undefined
       }
+      bodyWeightLb={workout.bodyWeightLb ?? null}
       workoutNote={workout.notes ?? ""}
       contextLabel={`editing past workout #${workoutId}`}
       persistDraft={false}

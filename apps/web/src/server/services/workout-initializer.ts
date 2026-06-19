@@ -58,6 +58,7 @@ type WorkoutExerciseHistoryRecord = {
   exerciseNotesSnapshot: string | null;
   workout: {
     completedAt: Date | null;
+    bodyWeightLb: number | null;
     notes: string | null;
   };
   sets: Array<{
@@ -119,6 +120,9 @@ function mapHistory(
         relation: historyRelation(index),
         relativeDate: formatRelativeDate(record.workout.completedAt),
         date: formatShortDate(record.workout.completedAt),
+        ...(record.workout.bodyWeightLb != null
+          ? { bodyWeightLb: record.workout.bodyWeightLb }
+          : {}),
         ...(record.workout.notes ? { workoutNote: record.workout.notes } : {}),
         ...(record.notes ? { workoutExerciseNote: record.notes } : {}),
         ...(record.exerciseNotesSnapshot
@@ -165,6 +169,7 @@ async function getHistoriesByUserExerciseId({
       workout: {
         select: {
           completedAt: true,
+          bodyWeightLb: true,
           notes: true,
         },
       },
@@ -343,6 +348,7 @@ export async function buildInitialExercisesFromWorkout({
   exercises: PreviousExerciseData[];
   startedAt: Date;
   completedAt: Date | null;
+  bodyWeightLb: number | null;
   notes: string | null;
 }> {
   const workout = await prisma.workout.findFirst({
@@ -372,6 +378,7 @@ export async function buildInitialExercisesFromWorkout({
               reps: true,
               modifier: true,
               weightModifier: true,
+              completed: true,
               restBefore: true,
               notes: true,
               rir: true,
@@ -451,6 +458,26 @@ export async function buildInitialExercisesFromWorkout({
     exercises,
     startedAt: workout.startedAt,
     completedAt: workout.completedAt,
+    bodyWeightLb: workout.bodyWeightLb,
     notes: workout.notes,
   };
+}
+
+export async function getLatestWorkoutBodyWeightLb({
+  prisma,
+  userId,
+}: {
+  prisma: PrismaClient;
+  userId: string;
+}) {
+  const workout = await prisma.workout.findFirst({
+    where: {
+      userId,
+      bodyWeightLb: { not: null },
+    },
+    orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+    select: { bodyWeightLb: true },
+  });
+
+  return workout?.bodyWeightLb ?? null;
 }

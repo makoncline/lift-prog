@@ -125,6 +125,7 @@ type HistoryStats = {
 
 type HistoryChartPoint = {
   label: string;
+  xValue: number;
   value: number;
   displayValue: string;
 };
@@ -192,7 +193,12 @@ function HistoryTinyChart({
             data={points}
             margin={{ top: 18, right: 14, bottom: 2, left: 14 }}
           >
-            <XAxis dataKey="label" hide />
+            <XAxis
+              dataKey="xValue"
+              type="number"
+              hide
+              domain={getChartXDomain(points)}
+            />
             <YAxis hide domain={getChartDomain(points)} />
             <Line
               dataKey="value"
@@ -238,6 +244,17 @@ function getChartDomain(points: HistoryChartPoint[]) {
 
   const padding = (max - min) * 0.2;
   return [Math.max(0, min - padding), max + padding];
+}
+
+function getChartXDomain(points: HistoryChartPoint[]) {
+  const values = points.map((point) => point.xValue);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  if (min === max) return [min - 1, max + 1];
+
+  const padding = Math.max(1, (max - min) * 0.04);
+  return [min - padding, max + padding];
 }
 
 function HistoryItem({
@@ -418,18 +435,28 @@ function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
     .slice(0, 5)
     .map((item) => ({ item, stats: getWorkoutStats(item) }))
     .reverse();
+  const recentChartXValues = getHistoryChartXValues(
+    recentChronological.map((entry) => entry.item),
+  );
   const allChronological = history
     .map((item) => ({ item, stats: getWorkoutStats(item) }))
     .reverse();
   const e1rmPoints = recentChronological.flatMap((entry, index) =>
     entry.stats.e1rm == null
       ? []
-      : [toHistoryChartPoint(entry, index, entry.stats.e1rm)],
+      : [toHistoryChartPoint(entry, index, recentChartXValues, entry.stats.e1rm)],
   );
   const volumePoints = recentChronological.flatMap((entry, index) =>
     entry.stats.volume == null
       ? []
-      : [toHistoryChartPoint(entry, index, entry.stats.volume)],
+      : [
+          toHistoryChartPoint(
+            entry,
+            index,
+            recentChartXValues,
+            entry.stats.volume,
+          ),
+        ],
   );
   const bestEntry = allChronological.reduce<ParsedWorkoutStats | null>(
     (best, entry) => {
@@ -452,13 +479,50 @@ function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
 function toHistoryChartPoint(
   entry: { item: PreviousExercise; stats: ParsedWorkoutStats },
   index: number,
+  xValues: number[],
   value: number,
 ): HistoryChartPoint {
   return {
     label: entry.item.date || entry.item.relation || `${index + 1}`,
+    xValue: xValues[index] ?? index,
     value,
     displayValue: `${formatStatNumber(value)}lb`,
   };
+}
+
+function getHistoryChartXValues(history: PreviousExercise[]) {
+  const daysAgoValues = history.map((item) =>
+    parseHistoryRelativeDaysAgo(item.relativeDate),
+  );
+
+  if (
+    daysAgoValues.every((value): value is number => value != null) &&
+    new Set(daysAgoValues).size > 1
+  ) {
+    const oldestDaysAgo = Math.max(...daysAgoValues);
+    return daysAgoValues.map((daysAgo) => oldestDaysAgo - daysAgo);
+  }
+
+  return history.map((_, index) => index);
+}
+
+function parseHistoryRelativeDaysAgo(relativeDate: string) {
+  const normalized = relativeDate.trim().toLowerCase();
+  if (normalized === "today") return 0;
+  if (normalized === "yesterday") return 1;
+
+  const match = /^(\d+)\s+(day|week|month|year)s?\s+ago$/.exec(normalized);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  const unit = match[2];
+  if (!Number.isFinite(value)) return null;
+
+  if (unit === "day") return value;
+  if (unit === "week") return value * 7;
+  if (unit === "month") return value * 30;
+  if (unit === "year") return value * 365;
+  return null;
 }
 
 function getWorkoutStats(item: PreviousExercise): ParsedWorkoutStats {
@@ -468,7 +532,7 @@ function getWorkoutStats(item: PreviousExercise): ParsedWorkoutStats {
   let volume = 0;
 
   for (const set of item.workingSets) {
-    const weight = parseHistoryWeight(set.weight);
+    const weight = parseHistoryWeight(set.weight, item.bodyWeightLb);
     const reps = set.reps
       .map((rep) => Number(rep))
       .filter((rep) => Number.isFinite(rep) && rep > 0);
@@ -500,12 +564,15 @@ function getWorkoutStats(item: PreviousExercise): ParsedWorkoutStats {
   };
 }
 
-function parseHistoryWeight(weight: string) {
+function parseHistoryWeight(weight: string, bodyWeightLb?: number | null) {
   const compact = weight.replace(/\s+/g, "");
-  if (compact === "BW") return 0;
+  if (compact === "BW") return bodyWeightLb ?? 0;
 
   const bodyweightMatch = /^BW([+-]\d+(?:\.\d+)?)lb?$/i.exec(compact);
-  if (bodyweightMatch?.[1]) return Number(bodyweightMatch[1]);
+  if (bodyweightMatch?.[1]) {
+    const offset = Number(bodyweightMatch[1]);
+    return bodyWeightLb == null ? offset : bodyWeightLb + offset;
+  }
 
   const numberMatch = /-?\d+(?:\.\d+)?/.exec(compact);
   return numberMatch ? Number(numberMatch[0]) : null;

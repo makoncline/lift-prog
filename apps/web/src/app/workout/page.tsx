@@ -235,6 +235,7 @@ function WorkoutLoader({
   return (
     <WorkoutComponent
       workoutName={data.workoutName}
+      bodyWeightLb={data.bodyWeightLb ?? null}
       exercises={data.exercises}
       onInitialSave={onInitialSave}
     />
