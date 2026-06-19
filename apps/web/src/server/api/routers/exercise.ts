@@ -3,6 +3,8 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { TRPCError } from "@trpc/server";
 
+const plateLoadModeInput = z.enum(["equal-sides", "total"]);
+
 export const exerciseRouter = createTRPCRouter({
   // Procedure to list the signed-in user's exercise library
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -17,6 +19,8 @@ export const exerciseRouter = createTRPCRouter({
         name: true,
         notes: true,
         exerciseId: true,
+        plateStartingWeight: true,
+        plateLoadMode: true,
       },
     });
   }),
@@ -167,6 +171,117 @@ export const exerciseRouter = createTRPCRouter({
           name,
           exerciseId: catalogExercise?.id ?? null,
           notes,
+        },
+      });
+
+      return { count: 1 };
+    }),
+
+  updatePlateDefaults: protectedProcedure
+    .input(
+      z
+        .object({
+          id: z.number().optional(),
+          name: z.string().min(1).optional(),
+          plateStartingWeight: z.number().min(0).nullable(),
+          plateLoadMode: plateLoadModeInput,
+        })
+        .refine((input) => input.id !== undefined || input.name !== undefined, {
+          message: "Exercise id or name is required.",
+        }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.userId;
+      if (!userId) throw new Error("User not found.");
+
+      const data = {
+        plateStartingWeight: input.plateStartingWeight,
+        plateLoadMode: input.plateLoadMode,
+      };
+
+      if (input.id !== undefined) {
+        const result = await ctx.db.userExercise.updateMany({
+          where: {
+            id: input.id,
+            userId,
+          },
+          data,
+        });
+
+        if (result.count === 0) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Exercise not found.",
+          });
+        }
+
+        return result;
+      }
+
+      const name = input.name?.trim();
+      if (!name) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Exercise name cannot be empty.",
+        });
+      }
+
+      const normalizedName = normalizeExerciseNameForCompare(name);
+      const userExercises = await ctx.db.userExercise.findMany({
+        where: { userId },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      });
+      const matches = userExercises.filter(
+        (exercise) =>
+          normalizeExerciseNameForCompare(exercise.name) === normalizedName,
+      );
+
+      if (matches.length > 1) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `Multiple user exercises match "${name}". Merge duplicates before updating plate defaults.`,
+        });
+      }
+
+      const existing = matches[0] ?? null;
+      if (existing) {
+        const result = await ctx.db.userExercise.updateMany({
+          where: {
+            id: existing.id,
+            userId,
+          },
+          data,
+        });
+
+        if (result.count === 0) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Exercise not found.",
+          });
+        }
+
+        return result;
+      }
+
+      const catalogExercise = await ctx.db.exercise.findUnique({
+        where: { name },
+        select: { id: true },
+      });
+
+      await ctx.db.userExercise.upsert({
+        where: {
+          userId_name: {
+            userId,
+            name,
+          },
+        },
+        update: data,
+        create: {
+          userId,
+          name,
+          exerciseId: catalogExercise?.id ?? null,
+          ...data,
         },
       });
 

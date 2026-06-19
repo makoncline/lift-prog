@@ -5,6 +5,7 @@ import type {
   CurrentExerciseSet,
   SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
 import {
   buildReferenceHistory,
   normalizeCurrentSetOrder,
@@ -15,6 +16,10 @@ import type { Workout } from "@lift-prog/workout-core";
 type WorkoutExerciseListProps = {
   exercises: Workout["exercises"];
   onExerciseNoteChange: (exerciseIndex: number, note: string) => void;
+  onPlateSettingsChange: (
+    exerciseIndex: number,
+    settings: PlateSettings,
+  ) => void;
   onWorkoutExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onCurrentSetsChange: (
     exerciseIndex: number,
@@ -27,6 +32,7 @@ type WorkoutExerciseListProps = {
 export function WorkoutExerciseList({
   exercises,
   onExerciseNoteChange,
+  onPlateSettingsChange,
   onWorkoutExerciseNoteChange,
   onCurrentSetsChange,
   onCommitPendingHistory,
@@ -39,6 +45,7 @@ export function WorkoutExerciseList({
             exercise={exercise}
             exerciseIndex={exerciseIndex}
             onExerciseNoteChange={onExerciseNoteChange}
+            onPlateSettingsChange={onPlateSettingsChange}
             onWorkoutExerciseNoteChange={onWorkoutExerciseNoteChange}
             onCurrentSetsChange={onCurrentSetsChange}
             onCommitPendingHistory={onCommitPendingHistory}
@@ -53,6 +60,7 @@ function WorkoutExerciseReference({
   exercise,
   exerciseIndex,
   onExerciseNoteChange,
+  onPlateSettingsChange,
   onWorkoutExerciseNoteChange,
   onCurrentSetsChange,
   onCommitPendingHistory,
@@ -60,6 +68,10 @@ function WorkoutExerciseReference({
   exercise: Workout["exercises"][number];
   exerciseIndex: number;
   onExerciseNoteChange: (exerciseIndex: number, note: string) => void;
+  onPlateSettingsChange: (
+    exerciseIndex: number,
+    settings: PlateSettings,
+  ) => void;
   onWorkoutExerciseNoteChange: (exerciseIndex: number, note: string) => void;
   onCurrentSetsChange: (
     exerciseIndex: number,
@@ -72,10 +84,15 @@ function WorkoutExerciseReference({
     <PreviousWorkoutExercise
       exerciseName={exercise.name}
       exerciseNote={exercise.exerciseNotes ?? ""}
+      plateStartingWeight={exercise.plateStartingWeight ?? null}
+      plateLoadMode={exercise.plateLoadMode ?? null}
       history={buildReferenceHistory(exercise)}
       shellClassName="min-h-0 max-w-none bg-transparent p-0"
       workoutExerciseNote={exercise.notes[0]?.text ?? ""}
       onExerciseNoteChange={(note) => onExerciseNoteChange(exerciseIndex, note)}
+      onPlateSettingsChange={(settings) =>
+        onPlateSettingsChange(exerciseIndex, settings)
+      }
       onWorkoutExerciseNoteChange={(note) =>
         onWorkoutExerciseNoteChange(exerciseIndex, note)
       }

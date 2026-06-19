@@ -13,6 +13,8 @@ import {
 } from "@/components/workout-reference/current_exercise_sets";
 import { getCurrentSetLabel } from "@/components/workout-reference/set_formatting";
 import { SetValueDialog } from "@/components/workout-reference/set_value_dialog";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
+import type { PlateMode } from "@/lib/weight-helper";
 import type {
   CurrentExerciseSet,
   EditorField,
@@ -28,6 +30,8 @@ type SetEditorState = {
 type TimelineExerciseInputProps = {
   exerciseName: string;
   initialSets: CurrentExerciseSet[];
+  plateStartingWeight?: number | null;
+  plateLoadMode?: PlateMode | null;
   restTypes: RestType[];
   workoutExerciseNote: string;
   onEditWorkoutExerciseNote: () => void;
@@ -36,16 +40,20 @@ type TimelineExerciseInputProps = {
     options?: SetChangeOptions,
   ) => void;
   onCommitPendingHistory?: () => void;
+  onPlateSettingsChange?: (settings: PlateSettings) => void;
 };
 
 export function TimelineExerciseInput({
   exerciseName,
   initialSets,
+  plateStartingWeight,
+  plateLoadMode,
   restTypes,
   workoutExerciseNote,
   onEditWorkoutExerciseNote,
   onSetsChange,
   onCommitPendingHistory,
+  onPlateSettingsChange,
 }: TimelineExerciseInputProps) {
   const controlled = Boolean(onSetsChange);
   const [uncontrolledSets, setUncontrolledSets] = useState<
@@ -244,6 +252,8 @@ export function TimelineExerciseInput({
         sets={displaySets}
         restTypes={restTypes}
         setLabel={activeSetLabel}
+        plateStartingWeight={plateStartingWeight}
+        plateLoadMode={plateLoadMode}
         onDelete={() => {
           if (!activeSet) return;
           deleteSet(activeSet.id);
@@ -252,6 +262,7 @@ export function TimelineExerciseInput({
         onAddShortRestSet={addShortRestSet}
         onCycleRestBefore={cycleRestBefore}
         onUseStandardRestBefore={useStandardRestBefore}
+        onPlateSettingsChange={onPlateSettingsChange}
         onSelectSet={(setId) => {
           commitPendingHistory();
           setEditor((currentEditor) =>
