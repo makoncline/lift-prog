@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ExerciseSet,
   PreviousExercise,
@@ -13,6 +13,7 @@ import {
   TimelineFootnoteMarker,
   TimelineFootnoteRef,
 } from "@/components/workout-reference/timeline_notes";
+import { estimate1RM } from "@lift-prog/workout-core";
 
 export function HistoryDisclosure({
   expanded,
@@ -33,14 +34,24 @@ export function HistoryViewport({ history }: { history: PreviousExercise[] }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLElement | null>>([]);
   const scrollEndTimeoutRef = useRef<number | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const stats = useMemo(() => buildHistoryStats(history), [history]);
+  const initialIndex = stats ? 1 : 0;
+  const itemCount = history.length + (stats ? 1 : 0);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [activeHeight, setActiveHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    setActiveIndex(initialIndex);
+    const scrollNode = viewportRef.current;
+    if (!scrollNode) return;
+    scrollNode.scrollLeft = scrollNode.clientWidth * initialIndex;
+  }, [initialIndex, history]);
 
   useLayoutEffect(() => {
     const activeItem = itemRefs.current[activeIndex];
     if (!activeItem) return;
     setActiveHeight(Math.ceil(activeItem.getBoundingClientRect().height));
-  }, [activeIndex, history]);
+  }, [activeIndex, history, stats]);
 
   useEffect(() => {
     return () => {
@@ -64,7 +75,7 @@ export function HistoryViewport({ history }: { history: PreviousExercise[] }) {
       if (!width) return;
       setActiveIndex(
         Math.min(
-          history.length - 1,
+          itemCount - 1,
           Math.max(0, Math.round(scrollNode.scrollLeft / width)),
         ),
       );
@@ -79,16 +90,105 @@ export function HistoryViewport({ history }: { history: PreviousExercise[] }) {
       style={activeHeight == null ? undefined : { height: activeHeight }}
       onScroll={handleScroll}
     >
+      {stats ? (
+        <HistoryStatsItem
+          stats={stats}
+          refCallback={(node) => {
+            itemRefs.current[0] = node;
+          }}
+        />
+      ) : null}
       {history.map((item, index) => (
         <HistoryItem
           key={`${item.relation}-${item.date}`}
           item={item}
           refCallback={(node) => {
-            itemRefs.current[index] = node;
+            itemRefs.current[index + (stats ? 1 : 0)] = node;
           }}
         />
       ))}
     </div>
+  );
+}
+
+type HistoryStats = {
+  count: number;
+  primaryLabel: string;
+  primaryTrend: string;
+  volumeTrend: string;
+  bestSet: string;
+  frequency: string;
+  sparkline: number[];
+};
+
+function HistoryStatsItem({
+  stats,
+  refCallback,
+}: {
+  stats: HistoryStats;
+  refCallback?: (node: HTMLElement | null) => void;
+}) {
+  return (
+    <article
+      ref={refCallback}
+      className="flex min-w-full snap-start flex-col gap-1 pr-1 text-[12px] leading-4"
+    >
+      <p className="text-[12px] leading-4 text-[#716b5d]">
+        stats · {stats.count} workouts
+      </p>
+      <MiniSparkline values={stats.sparkline} />
+      <div className="grid gap-0.5">
+        <StatsLine label={stats.primaryLabel} value={stats.primaryTrend} />
+        <StatsLine label="best" value={stats.bestSet} />
+        <StatsLine label="volume" value={stats.volumeTrend} />
+        <StatsLine label="seen" value={stats.frequency} />
+      </div>
+    </article>
+  );
+}
+
+function StatsLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[4.5rem_1fr] gap-1">
+      <span className="text-[#8a8373]">{label}</span>
+      <span className="text-[#17150f]">{value}</span>
+    </div>
+  );
+}
+
+function MiniSparkline({ values }: { values: number[] }) {
+  if (values.length < 2) {
+    return <div className="h-6 text-[11px] text-[#8a8373]">more data soon</div>;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const width = 160;
+  const height = 24;
+  const points = values
+    .map((value, index) => {
+      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / range) * (height - 4) - 2;
+      return `${roundSvgPoint(x)},${roundSvgPoint(y)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-6 w-full overflow-visible"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#a79b83"
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
   );
 }
 
@@ -118,9 +218,7 @@ function HistoryMeta({ item }: { item: PreviousExercise }) {
   const parts = [item.relation, item.relativeDate, item.date].filter(Boolean);
 
   return (
-    <p className="text-[12px] leading-4 text-[#716b5d]">
-      {parts.join(" · ")}
-    </p>
+    <p className="text-[12px] leading-4 text-[#716b5d]">{parts.join(" · ")}</p>
   );
 }
 
@@ -256,4 +354,149 @@ function formatCompactHistoryWeight(weight: string) {
 
 function isShortBreak(restBefore: string | undefined) {
   return restBefore === "short";
+}
+
+type ParsedWorkoutStats = {
+  e1rm: number | null;
+  volume: number | null;
+  bestSet: string | null;
+  bestSetScore: number;
+};
+
+function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
+  if (history.length === 0) return null;
+
+  const chronological = history
+    .map((item) => ({ item, stats: getWorkoutStats(item) }))
+    .reverse();
+  const e1rmPoints = chronological
+    .map((entry) => entry.stats.e1rm)
+    .filter((value): value is number => value != null);
+  const volumePoints = chronological
+    .map((entry) => entry.stats.volume)
+    .filter((value): value is number => value != null);
+  const sparkline = e1rmPoints.length >= 2 ? e1rmPoints : volumePoints;
+  const bestEntry = chronological.reduce<ParsedWorkoutStats | null>(
+    (best, entry) => {
+      if (!best || entry.stats.bestSetScore > best.bestSetScore) {
+        return entry.stats;
+      }
+      return best;
+    },
+    null,
+  );
+
+  return {
+    count: history.length,
+    primaryLabel: e1rmPoints.length >= 2 ? "e1rm" : "load",
+    primaryTrend:
+      e1rmPoints.length >= 2
+        ? formatStatTrend(e1rmPoints, "lb")
+        : formatFallbackLoadTrend(chronological),
+    volumeTrend:
+      volumePoints.length >= 2 ? formatStatTrend(volumePoints, "lb") : "n/a",
+    bestSet: bestEntry?.bestSet ?? "n/a",
+    frequency: formatFrequency(history),
+    sparkline,
+  };
+}
+
+function getWorkoutStats(item: PreviousExercise): ParsedWorkoutStats {
+  let bestSet: string | null = null;
+  let bestSetScore = Number.NEGATIVE_INFINITY;
+  let bestE1rm: number | null = null;
+  let volume = 0;
+
+  for (const set of item.workingSets) {
+    const weight = parseHistoryWeight(set.weight);
+    const reps = set.reps
+      .map((rep) => Number(rep))
+      .filter((rep) => Number.isFinite(rep) && rep > 0);
+    if (weight == null || reps.length === 0) continue;
+
+    const repTotal = reps.reduce((sum, rep) => sum + rep, 0);
+    if (weight > 0) {
+      volume += weight * repTotal;
+    }
+
+    for (const rep of reps) {
+      const e1rm = weight > 0 ? estimate1RM(weight, rep) : null;
+      const score = e1rm ?? weight;
+      if (e1rm != null && (bestE1rm == null || e1rm > bestE1rm)) {
+        bestE1rm = e1rm;
+      }
+      if (score > bestSetScore) {
+        bestSetScore = score;
+        bestSet = `${formatStatNumber(weight)}lb×${formatStatNumber(rep)}`;
+      }
+    }
+  }
+
+  return {
+    e1rm: bestE1rm,
+    volume: volume > 0 ? volume : null,
+    bestSet,
+    bestSetScore,
+  };
+}
+
+function parseHistoryWeight(weight: string) {
+  const compact = weight.replace(/\s+/g, "");
+  if (compact === "BW") return 0;
+
+  const bodyweightMatch = /^BW([+-]\d+(?:\.\d+)?)lb?$/i.exec(compact);
+  if (bodyweightMatch?.[1]) return Number(bodyweightMatch[1]);
+
+  const numberMatch = /-?\d+(?:\.\d+)?/.exec(compact);
+  return numberMatch ? Number(numberMatch[0]) : null;
+}
+
+function formatStatTrend(values: number[], unit: string) {
+  const first = values[0]!;
+  const latest = values[values.length - 1]!;
+  const percent = first === 0 ? 0 : ((latest - first) / Math.abs(first)) * 100;
+  return `${formatStatNumber(first)}${unit} -> ${formatStatNumber(
+    latest,
+  )}${unit} · ${formatSignedPercent(percent)}`;
+}
+
+function formatFallbackLoadTrend(
+  chronological: Array<{ item: PreviousExercise; stats: ParsedWorkoutStats }>,
+) {
+  const bestLoads = chronological
+    .map((entry) =>
+      Math.max(
+        ...entry.item.workingSets
+          .map((set) => parseHistoryWeight(set.weight))
+          .filter((weight): weight is number => weight != null),
+      ),
+    )
+    .filter((weight) => Number.isFinite(weight));
+
+  if (bestLoads.length >= 2) return formatStatTrend(bestLoads, "lb");
+  if (bestLoads.length === 1) return `${formatStatNumber(bestLoads[0]!)}lb`;
+  return "n/a";
+}
+
+function formatFrequency(history: PreviousExercise[]) {
+  const oldest = history[history.length - 1];
+  if (!oldest?.relativeDate) return `${history.length} times`;
+  return `${history.length} times · since ${oldest.relativeDate}`;
+}
+
+function formatSignedPercent(value: number) {
+  const rounded = Math.round(value);
+  if (rounded === 0) return "same";
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
+function formatStatNumber(value: number) {
+  const rounded = Number(value.toFixed(1));
+  return Number.isInteger(rounded)
+    ? rounded.toLocaleString()
+    : rounded.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function roundSvgPoint(value: number) {
+  return Number(value.toFixed(2));
 }
