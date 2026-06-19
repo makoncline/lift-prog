@@ -45,16 +45,18 @@ model Exercise {
 }
 
 model UserExercise {
-  id               Int               @id @default(autoincrement())
-  userId           String
-  exerciseId       Int?
-  name             String
-  notes            String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  exercise         Exercise?         @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
-  workoutExercises WorkoutExercise[]
+  id                  Int               @id @default(autoincrement())
+  userId              String
+  exerciseId          Int?
+  name                String
+  notes               String?
+  plateStartingWeight Float?
+  plateLoadMode       String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise            Exercise?         @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  workoutExercises    WorkoutExercise[]
 
   @@unique([userId, name])
   @@index([exerciseId])

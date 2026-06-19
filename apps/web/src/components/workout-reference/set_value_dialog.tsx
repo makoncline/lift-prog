@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  Dialog,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { WorkoutEditorContent } from "@/components/workout/workout_editor_primitives";
 import { SetEditorKeyboard } from "@/components/workout-reference/set_editor_keyboard";
 import {
@@ -12,6 +8,8 @@ import {
   SetRestKeyboard,
 } from "@/components/workout-reference/set_editor_modes";
 import { SetEditorReadout } from "@/components/workout-reference/set_editor_readout";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
+import type { PlateMode } from "@/lib/weight-helper";
 import type {
   CurrentExerciseSet,
   EditorField,
@@ -26,6 +24,8 @@ type SetValueDialogProps = {
   sets: CurrentExerciseSet[];
   restTypes: RestType[];
   setLabel: string;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: PlateMode | null;
   onDelete: () => void;
   onAddSet: () => void;
   onAddShortRestSet: (setId: string) => void;
@@ -35,6 +35,7 @@ type SetValueDialogProps = {
   onOpenChange: (open: boolean) => void;
   onFieldChange: (field: EditorField) => void;
   onUpdate: (set: CurrentExerciseSet, options?: SetChangeOptions) => void;
+  onPlateSettingsChange?: (settings: PlateSettings) => void;
 };
 
 export function SetValueDialog({
@@ -44,6 +45,8 @@ export function SetValueDialog({
   sets,
   restTypes,
   setLabel,
+  plateStartingWeight,
+  plateLoadMode,
   onDelete,
   onAddSet,
   onAddShortRestSet,
@@ -53,6 +56,7 @@ export function SetValueDialog({
   onOpenChange,
   onFieldChange,
   onUpdate,
+  onPlateSettingsChange,
 }: SetValueDialogProps) {
   const open = Boolean(editor && set);
   const field = editor?.field ?? "weight";
@@ -72,6 +76,8 @@ export function SetValueDialog({
             sets={displaySets}
             restTypes={restTypes}
             setLabel={setLabel}
+            plateStartingWeight={plateStartingWeight}
+            plateLoadMode={plateLoadMode}
             field={field}
             onDelete={onDelete}
             onAddSet={onAddSet}
@@ -82,6 +88,7 @@ export function SetValueDialog({
             onOpenChange={onOpenChange}
             onFieldChange={onFieldChange}
             onUpdate={onUpdate}
+            onPlateSettingsChange={onPlateSettingsChange}
           />
         ) : null}
       </WorkoutEditorContent>
@@ -102,6 +109,8 @@ function SetValueDialogContent({
   sets,
   restTypes,
   setLabel,
+  plateStartingWeight,
+  plateLoadMode,
   field,
   onDelete,
   onAddSet,
@@ -112,6 +121,7 @@ function SetValueDialogContent({
   onOpenChange,
   onFieldChange,
   onUpdate,
+  onPlateSettingsChange,
 }: Omit<SetValueDialogProps, "editor"> & {
   set: CurrentExerciseSet;
   field: EditorField;
@@ -163,6 +173,9 @@ function SetValueDialogContent({
           key={`${set.id}-${field}`}
           field={field}
           set={set}
+          plateStartingWeight={plateStartingWeight}
+          plateLoadMode={plateLoadMode}
+          onPlateSettingsChange={onPlateSettingsChange}
           onAddShortRest={
             field === "reps" ? () => onAddShortRestSet(set.id) : undefined
           }

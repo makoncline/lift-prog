@@ -23,6 +23,7 @@ export function ExerciseReferenceShell({
 export function ExerciseReferenceHeader({
   name,
   note,
+  plateSettingsText,
   workoutExerciseNote,
   hasHistory,
   historyVisible,
@@ -32,6 +33,7 @@ export function ExerciseReferenceHeader({
 }: {
   name: string;
   note: string;
+  plateSettingsText?: string;
   workoutExerciseNote: string;
   hasHistory: boolean;
   historyVisible: boolean;
@@ -77,6 +79,11 @@ export function ExerciseReferenceHeader({
             <span>{note}</span>
           </NoteBadge>
         </button>
+      ) : null}
+      {plateSettingsText?.trim() ? (
+        <div className="text-[11px] leading-3 text-[#716b5d]">
+          {plateSettingsText}
+        </div>
       ) : null}
     </div>
   );

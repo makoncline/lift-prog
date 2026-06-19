@@ -62,6 +62,10 @@ export type WeightSuggestion = {
   weight: number;
   reps: number;
 };
+export type PlateSettings = {
+  startingWeight: number | null;
+  loadMode: PlateMode;
+};
 
 export function WeightHelperDialog({
   set,
@@ -84,10 +88,12 @@ export function IncreaseWeightDialog({
   set,
   children,
   onUse,
+  defaultLoadMode,
 }: {
   set: CurrentExerciseSet;
   children: ReactNode;
   onUse: (suggestion: WeightSuggestion) => void;
+  defaultLoadMode?: PlateMode | null;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -98,6 +104,7 @@ export function IncreaseWeightDialog({
         <OneRepMaxAddedWeightRepsCalculator
           set={set}
           withSectionFrame={false}
+          defaultLoadMode={defaultLoadMode}
           onUse={(suggestion) => {
             onUse(suggestion);
             setOpen(false);
@@ -111,15 +118,27 @@ export function IncreaseWeightDialog({
 export function PlateCalculatorDialog({
   set,
   children,
+  defaultStartingWeight,
+  defaultLoadMode,
+  onSettingsChange,
 }: {
   set: CurrentExerciseSet;
   children: ReactNode;
+  defaultStartingWeight?: number | null;
+  defaultLoadMode?: PlateMode | null;
+  onSettingsChange?: (settings: PlateSettings) => void;
 }) {
   return (
     <Dialog modal={false}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <WeightHelperDialogContent title="plates" stacked>
-        <PlateLoadCalculator set={set} withSectionFrame={false} />
+        <PlateLoadCalculator
+          set={set}
+          withSectionFrame={false}
+          defaultStartingWeight={defaultStartingWeight}
+          defaultLoadMode={defaultLoadMode}
+          onSettingsChange={onSettingsChange}
+        />
       </WeightHelperDialogContent>
     </Dialog>
   );
@@ -176,10 +195,12 @@ export function OneRepMaxAddedWeightRepsCalculator({
   set,
   onUse,
   withSectionFrame = true,
+  defaultLoadMode,
 }: {
   set: CurrentExerciseSet;
   onUse?: (suggestion: WeightSuggestion) => void;
   withSectionFrame?: boolean;
+  defaultLoadMode?: PlateMode | null;
 }) {
   const defaultWeight = getDefaultWeight(set);
   const defaultReps = getDefaultReps(set);
@@ -187,6 +208,7 @@ export function OneRepMaxAddedWeightRepsCalculator({
     <AddedWeightRepsHelper
       defaultWeight={defaultWeight}
       defaultReps={defaultReps}
+      defaultLoadMode={defaultLoadMode}
       onUse={onUse}
     />
   );
@@ -203,11 +225,24 @@ export function OneRepMaxAddedWeightRepsCalculator({
 export function PlateLoadCalculator({
   set,
   withSectionFrame = true,
+  defaultStartingWeight,
+  defaultLoadMode,
+  onSettingsChange,
 }: {
   set: CurrentExerciseSet;
   withSectionFrame?: boolean;
+  defaultStartingWeight?: number | null;
+  defaultLoadMode?: PlateMode | null;
+  onSettingsChange?: (settings: PlateSettings) => void;
 }) {
-  const calculator = <PlateHelper defaultWeight={getDefaultWeight(set)} />;
+  const calculator = (
+    <PlateHelper
+      defaultWeight={getDefaultWeight(set)}
+      defaultStartingWeight={defaultStartingWeight}
+      defaultLoadMode={defaultLoadMode}
+      onSettingsChange={onSettingsChange}
+    />
+  );
 
   if (!withSectionFrame) return calculator;
 
@@ -241,13 +276,15 @@ export function WeightHelperIcon() {
 function AddedWeightRepsHelper({
   defaultWeight,
   defaultReps,
+  defaultLoadMode,
   onUse,
 }: {
   defaultWeight: number;
   defaultReps: number;
+  defaultLoadMode?: PlateMode | null;
   onUse?: (suggestion: WeightSuggestion) => void;
 }) {
-  const [mode, setMode] = useState<PlateMode>("equal-sides");
+  const [mode, setMode] = useState<PlateMode>(parsePlateMode(defaultLoadMode));
   const [addedWeight, setAddedWeight] = useState(5);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const oneRepMax = estimate1RM(defaultWeight, defaultReps);
@@ -402,16 +439,58 @@ function CurrentOneRepMaxLine({
   );
 }
 
-function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
+function PlateHelper({
+  defaultWeight,
+  defaultStartingWeight,
+  defaultLoadMode,
+  onSettingsChange,
+}: {
+  defaultWeight: number;
+  defaultStartingWeight?: number | null;
+  defaultLoadMode?: PlateMode | null;
+  onSettingsChange?: (settings: PlateSettings) => void;
+}) {
+  const initialStartingWeight = defaultStartingWeight ?? 45;
   const [startingWeightValue, setStartingWeightValue] =
-    useState<StartingWeightValue>("45");
-  const [customStartingWeightText, setCustomStartingWeightText] = useState("0");
-  const [mode, setMode] = useState<PlateMode>("equal-sides");
+    useState<StartingWeightValue>(() =>
+      getStartingWeightValue(initialStartingWeight),
+    );
+  const [customStartingWeightText, setCustomStartingWeightText] = useState(() =>
+    String(initialStartingWeight),
+  );
+  const [mode, setMode] = useState<PlateMode>(parsePlateMode(defaultLoadMode));
   const startingWeight = getStartingWeight(
     startingWeightValue,
     customStartingWeightText,
   );
   const platePlan = calculatePlatePlan(defaultWeight, startingWeight, mode);
+
+  function saveSettings(nextStartingWeight: number, nextMode: PlateMode) {
+    onSettingsChange?.({
+      startingWeight: nextStartingWeight,
+      loadMode: nextMode,
+    });
+  }
+
+  function updateStartingWeightValue(value: StartingWeightValue) {
+    const nextStartingWeight = getStartingWeight(
+      value,
+      customStartingWeightText,
+    );
+    setStartingWeightValue(value);
+    saveSettings(nextStartingWeight, mode);
+  }
+
+  function updateCustomStartingWeightText(value: string) {
+    const nextStartingWeight = getStartingWeight(startingWeightValue, value);
+    setCustomStartingWeightText(value);
+    saveSettings(nextStartingWeight, mode);
+  }
+
+  function updateMode(nextMode: PlateMode) {
+    setMode(nextMode);
+    saveSettings(startingWeight, nextMode);
+  }
 
   return (
     <div className="space-y-2 text-[12px] leading-5">
@@ -432,7 +511,7 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
             <Select
               value={startingWeightValue}
               onValueChange={(value) =>
-                setStartingWeightValue(value as StartingWeightValue)
+                updateStartingWeightValue(value as StartingWeightValue)
               }
             >
               <SelectTrigger
@@ -458,7 +537,7 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
             {startingWeightValue === "custom" ? (
               <NumericInput
                 value={customStartingWeightText}
-                onChange={setCustomStartingWeightText}
+                onChange={updateCustomStartingWeightText}
                 ariaLabel="custom starting weight"
                 suffix="lb"
                 className="w-[5.25rem]"
@@ -471,13 +550,13 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
       <div className="flex flex-wrap gap-1">
         <SegmentedButton
           active={mode === "equal-sides"}
-          onClick={() => setMode("equal-sides")}
+          onClick={() => updateMode("equal-sides")}
         >
           equal sides
         </SegmentedButton>
         <SegmentedButton
           active={mode === "total"}
-          onClick={() => setMode("total")}
+          onClick={() => updateMode("total")}
         >
           total load
         </SegmentedButton>
@@ -779,8 +858,19 @@ function getStartingWeight(
   return BARS.find((bar) => bar.value === value)?.weight ?? 0;
 }
 
+function getStartingWeightValue(weight: number): StartingWeightValue {
+  return (
+    BARS.find((bar) => bar.weight === weight)?.value ??
+    (weight === 0 ? "none" : "custom")
+  );
+}
+
 function getStartingWeightLabel(value: StartingWeightValue) {
   return BARS.find((bar) => bar.value === value)?.label ?? "none";
+}
+
+function parsePlateMode(value: PlateMode | null | undefined): PlateMode {
+  return value === "total" ? "total" : "equal-sides";
 }
 
 function getDefaultWeight(set: CurrentExerciseSet) {

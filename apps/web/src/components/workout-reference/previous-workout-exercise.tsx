@@ -20,15 +20,20 @@ import type {
   PreviousExercise,
   SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
+import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
+import type { PlateMode } from "@/lib/weight-helper";
 
 type PreviousWorkoutExerciseProps = {
   exerciseName: string;
   exerciseNote: string;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: PlateMode | null;
   history: PreviousExercise[];
   initialCurrentSets?: CurrentExerciseSet[];
   workoutExerciseNote?: string;
   onExerciseNoteChange?: (note: string) => void;
   onWorkoutExerciseNoteChange?: (note: string) => void;
+  onPlateSettingsChange?: (settings: PlateSettings) => void;
   onCurrentSetsChange?: (
     sets: CurrentExerciseSet[],
     options?: SetChangeOptions,
@@ -40,11 +45,14 @@ type PreviousWorkoutExerciseProps = {
 export function PreviousWorkoutExercise({
   exerciseName,
   exerciseNote,
+  plateStartingWeight,
+  plateLoadMode,
   history,
   initialCurrentSets: initialCurrentSetsOverride,
   workoutExerciseNote = "",
   onExerciseNoteChange,
   onWorkoutExerciseNoteChange,
+  onPlateSettingsChange,
   onCurrentSetsChange,
   onCommitPendingHistory,
   shellClassName,
@@ -63,6 +71,10 @@ export function PreviousWorkoutExercise({
       <ExerciseReferenceHeader
         name={exerciseName}
         note={exerciseNote}
+        plateSettingsText={formatPlateSettingsText(
+          plateStartingWeight,
+          plateLoadMode,
+        )}
         workoutExerciseNote={workoutExerciseNote}
         hasHistory={history.length > 0}
         historyVisible={isExpanded}
@@ -76,11 +88,14 @@ export function PreviousWorkoutExercise({
       <TimelineExerciseInput
         exerciseName={exerciseName}
         initialSets={currentSets}
+        plateStartingWeight={plateStartingWeight}
+        plateLoadMode={plateLoadMode}
         restTypes={restTypes}
         workoutExerciseNote={workoutExerciseNote}
         onEditWorkoutExerciseNote={() => setWorkoutExerciseNoteEditorOpen(true)}
         onSetsChange={onCurrentSetsChange}
         onCommitPendingHistory={onCommitPendingHistory}
+        onPlateSettingsChange={onPlateSettingsChange}
       />
       <NoteEditorDialog
         open={userExerciseNoteEditorOpen}
@@ -116,4 +131,31 @@ export function PreviousWorkoutExercise({
       />
     </ExerciseReferenceShell>
   );
+}
+
+function formatPlateSettingsText(
+  startingWeight?: number | null,
+  loadMode?: PlateMode | null,
+) {
+  if (startingWeight == null && !loadMode) return "";
+
+  const start =
+    startingWeight == null
+      ? "default start"
+      : startingWeight === 0
+        ? "no start"
+        : `${formatNumber(startingWeight)}lb ${getBarLabel(startingWeight)}`;
+  const mode = loadMode === "total" ? "total load" : "equal sides";
+
+  return `${start} · ${mode}`;
+}
+
+function getBarLabel(weight: number) {
+  if ([45, 35, 33, 25, 15].includes(weight)) return "bar";
+  return "start";
+}
+
+function formatNumber(value: number) {
+  const rounded = Number(value.toFixed(1));
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }

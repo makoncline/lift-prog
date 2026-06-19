@@ -16,6 +16,7 @@ import { summarizeWorkingSets } from "./workout-summary";
 export type SetModifier = "warmup";
 export type WeightModifier = "bodyweight"; // New type for weight modifier
 export type SetRestType = "standard" | "short";
+export type PlateLoadMode = "equal-sides" | "total";
 
 export interface Note {
   text: string;
@@ -41,6 +42,8 @@ export interface WorkoutExercise {
   userExerciseId?: number;
   name: string;
   exerciseNotes?: string | null;
+  plateStartingWeight?: number | null;
+  plateLoadMode?: PlateLoadMode | null;
   sets: WorkoutSet[];
   previousSets: Array<{
     weight: number | null;
@@ -539,6 +542,8 @@ export const initialiseExercises = (
       rir?: number | null;
     }>;
     exerciseNotes?: string | null;
+    plateStartingWeight?: number | null;
+    plateLoadMode?: PlateLoadMode | string | null;
     notes?: string | null;
     exerciseNotesSnapshot?: string | null;
     history?: WorkoutExercise["history"];
@@ -562,6 +567,10 @@ export const initialiseExercises = (
       userExerciseId: ex.userExerciseId,
       name: ex.name,
       exerciseNotes: ex.exerciseNotes,
+      plateStartingWeight: ex.plateStartingWeight ?? null,
+      plateLoadMode: ex.plateLoadMode
+        ? parsePlateLoadMode(ex.plateLoadMode)
+        : null,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
         const isPrevBodyweight = s.weightModifier === "bodyweight";
@@ -594,6 +603,12 @@ export const initialiseExercises = (
       notes: [],
     } satisfies WorkoutExercise;
   });
+
+export function parsePlateLoadMode(
+  value: string | null | undefined,
+): PlateLoadMode {
+  return value === "total" ? "total" : "equal-sides";
+}
 
 /**
  * Get previous workout data for a set based on its position
@@ -742,6 +757,12 @@ export type Action =
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
   | { type: "UPDATE_USER_EXERCISE_NOTE"; exerciseIndex: number; note: string }
+  | {
+      type: "UPDATE_USER_EXERCISE_PLATE_DEFAULTS";
+      exerciseIndex: number;
+      plateStartingWeight: number | null;
+      plateLoadMode: PlateLoadMode;
+    }
   | { type: "ADD_EXERCISE_NOTE"; exerciseIndex: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
   | { type: "UPDATE_NOTES"; exerciseIndex: number; notes: string }
@@ -1403,6 +1424,26 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedExercise: WorkoutExercise = {
         ...exercise,
         exerciseNotes: action.note.trim(),
+      };
+
+      return {
+        ...state,
+        exercises: replaceExercise(
+          state.exercises,
+          action.exerciseIndex,
+          updatedExercise,
+        ),
+      };
+    }
+
+    case "UPDATE_USER_EXERCISE_PLATE_DEFAULTS": {
+      const exercise = state.exercises[action.exerciseIndex];
+      if (!exercise) return state;
+
+      const updatedExercise: WorkoutExercise = {
+        ...exercise,
+        plateStartingWeight: action.plateStartingWeight,
+        plateLoadMode: action.plateLoadMode,
       };
 
       return {
