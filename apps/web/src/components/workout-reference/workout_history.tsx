@@ -13,7 +13,12 @@ import {
   TimelineFootnoteMarker,
   TimelineFootnoteRef,
 } from "@/components/workout-reference/timeline_notes";
+import {
+  ChartContainer,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { estimate1RM } from "@lift-prog/workout-core";
+import { LabelList, Line, LineChart, XAxis, YAxis } from "recharts";
 
 export function HistoryDisclosure({
   expanded,
@@ -112,13 +117,16 @@ export function HistoryViewport({ history }: { history: PreviousExercise[] }) {
 }
 
 type HistoryStats = {
-  count: number;
-  primaryLabel: string;
-  primaryTrend: string;
-  volumeTrend: string;
+  chartCount: number;
+  e1rmPoints: HistoryChartPoint[];
+  volumePoints: HistoryChartPoint[];
   bestSet: string;
-  frequency: string;
-  sparkline: number[];
+};
+
+type HistoryChartPoint = {
+  label: string;
+  value: number;
+  displayValue: string;
 };
 
 function HistoryStatsItem({
@@ -131,17 +139,16 @@ function HistoryStatsItem({
   return (
     <article
       ref={refCallback}
-      className="flex min-w-full snap-start flex-col gap-1 pr-1 text-[12px] leading-4"
+      className="flex min-w-full snap-start flex-col gap-1.5 pr-1 text-[12px] leading-4"
     >
       <p className="text-[12px] leading-4 text-[#716b5d]">
-        stats · {stats.count} workouts
+        stats · last {stats.chartCount}{" "}
+        {stats.chartCount === 1 ? "workout" : "workouts"}
       </p>
-      <MiniSparkline values={stats.sparkline} />
+      <HistoryTinyChart title="expected 1rm" points={stats.e1rmPoints} />
+      <HistoryTinyChart title="volume" points={stats.volumePoints} />
       <div className="grid gap-0.5">
-        <StatsLine label={stats.primaryLabel} value={stats.primaryTrend} />
-        <StatsLine label="best" value={stats.bestSet} />
-        <StatsLine label="volume" value={stats.volumeTrend} />
-        <StatsLine label="seen" value={stats.frequency} />
+        <StatsLine label="best set" value={stats.bestSet} />
       </div>
     </article>
   );
@@ -156,40 +163,81 @@ function StatsLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MiniSparkline({ values }: { values: number[] }) {
-  if (values.length < 2) {
-    return <div className="h-6 text-[11px] text-[#8a8373]">more data soon</div>;
-  }
+const historyChartConfig = {
+  value: {
+    label: "pounds",
+    color: "#a79b83",
+  },
+} satisfies ChartConfig;
 
+function HistoryTinyChart({
+  title,
+  points,
+}: {
+  title: string;
+  points: HistoryChartPoint[];
+}) {
+  return (
+    <div className="flex flex-col gap-px">
+      <p className="text-[10px] leading-3 text-[#8a8373] lowercase">{title}</p>
+      {points.length > 0 ? (
+        <ChartContainer
+          config={historyChartConfig}
+          className="h-12 w-full aspect-auto text-[10px]"
+          aria-label={`${title}: ${points
+            .map((point) => point.displayValue)
+            .join(", ")}`}
+        >
+          <LineChart
+            data={points}
+            margin={{ top: 18, right: 14, bottom: 2, left: 14 }}
+          >
+            <XAxis dataKey="label" hide />
+            <YAxis hide domain={getChartDomain(points)} />
+            <Line
+              dataKey="value"
+              type="monotone"
+              stroke="var(--color-value)"
+              strokeWidth={1.5}
+              dot={{
+                r: 2.5,
+                strokeWidth: 0,
+                fill: "var(--color-value)",
+              }}
+              activeDot={false}
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey="displayValue"
+                position="top"
+                offset={4}
+                fill="#716b5d"
+                fontSize={10}
+              />
+            </Line>
+          </LineChart>
+        </ChartContainer>
+      ) : (
+        <div className="h-12 text-[11px] leading-4 text-[#8a8373]">
+          more data soon
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getChartDomain(points: HistoryChartPoint[]) {
+  const values = points.map((point) => point.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const range = max - min || 1;
-  const width = 160;
-  const height = 24;
-  const points = values
-    .map((value, index) => {
-      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / range) * (height - 4) - 2;
-      return `${roundSvgPoint(x)},${roundSvgPoint(y)}`;
-    })
-    .join(" ");
 
-  return (
-    <svg
-      aria-hidden="true"
-      className="h-6 w-full overflow-visible"
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke="#a79b83"
-        strokeWidth="1.5"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
-  );
+  if (min === max) {
+    const padding = Math.max(1, min * 0.1);
+    return [Math.max(0, min - padding), max + padding];
+  }
+
+  const padding = (max - min) * 0.2;
+  return [Math.max(0, min - padding), max + padding];
 }
 
 function HistoryItem({
@@ -366,17 +414,24 @@ type ParsedWorkoutStats = {
 function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
   if (history.length === 0) return null;
 
-  const chronological = history
+  const recentChronological = history
+    .slice(0, 5)
     .map((item) => ({ item, stats: getWorkoutStats(item) }))
     .reverse();
-  const e1rmPoints = chronological
-    .map((entry) => entry.stats.e1rm)
-    .filter((value): value is number => value != null);
-  const volumePoints = chronological
-    .map((entry) => entry.stats.volume)
-    .filter((value): value is number => value != null);
-  const sparkline = e1rmPoints.length >= 2 ? e1rmPoints : volumePoints;
-  const bestEntry = chronological.reduce<ParsedWorkoutStats | null>(
+  const allChronological = history
+    .map((item) => ({ item, stats: getWorkoutStats(item) }))
+    .reverse();
+  const e1rmPoints = recentChronological.flatMap((entry, index) =>
+    entry.stats.e1rm == null
+      ? []
+      : [toHistoryChartPoint(entry, index, entry.stats.e1rm)],
+  );
+  const volumePoints = recentChronological.flatMap((entry, index) =>
+    entry.stats.volume == null
+      ? []
+      : [toHistoryChartPoint(entry, index, entry.stats.volume)],
+  );
+  const bestEntry = allChronological.reduce<ParsedWorkoutStats | null>(
     (best, entry) => {
       if (!best || entry.stats.bestSetScore > best.bestSetScore) {
         return entry.stats;
@@ -387,17 +442,22 @@ function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
   );
 
   return {
-    count: history.length,
-    primaryLabel: e1rmPoints.length >= 2 ? "e1rm" : "load",
-    primaryTrend:
-      e1rmPoints.length >= 2
-        ? formatStatTrend(e1rmPoints, "lb")
-        : formatFallbackLoadTrend(chronological),
-    volumeTrend:
-      volumePoints.length >= 2 ? formatStatTrend(volumePoints, "lb") : "n/a",
+    chartCount: recentChronological.length,
+    e1rmPoints,
+    volumePoints,
     bestSet: bestEntry?.bestSet ?? "n/a",
-    frequency: formatFrequency(history),
-    sparkline,
+  };
+}
+
+function toHistoryChartPoint(
+  entry: { item: PreviousExercise; stats: ParsedWorkoutStats },
+  index: number,
+  value: number,
+): HistoryChartPoint {
+  return {
+    label: entry.item.date || entry.item.relation || `${index + 1}`,
+    value,
+    displayValue: `${formatStatNumber(value)}lb`,
   };
 }
 
@@ -451,52 +511,9 @@ function parseHistoryWeight(weight: string) {
   return numberMatch ? Number(numberMatch[0]) : null;
 }
 
-function formatStatTrend(values: number[], unit: string) {
-  const first = values[0]!;
-  const latest = values[values.length - 1]!;
-  const percent = first === 0 ? 0 : ((latest - first) / Math.abs(first)) * 100;
-  return `${formatStatNumber(first)}${unit} -> ${formatStatNumber(
-    latest,
-  )}${unit} · ${formatSignedPercent(percent)}`;
-}
-
-function formatFallbackLoadTrend(
-  chronological: Array<{ item: PreviousExercise; stats: ParsedWorkoutStats }>,
-) {
-  const bestLoads = chronological
-    .map((entry) =>
-      Math.max(
-        ...entry.item.workingSets
-          .map((set) => parseHistoryWeight(set.weight))
-          .filter((weight): weight is number => weight != null),
-      ),
-    )
-    .filter((weight) => Number.isFinite(weight));
-
-  if (bestLoads.length >= 2) return formatStatTrend(bestLoads, "lb");
-  if (bestLoads.length === 1) return `${formatStatNumber(bestLoads[0]!)}lb`;
-  return "n/a";
-}
-
-function formatFrequency(history: PreviousExercise[]) {
-  const oldest = history[history.length - 1];
-  if (!oldest?.relativeDate) return `${history.length} times`;
-  return `${history.length} times · since ${oldest.relativeDate}`;
-}
-
-function formatSignedPercent(value: number) {
-  const rounded = Math.round(value);
-  if (rounded === 0) return "same";
-  return `${rounded > 0 ? "+" : ""}${rounded}%`;
-}
-
 function formatStatNumber(value: number) {
   const rounded = Number(value.toFixed(1));
   return Number.isInteger(rounded)
     ? rounded.toLocaleString()
     : rounded.toLocaleString(undefined, { maximumFractionDigits: 1 });
-}
-
-function roundSvgPoint(value: number) {
-  return Number(value.toFixed(2));
 }
