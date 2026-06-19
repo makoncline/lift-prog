@@ -26,7 +26,7 @@ import { auth } from "@clerk/nextjs/server";
  * @see https://trpc.io/docs/server/context
  */
 export const createInnerTRPCContext = (opts: {
-  auth: Awaited<ReturnType<typeof auth>>; // Use Awaited return type
+  auth: { userId: string | null };
   db: typeof db;
   headers: Headers;
 }) => {
@@ -43,8 +43,13 @@ export const createInnerTRPCContext = (opts: {
  * Creates the full context for incoming requests.
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
-  // <-- Make async
-  const authData = await auth(); // <-- Await auth()
+  const localDevUserId =
+    process.env.NODE_ENV === "development" &&
+    !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+      ? (process.env.LOCAL_DEV_USER_ID ?? null)
+      : null;
+  const authData = localDevUserId ? { userId: localDevUserId } : await auth();
+
   return createInnerTRPCContext({
     auth: authData,
     db,
@@ -153,3 +158,24 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+const getAdminUserIds = () =>
+  new Set(
+    (process.env.ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((userId) => userId.trim())
+      .filter(Boolean),
+  );
+
+export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
+  const userId = ctx.session.userId;
+
+  if (!userId || !getAdminUserIds().has(userId)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Admin access required.",
+    });
+  }
+
+  return next({ ctx });
+});

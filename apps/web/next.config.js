@@ -7,6 +7,7 @@ import "./src/env.js";
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ["lift2.makon.dev"],
   transpilePackages: ["@lift-prog/workout-core"],
 };
 

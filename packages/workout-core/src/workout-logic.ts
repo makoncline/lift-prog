@@ -15,12 +15,14 @@ import { summarizeWorkingSets } from "./workout-summary";
 
 export type SetModifier = "warmup";
 export type WeightModifier = "bodyweight"; // New type for weight modifier
+export type SetRestType = "standard" | "short";
 
 export interface Note {
   text: string;
 }
 
 export interface WorkoutSet {
+  clientId?: string;
   weight: number | null; // lb
   reps: number | null;
   completed: boolean;
@@ -30,16 +32,40 @@ export interface WorkoutSet {
   prevReps: number | null;
   modifier?: SetModifier;
   weightModifier?: WeightModifier; // Added weight modifier field
+  restBefore?: SetRestType;
+  notes?: string;
+  rir?: number | null;
 }
 
 export interface WorkoutExercise {
+  userExerciseId?: number;
   name: string;
+  exerciseNotes?: string | null;
   sets: WorkoutSet[];
   previousSets: Array<{
     weight: number | null;
     reps: number | null;
     modifier?: SetModifier;
     weightModifier?: WeightModifier; // Ensure consistency if loading previous data
+    restBefore?: SetRestType;
+    notes?: string | null;
+    rir?: number | null;
+  }>;
+  history?: Array<{
+    relation: string;
+    relativeDate: string;
+    date: string;
+    workoutNote?: string | null;
+    workoutExerciseNote?: string | null;
+    exerciseNotesSnapshot?: string | null;
+    sets: Array<{
+      weight: number | null;
+      reps: number | null;
+      modifier?: SetModifier;
+      weightModifier?: WeightModifier;
+      restBefore?: SetRestType;
+      notes?: string | null;
+    }>;
   }>;
   previousSummary?: string;
   previousNotes?: string;
@@ -72,6 +98,134 @@ export const ONE_RM_INCREMENT = 0; // lb added to est. 1RM when progressing
 export const WEIGHT_STEP = 2.5; // lb, smallest plate increment
 
 // ----------------------  Pure helper functions  ------------------------
+
+const makeCompletedSet = ({
+  weight,
+  reps,
+  modifier,
+  weightModifier,
+  restBefore,
+  notes,
+}: {
+  weight: number | null;
+  reps: number | null;
+  modifier?: SetModifier;
+  weightModifier?: WeightModifier;
+  restBefore?: SetRestType;
+  notes?: string;
+}): WorkoutSet => ({
+  weight,
+  reps,
+  completed: weight !== null && reps !== null,
+  weightExplicit: weight !== null,
+  repsExplicit: reps !== null,
+  prevWeight: null,
+  prevReps: null,
+  ...(modifier ? { modifier } : {}),
+  ...(weightModifier ? { weightModifier } : {}),
+  ...(restBefore ? { restBefore } : {}),
+  ...(notes ? { notes } : {}),
+});
+
+const parseRepToken = (
+  token: string,
+): Array<{ reps: number; restBefore?: SetRestType; notes?: string }> => {
+  const parts = token
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.flatMap((part, index) => {
+    const match = part.match(/^(\d+)(?:\(([^)]+)\)|([a-zA-Z]+))?$/);
+    if (!match) return [];
+    return {
+      reps: Number(match[1]),
+      ...(index > 0 ? { restBefore: "short" as const } : {}),
+      ...((match[2] ?? match[3])
+        ? { notes: (match[2] ?? match[3])!.trim() }
+        : {}),
+    };
+  });
+};
+
+const parseWeightedGroup = (
+  group: string,
+): { weight: number; repsText: string; explicitWarmup: boolean } | null => {
+  const match = group.match(/^(W)?(\d+(?:\.\d+)?)(?:lb)?x(.+)$/i);
+  if (!match) return null;
+  return {
+    weight: Number(match[2]),
+    repsText: match[3]!,
+    explicitWarmup: Boolean(match[1]),
+  };
+};
+
+export function parseQuickSetLine(
+  line: string,
+  options: { bodyweight?: boolean } = {},
+): WorkoutSet[] {
+  const trimmedLine = line.trim();
+  const explicitBodyweight = /^bw(?:\s|[+-]?\d|x|$)/i.test(trimmedLine);
+  const compact = trimmedLine.replace(/^bw\s*/i, "").replace(/\s+/g, "");
+  if (!compact) return [];
+
+  if (
+    (options.bodyweight || explicitBodyweight) &&
+    (explicitBodyweight || !/^W?[+-]?\d+(?:\.\d+)?(?:lb)?x/i.test(compact)) &&
+    !compact.includes("-")
+  ) {
+    let currentWeight = 0;
+    return compact
+      .split(",")
+      .filter(Boolean)
+      .flatMap((group) => {
+        const weighted = group.match(/^([+-]?\d+(?:\.\d+)?)(?:lb)?x(.+)$/i);
+        if (weighted) currentWeight = Number(weighted[1]);
+        const repsText = weighted ? weighted[2]! : group;
+        return parseRepToken(repsText).map((rep) =>
+          makeCompletedSet({
+            weight: currentWeight,
+            reps: rep.reps,
+            weightModifier: "bodyweight",
+            restBefore: rep.restBefore,
+            notes: rep.notes,
+          }),
+        );
+      });
+  }
+
+  const groups = compact
+    .replace(/\s*-\s*/g, "-")
+    .split("-")
+    .filter(Boolean)
+    .map((hyphenGroup) =>
+      hyphenGroup
+        .split(";")
+        .filter(Boolean)
+        .map(parseWeightedGroup)
+        .filter((group): group is NonNullable<typeof group> => Boolean(group)),
+    );
+
+  return groups.flatMap((hyphenGroup, groupIndex) => {
+    const hyphenGroupIsWarmup = groupIndex < groups.length - 1;
+    return hyphenGroup.flatMap((group) => {
+      const isWarmup = group.explicitWarmup || hyphenGroupIsWarmup;
+      return group.repsText
+        .split(",")
+        .filter(Boolean)
+        .flatMap((token) =>
+          parseRepToken(token).map((rep) =>
+            makeCompletedSet({
+              weight: group.weight,
+              reps: rep.reps,
+              modifier: isWarmup ? "warmup" : undefined,
+              restBefore: rep.restBefore,
+              notes: rep.notes,
+            }),
+          ),
+        );
+    });
+  });
+}
 
 /** Brzycki 1‑rep‑max formula. Safe for reps ∈ [1,12] */
 export const estimate1RM = (weight: number, reps: number): number =>
@@ -372,6 +526,7 @@ export type PreviousExerciseData = Parameters<
 
 export const initialiseExercises = (
   previous: {
+    userExerciseId?: number;
     name: string;
     sets: Array<{
       weight: number | null;
@@ -379,8 +534,14 @@ export const initialiseExercises = (
       isWarmup?: boolean;
       modifier?: SetModifier;
       weightModifier?: WeightModifier;
+      restBefore?: SetRestType;
+      notes?: string | null;
+      rir?: number | null;
     }>;
+    exerciseNotes?: string | null;
     notes?: string | null;
+    exerciseNotesSnapshot?: string | null;
+    history?: WorkoutExercise["history"];
   }[],
 ): WorkoutExercise[] =>
   previous.map((ex) => {
@@ -389,13 +550,18 @@ export const initialiseExercises = (
       reps: s.reps,
       modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
       weightModifier: s.weightModifier,
+      restBefore: s.restBefore,
+      notes: s.notes,
+      rir: s.rir,
     }));
 
     const previousSummary = summarizeWorkingSets(ex.name, normalizedSets);
     const previousNotes = ex.notes ?? undefined;
 
     return {
+      userExerciseId: ex.userExerciseId,
       name: ex.name,
+      exerciseNotes: ex.exerciseNotes,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
         const isPrevBodyweight = s.weightModifier === "bodyweight";
@@ -409,6 +575,8 @@ export const initialiseExercises = (
           prevReps: s.reps,
           modifier,
           weightModifier: s.weightModifier,
+          restBefore: s.restBefore,
+          rir: s.rir,
         };
       }),
       previousSets: normalizedSets.map((s) => ({
@@ -416,7 +584,11 @@ export const initialiseExercises = (
         reps: s.reps,
         modifier: s.modifier,
         weightModifier: s.weightModifier,
+        restBefore: s.restBefore,
+        notes: s.notes,
+        rir: s.rir,
       })),
+      history: ex.history,
       previousSummary,
       previousNotes,
       notes: [],
@@ -514,8 +686,62 @@ export type Action =
   | { type: "TOGGLE_BODYWEIGHT" }
   | { type: "DELETE_SET"; exerciseIndex: number; setIndex: number }
   | { type: "ADD_SET"; exerciseIndex: number }
+  | {
+      type: "REPLACE_EXERCISE_SETS";
+      exerciseIndex: number;
+      sets: WorkoutSet[];
+    }
+  | {
+      type: "UPDATE_SET_NOTE";
+      exerciseIndex: number;
+      setIndex: number;
+      notes: string;
+    }
+  | {
+      type: "UPDATE_SET_RIR";
+      exerciseIndex: number;
+      setIndex: number;
+      rir: number | null;
+    }
+  | {
+      type: "SET_REST_BEFORE";
+      exerciseIndex: number;
+      setIndex: number;
+      restBefore: SetRestType | undefined;
+    }
+  | {
+      type: "UPDATE_SET_WEIGHT";
+      exerciseIndex: number;
+      setIndex: number;
+      weight: number | null;
+    }
+  | {
+      type: "UPDATE_SET_REPS";
+      exerciseIndex: number;
+      setIndex: number;
+      reps: number | null;
+    }
+  | {
+      type: "APPLY_QUICK_SET_LINE";
+      exerciseIndex: number;
+      line: string;
+    }
+  | { type: "UPDATE_WORKOUT_START_TIME"; startTime: number }
+  | { type: "ADD_EXERCISE"; exercise: WorkoutExercise }
+  | { type: "DELETE_EXERCISE"; exerciseIndex: number }
+  | {
+      type: "MOVE_EXERCISE";
+      exerciseIndex: number;
+      direction: 1 | -1;
+    }
+  | {
+      type: "MOVE_EXERCISE_TO";
+      exerciseIndex: number;
+      targetIndex: number;
+    }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
+  | { type: "UPDATE_USER_EXERCISE_NOTE"; exerciseIndex: number; note: string }
   | { type: "ADD_EXERCISE_NOTE"; exerciseIndex: number; text: string }
   | { type: "ADD_WORKOUT_NOTE"; text: string }
   | { type: "UPDATE_NOTES"; exerciseIndex: number; notes: string }
@@ -863,12 +1089,293 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         ...exPrev,
         sets: [...exPrev.sets, newSet],
       };
+      const newSetIndex = updatedExercise.sets.length - 1;
       const newExercises = replaceExercise(
         state.exercises,
         exerciseIndex,
         updatedExercise,
       );
-      return { ...state, exercises: newExercises };
+      return {
+        ...state,
+        exercises: newExercises,
+        activeField: { exerciseIndex, setIndex: newSetIndex, field: "weight" },
+        inputValue: "",
+        isFirstInteraction: true,
+      };
+    }
+
+    case "REPLACE_EXERCISE_SETS": {
+      const { exerciseIndex, sets } = action;
+      const exercise = state.exercises[exerciseIndex];
+      if (!exercise) return state;
+
+      return {
+        ...state,
+        exercises: replaceExercise(state.exercises, exerciseIndex, {
+          ...exercise,
+          sets,
+        }),
+        activeField: { exerciseIndex: null, setIndex: null, field: null },
+        inputValue: "",
+        isFirstInteraction: false,
+      };
+    }
+
+    case "UPDATE_SET_NOTE": {
+      const { exerciseIndex, setIndex, notes } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = {
+        ...set,
+        notes: notes.trim() ? notes : undefined,
+      };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "UPDATE_SET_RIR": {
+      const { exerciseIndex, setIndex, rir } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = { ...set, rir };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "SET_REST_BEFORE": {
+      const { exerciseIndex, setIndex, restBefore } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = { ...set, restBefore };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "UPDATE_SET_WEIGHT": {
+      const { exerciseIndex, setIndex, weight } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = {
+        ...set,
+        weight,
+        weightExplicit: weight !== null,
+        completed: weight !== null && set.reps !== null ? true : set.completed,
+      };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "UPDATE_SET_REPS": {
+      const { exerciseIndex, setIndex, reps } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = {
+        ...set,
+        reps,
+        repsExplicit: reps !== null,
+        completed: set.weight !== null && reps !== null ? true : set.completed,
+      };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "UPDATE_WORKOUT_START_TIME": {
+      return {
+        ...state,
+        startTime: action.startTime,
+      };
+    }
+
+    case "APPLY_QUICK_SET_LINE": {
+      const { exerciseIndex, line } = action;
+      const ex = state.exercises[exerciseIndex];
+      if (!ex) return state;
+      const parsedSets = parseQuickSetLine(line, {
+        bodyweight:
+          ex.sets.some((set) => set.weightModifier === "bodyweight") ||
+          ex.previousSets.some((set) => set.weightModifier === "bodyweight"),
+      });
+      if (parsedSets.length === 0) return state;
+      return {
+        ...state,
+        exercises: replaceExercise(state.exercises, exerciseIndex, {
+          ...ex,
+          sets: parsedSets,
+        }),
+        activeField: { exerciseIndex: null, setIndex: null, field: null },
+        inputValue: "",
+      };
+    }
+
+    case "ADD_EXERCISE": {
+      return {
+        ...state,
+        exercises: [...state.exercises, action.exercise],
+        currentExerciseIndex: state.exercises.length,
+      };
+    }
+
+    case "DELETE_EXERCISE": {
+      const { exerciseIndex } = action;
+      if (exerciseIndex < 0 || exerciseIndex >= state.exercises.length) {
+        return state;
+      }
+
+      const nextExercises = state.exercises.filter(
+        (_, index) => index !== exerciseIndex,
+      );
+      const activeField =
+        state.activeField.exerciseIndex === exerciseIndex
+          ? { exerciseIndex: null, setIndex: null, field: null }
+          : state.activeField.exerciseIndex != null &&
+              state.activeField.exerciseIndex > exerciseIndex
+            ? {
+                ...state.activeField,
+                exerciseIndex: state.activeField.exerciseIndex - 1,
+              }
+            : state.activeField;
+
+      return {
+        ...state,
+        exercises: nextExercises,
+        currentExerciseIndex: Math.min(
+          state.currentExerciseIndex,
+          Math.max(0, nextExercises.length - 1),
+        ),
+        activeField,
+        inputValue: activeField.exerciseIndex == null ? "" : state.inputValue,
+      };
+    }
+
+    case "MOVE_EXERCISE": {
+      const { exerciseIndex, direction } = action;
+      const targetIndex = exerciseIndex + direction;
+      if (
+        exerciseIndex < 0 ||
+        targetIndex < 0 ||
+        exerciseIndex >= state.exercises.length ||
+        targetIndex >= state.exercises.length
+      ) {
+        return state;
+      }
+
+      const nextExercises = [...state.exercises];
+      const moving = nextExercises[exerciseIndex];
+      const target = nextExercises[targetIndex];
+      if (!moving || !target) return state;
+      nextExercises[exerciseIndex] = target;
+      nextExercises[targetIndex] = moving;
+
+      const activeField =
+        state.activeField.exerciseIndex === exerciseIndex
+          ? { ...state.activeField, exerciseIndex: targetIndex }
+          : state.activeField.exerciseIndex === targetIndex
+            ? { ...state.activeField, exerciseIndex }
+            : state.activeField;
+
+      return {
+        ...state,
+        exercises: nextExercises,
+        currentExerciseIndex:
+          state.currentExerciseIndex === exerciseIndex
+            ? targetIndex
+            : state.currentExerciseIndex === targetIndex
+              ? exerciseIndex
+              : state.currentExerciseIndex,
+        activeField,
+      };
+    }
+
+    case "MOVE_EXERCISE_TO": {
+      const { exerciseIndex, targetIndex } = action;
+      if (
+        exerciseIndex < 0 ||
+        targetIndex < 0 ||
+        exerciseIndex >= state.exercises.length ||
+        targetIndex >= state.exercises.length ||
+        exerciseIndex === targetIndex
+      ) {
+        return state;
+      }
+
+      const nextExercises = [...state.exercises];
+      const [moving] = nextExercises.splice(exerciseIndex, 1);
+      if (!moving) return state;
+      nextExercises.splice(targetIndex, 0, moving);
+
+      const remapIndex = (index: number) => {
+        if (index === exerciseIndex) return targetIndex;
+        if (
+          exerciseIndex < targetIndex &&
+          index > exerciseIndex &&
+          index <= targetIndex
+        ) {
+          return index - 1;
+        }
+        if (
+          exerciseIndex > targetIndex &&
+          index >= targetIndex &&
+          index < exerciseIndex
+        ) {
+          return index + 1;
+        }
+        return index;
+      };
+
+      const activeField =
+        state.activeField.exerciseIndex == null
+          ? state.activeField
+          : {
+              ...state.activeField,
+              exerciseIndex: remapIndex(state.activeField.exerciseIndex),
+            };
+
+      return {
+        ...state,
+        exercises: nextExercises,
+        currentExerciseIndex: remapIndex(state.currentExerciseIndex),
+        activeField,
+      };
     }
 
     case "NAV_EXERCISE": {
@@ -886,6 +1393,25 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         ...state,
         activeField: { exerciseIndex: null, setIndex: null, field: null },
         inputValue: "",
+      };
+    }
+
+    case "UPDATE_USER_EXERCISE_NOTE": {
+      const exercise = state.exercises[action.exerciseIndex];
+      if (!exercise) return state;
+
+      const updatedExercise: WorkoutExercise = {
+        ...exercise,
+        exerciseNotes: action.note.trim(),
+      };
+
+      return {
+        ...state,
+        exercises: replaceExercise(
+          state.exercises,
+          action.exerciseIndex,
+          updatedExercise,
+        ),
       };
     }
 
@@ -1280,18 +1806,32 @@ export function finalizeWorkout(
 ): CompletedWorkout {
   const completedExercises: CompletedExercise[] = state.exercises
     .map((ex, exIndex) => {
-      const completedSets: CompletedSet[] = ex.sets.map((set, index) => ({
-        weight: set.weight,
-        reps: set.reps,
-        modifier: set.modifier ?? null,
-        weightModifier: set.weightModifier ?? null,
-        order: index + 1,
-        completed: set.completed,
-      }));
+      const completedSets: CompletedSet[] = ex.sets.map((set, index) => {
+        const previousSet = ex.previousSets[index];
+        const weight =
+          set.weight ?? set.prevWeight ?? previousSet?.weight ?? null;
+        const reps = set.reps ?? set.prevReps ?? previousSet?.reps ?? null;
+
+        return {
+          weight,
+          reps,
+          modifier: set.modifier ?? null,
+          weightModifier:
+            set.weightModifier ?? previousSet?.weightModifier ?? null,
+          restBefore: set.restBefore ?? previousSet?.restBefore ?? null,
+          notes: set.notes,
+          rir: set.rir ?? null,
+          order: index + 1,
+          completed: set.completed || (weight !== null && reps !== null),
+        };
+      });
 
       return {
+        userExerciseId: ex.userExerciseId,
         name: ex.name,
         sets: completedSets,
+        exerciseNotes: ex.exerciseNotes ?? undefined,
+        exerciseNotesSnapshot: ex.exerciseNotes?.trim() || undefined,
         notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
         order: exIndex + 1,
       };

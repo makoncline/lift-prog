@@ -20,20 +20,45 @@ enum WeightModifier {
   bodyweight
 }
 
+enum RestType {
+  standard
+  short
+}
+
 model User {
-  id              String    @id
-  clerkUserId     String    @unique
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id              String         @id
+  clerkUserId     String         @unique
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
   workoutSessions Workout[]
+  userExercises   UserExercise[]
 }
 
 model Exercise {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  description   String?
+  mediaUrl      String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  userExercises UserExercise[]
+}
+
+model UserExercise {
   id               Int               @id @default(autoincrement())
-  name             String            @unique
+  userId           String
+  exerciseId       Int?
+  name             String
+  notes            String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise         Exercise?         @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
   workoutExercises WorkoutExercise[]
+
+  @@unique([userId, name])
+  @@index([exerciseId])
+  @@index([userId])
 }
 
 model Workout {
@@ -53,19 +78,20 @@ model Workout {
 }
 
 model WorkoutExercise {
-  id               Int                  @id @default(autoincrement())
-  workoutSessionId Int
-  exerciseId       Int
-  order            Int
-  notes            String?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  workout          Workout              @relation(fields: [workoutSessionId], references: [id], onDelete: Cascade)
-  exercise         Exercise             @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
-  sets             WorkoutExerciseSet[]
+  id                    Int                  @id @default(autoincrement())
+  workoutSessionId      Int
+  userExerciseId        Int
+  order                 Int
+  notes                 String?
+  exerciseNotesSnapshot String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  workout               Workout              @relation(fields: [workoutSessionId], references: [id], onDelete: Cascade)
+  userExercise          UserExercise         @relation(fields: [userExerciseId], references: [id], onDelete: Restrict)
+  sets                  WorkoutExerciseSet[]
 
   @@index([workoutSessionId])
-  @@index([exerciseId])
+  @@index([userExerciseId])
 }
 
 model WorkoutExerciseSet {
@@ -76,6 +102,9 @@ model WorkoutExerciseSet {
   weightModifier    WeightModifier?
   reps              Int?
   modifier          Modifier?
+  restBefore        RestType?
+  notes             String?
+  rir               Int?
   completed         Boolean         @default(true)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt

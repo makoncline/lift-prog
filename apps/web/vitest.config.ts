@@ -20,6 +20,14 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "./src"),
       "~": resolve(__dirname, "./src"),
+      "@lift-prog/workout-core": resolve(
+        __dirname,
+        "../../packages/workout-core/src/index.ts",
+      ),
+      "@lift-prog/workout-sdk": resolve(
+        __dirname,
+        "../../packages/workout-sdk/src/index.ts",
+      ),
     },
   },
 });

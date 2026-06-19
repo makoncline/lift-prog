@@ -46,6 +46,7 @@ export const env = createEnv({
     TURSO_DATABASE_URL: z.string(),
     TURSO_AUTH_TOKEN: z.string(),
     CLERK_SECRET_KEY: z.string(),
+    ADMIN_USER_IDS: z.string().optional(),
   },
 
   /**
@@ -66,6 +67,7 @@ export const env = createEnv({
     TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
     TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
     CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+    ADMIN_USER_IDS: process.env.ADMIN_USER_IDS,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
       process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
   },

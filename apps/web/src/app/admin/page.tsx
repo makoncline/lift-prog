@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2, Trash2, UserCog } from "lucide-react";
-import type { User, Exercise } from "@prisma/client"; // Import generated types
+import type { User } from "@prisma/client"; // Import generated types
 import { api } from "@/trpc/react";
 
 // --- Exercise Management --- //
@@ -32,9 +32,10 @@ import { api } from "@/trpc/react";
 function ExerciseManager() {
   const utils = api.useUtils(); // For invalidating cache
   const [newExerciseName, setNewExerciseName] = useState("");
-  const [exerciseToDelete, setExerciseToDelete] = useState<Exercise | null>(
-    null,
-  );
+  const [exerciseToDelete, setExerciseToDelete] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
 
   const exercisesQuery = api.exercise.list.useQuery();
 
@@ -193,6 +194,9 @@ function ExerciseManager() {
 
 // --- User Management --- //
 
+const isUserManagementAccessError = (code: string | undefined) =>
+  code === "FORBIDDEN" || code === "UNAUTHORIZED";
+
 function UserManager() {
   const utils = api.useUtils();
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -208,7 +212,11 @@ function UserManager() {
       setNewUserClerkId(""); // Clear input
     },
     onError: (error) => {
-      toast.error(`Error adding user: ${error.message}`);
+      toast.error(
+        isUserManagementAccessError(error.data?.code)
+          ? "You do not have permission to manage users."
+          : `Error adding user: ${error.message}`,
+      );
     },
   });
 
@@ -219,9 +227,28 @@ function UserManager() {
       setUserToDelete(null);
     },
     onError: (error) => {
-      toast.error(`Error deleting user: ${error.message}`);
+      toast.error(
+        isUserManagementAccessError(error.data?.code)
+          ? "You do not have permission to manage users."
+          : `Error deleting user: ${error.message}`,
+      );
     },
   });
+
+  const usersQueryErrorCode = usersQuery.error?.data?.code;
+  const userManagementAccessDenied =
+    usersQuery.isError && isUserManagementAccessError(usersQueryErrorCode);
+
+  if (userManagementAccessDenied) {
+    return (
+      <section>
+        <H3 className="mb-4 border-b pb-2">Manage Users</H3>
+        <P className="text-destructive">
+          You do not have permission to manage users.
+        </P>
+      </section>
+    );
+  }
 
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();

@@ -9,7 +9,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "~/*": ["./src/*"],
-      "@lift-prog/workout-core": ["../../packages/workout-core/src/index.ts"]
+      "@lift-prog/workout-core": ["../../packages/workout-core/src/index.ts"],
+      "@lift-prog/workout-sdk": ["../../packages/workout-sdk/src/index.ts"]
     },
     "types": ["vitest/globals", "@testing-library/jest-dom"]
   },

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const setModifierSchema = z.enum(["warmup"]);
 const weightModifierSchema = z.enum(["bodyweight"]);
+const restTypeSchema = z.enum(["standard", "short"]);
 
 export const CompletedSetSchema = z.object({
   order: z.number(),
@@ -9,13 +10,19 @@ export const CompletedSetSchema = z.object({
   reps: z.number().nullable(),
   modifier: setModifierSchema.nullable(),
   weightModifier: weightModifierSchema.nullable(),
+  restBefore: restTypeSchema.nullable().optional(),
+  notes: z.string().optional(),
+  rir: z.number().int().min(0).max(10).nullable().optional(),
   completed: z.boolean(),
 });
 
 export const CompletedExerciseSchema = z.object({
+  userExerciseId: z.number().optional(),
   name: z.string(),
   order: z.number(),
+  exerciseNotes: z.string().optional(),
   notes: z.string().optional(),
+  exerciseNotesSnapshot: z.string().optional(),
   sets: z.array(CompletedSetSchema),
 });
 
