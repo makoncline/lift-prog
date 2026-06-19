@@ -20,7 +20,10 @@ import type {
   PreviousExercise,
   SetChangeOptions,
 } from "@/components/workout-reference/workout_reference_types";
-import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
+import {
+  PlateSettingsControls,
+  type PlateSettings,
+} from "@/components/workout-reference/weight_helper_dialog";
 import type { PlateMode } from "@/lib/weight-helper";
 
 type PreviousWorkoutExerciseProps = {
@@ -112,7 +115,15 @@ export function PreviousWorkoutExercise({
         onOpenChange={setUserExerciseNoteEditorOpen}
         onSave={(note) => onExerciseNoteChange?.(note)}
         onDelete={() => onExerciseNoteChange?.("")}
-      />
+      >
+        {onPlateSettingsChange ? (
+          <PlateSettingsControls
+            defaultStartingWeight={plateStartingWeight}
+            defaultLoadMode={plateLoadMode}
+            onSettingsChange={onPlateSettingsChange}
+          />
+        ) : null}
+      </NoteEditorDialog>
       <NoteEditorDialog
         open={workoutExerciseNoteEditorOpen}
         title={`${exerciseName} note for this workout`}

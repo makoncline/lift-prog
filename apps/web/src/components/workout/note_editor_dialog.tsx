@@ -2,11 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useState } from "react";
-import {
-  Dialog,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import {
   ConfirmableNoteDeleteAction,
   NoteEditorActions,
@@ -23,6 +19,7 @@ export function NoteEditorDialog({
   label,
   note,
   deleteLabel,
+  children,
   onOpenChange,
   onSave,
   onDelete,
@@ -33,6 +30,7 @@ export function NoteEditorDialog({
   label: ReactNode;
   note: string;
   deleteLabel: string;
+  children?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onSave: (note: string) => void;
   onDelete: () => void;
@@ -47,6 +45,7 @@ export function NoteEditorDialog({
           label={label}
           note={note}
           deleteLabel={deleteLabel}
+          controls={children}
           onOpenChange={onOpenChange}
           onSave={onSave}
           onDelete={onDelete}
@@ -62,6 +61,7 @@ function NoteEditorDialogContent({
   label,
   note,
   deleteLabel,
+  controls,
   onOpenChange,
   onSave,
   onDelete,
@@ -71,6 +71,7 @@ function NoteEditorDialogContent({
   label: ReactNode;
   note: string;
   deleteLabel: string;
+  controls?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onSave: (note: string) => void;
   onDelete: () => void;
@@ -110,6 +111,7 @@ function NoteEditorDialogContent({
         className="min-h-24 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[16px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
         onChange={(event) => setDraft(event.target.value)}
       />
+      {controls}
       <NoteEditorActions onDone={save}>
         {note.trim() ? (
           <ConfirmableNoteDeleteAction

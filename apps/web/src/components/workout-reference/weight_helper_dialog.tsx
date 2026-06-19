@@ -450,6 +450,72 @@ function PlateHelper({
   defaultLoadMode?: PlateMode | null;
   onSettingsChange?: (settings: PlateSettings) => void;
 }) {
+  const [settings, setSettings] = useState<PlateSettings>(() => ({
+    startingWeight: defaultStartingWeight ?? 45,
+    loadMode: parsePlateMode(defaultLoadMode),
+  }));
+  const startingWeight = settings.startingWeight ?? 0;
+  const mode = settings.loadMode;
+  const platePlan = calculatePlatePlan(defaultWeight, startingWeight, mode);
+
+  function updateSettings(nextSettings: PlateSettings) {
+    setSettings(nextSettings);
+    onSettingsChange?.(nextSettings);
+  }
+
+  return (
+    <div className="space-y-2 text-[12px] leading-5">
+      <div className="flex min-w-0 flex-wrap items-end gap-2">
+        <div className="space-y-1">
+          <FieldLabel>total weight</FieldLabel>
+          <div className="inline-flex h-5 items-baseline">
+            <span className="font-mono text-[16px] leading-none">
+              {formatNumber(defaultWeight)}
+            </span>
+            <span className="text-[11px] leading-none text-[#716b5d]">lb</span>
+          </div>
+        </div>
+
+        <PlateSettingsControls
+          defaultStartingWeight={settings.startingWeight}
+          defaultLoadMode={settings.loadMode}
+          onSettingsChange={updateSettings}
+        />
+      </div>
+
+      <div className="space-y-1">
+        {!platePlan.error ? <PlatePlanDisplay plan={platePlan} /> : null}
+        {platePlan?.error ? (
+          <>
+            <HelperLine
+              left="start"
+              right={
+                startingWeight > 0
+                  ? `${formatNumber(startingWeight)}lb`
+                  : "none"
+              }
+            />
+            <HelperLine
+              left={mode === "equal-sides" ? "each" : "load"}
+              right={platePlan.title}
+            />
+            <HelperLine left="-" right={platePlan.error} />
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function PlateSettingsControls({
+  defaultStartingWeight,
+  defaultLoadMode,
+  onSettingsChange,
+}: {
+  defaultStartingWeight?: number | null;
+  defaultLoadMode?: PlateMode | null;
+  onSettingsChange: (settings: PlateSettings) => void;
+}) {
   const initialStartingWeight = defaultStartingWeight ?? 45;
   const [startingWeightValue, setStartingWeightValue] =
     useState<StartingWeightValue>(() =>
@@ -463,10 +529,9 @@ function PlateHelper({
     startingWeightValue,
     customStartingWeightText,
   );
-  const platePlan = calculatePlatePlan(defaultWeight, startingWeight, mode);
 
   function saveSettings(nextStartingWeight: number, nextMode: PlateMode) {
-    onSettingsChange?.({
+    onSettingsChange({
       startingWeight: nextStartingWeight,
       loadMode: nextMode,
     });
@@ -494,56 +559,44 @@ function PlateHelper({
 
   return (
     <div className="space-y-2 text-[12px] leading-5">
-      <div className="flex min-w-0 flex-wrap items-end gap-2">
-        <div className="space-y-1">
-          <FieldLabel>total weight</FieldLabel>
-          <div className="inline-flex h-5 items-baseline">
-            <span className="font-mono text-[16px] leading-none">
-              {formatNumber(defaultWeight)}
-            </span>
-            <span className="text-[11px] leading-none text-[#716b5d]">lb</span>
-          </div>
-        </div>
-
-        <div className="min-w-0 space-y-1">
-          <FieldLabel>starting weight</FieldLabel>
-          <div className="flex flex-wrap items-center gap-1">
-            <Select
-              value={startingWeightValue}
-              onValueChange={(value) =>
-                updateStartingWeightValue(value as StartingWeightValue)
-              }
+      <div className="min-w-0 space-y-1">
+        <FieldLabel>starting weight</FieldLabel>
+        <div className="flex flex-wrap items-center gap-1">
+          <Select
+            value={startingWeightValue}
+            onValueChange={(value) =>
+              updateStartingWeightValue(value as StartingWeightValue)
+            }
+          >
+            <SelectTrigger
+              aria-label="starting weight"
+              className="!h-5 min-w-[5.25rem] !gap-1 rounded-[3px] border-[#d7cfbc] bg-[#fdfcf8] !px-1 !py-0 font-mono text-[11px] leading-none text-[#17150f] shadow-none focus:ring-[#a79b83] [&_svg]:!size-3"
             >
-              <SelectTrigger
-                aria-label="starting weight"
-                className="!h-5 min-w-[5.25rem] !gap-1 rounded-[3px] border-[#d7cfbc] bg-[#fdfcf8] !px-1 !py-0 font-mono text-[11px] leading-none text-[#17150f] shadow-none focus:ring-[#a79b83] [&_svg]:!size-3"
-              >
-                <span className="min-w-0 truncate">
-                  {getStartingWeightLabel(startingWeightValue)}
-                </span>
-              </SelectTrigger>
-              <SelectContent className="!z-[80] rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[#17150f] shadow-none">
-                {BARS.map((bar) => (
-                  <SelectItem
-                    key={bar.value}
-                    value={bar.value}
-                    className="font-mono text-[12px] focus:bg-[#eee8da]"
-                  >
-                    {bar.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {startingWeightValue === "custom" ? (
-              <NumericInput
-                value={customStartingWeightText}
-                onChange={updateCustomStartingWeightText}
-                ariaLabel="custom starting weight"
-                suffix="lb"
-                className="w-[5.25rem]"
-              />
-            ) : null}
-          </div>
+              <span className="min-w-0 truncate">
+                {getStartingWeightLabel(startingWeightValue)}
+              </span>
+            </SelectTrigger>
+            <SelectContent className="!z-[80] rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[#17150f] shadow-none">
+              {BARS.map((bar) => (
+                <SelectItem
+                  key={bar.value}
+                  value={bar.value}
+                  className="font-mono text-[12px] focus:bg-[#eee8da]"
+                >
+                  {bar.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {startingWeightValue === "custom" ? (
+            <NumericInput
+              value={customStartingWeightText}
+              onChange={updateCustomStartingWeightText}
+              ariaLabel="custom starting weight"
+              suffix="lb"
+              className="w-[5.25rem]"
+            />
+          ) : null}
         </div>
       </div>
 
@@ -560,27 +613,6 @@ function PlateHelper({
         >
           total load
         </SegmentedButton>
-      </div>
-
-      <div className="space-y-1">
-        {!platePlan.error ? <PlatePlanDisplay plan={platePlan} /> : null}
-        {platePlan?.error ? (
-          <>
-            <HelperLine
-              left="start"
-              right={
-                startingWeight > 0
-                  ? `${formatNumber(startingWeight)}lb`
-                  : "none"
-              }
-            />
-            <HelperLine
-              left={mode === "equal-sides" ? "each" : "load"}
-              right={platePlan.title}
-            />
-            <HelperLine left="-" right={platePlan.error} />
-          </>
-        ) : null}
       </div>
     </div>
   );
