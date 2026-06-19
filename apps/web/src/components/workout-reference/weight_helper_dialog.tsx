@@ -443,7 +443,7 @@ function PlateHelper({ defaultWeight }: { defaultWeight: number }) {
                   {getStartingWeightLabel(startingWeightValue)}
                 </span>
               </SelectTrigger>
-              <SelectContent className="rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[#17150f] shadow-none">
+              <SelectContent className="!z-[80] rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[#17150f] shadow-none">
                 {BARS.map((bar) => (
                   <SelectItem
                     key={bar.value}
