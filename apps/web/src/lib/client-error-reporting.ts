@@ -6,6 +6,19 @@ export type ClientErrorReportInput = {
   componentStack?: string;
 };
 
+const STRING_LIMITS = {
+  name: 160,
+  message: 1_000,
+  stack: 8_000,
+  digest: 240,
+  componentStack: 8_000,
+  url: 2_000,
+  pathname: 1_000,
+  userAgent: 600,
+  language: 80,
+} as const;
+
+const MAX_REPORTED_ERROR_KEYS = 25;
 const reportedErrorKeys = new Map<string, string>();
 
 export function reportClientError({
@@ -17,9 +30,8 @@ export function reportClientError({
     scope,
     error.digest ?? "",
     error.name,
-    error.message,
-    componentStack ?? "",
-    getLocation(),
+    limitString(error.message, 250),
+    getPathname(),
   ].join("|");
   const existingReportId = reportedErrorKeys.get(key);
 
@@ -28,21 +40,29 @@ export function reportClientError({
   }
 
   const reportId = createReportId();
-  reportedErrorKeys.set(key, reportId);
+  rememberReportedError(key, reportId);
 
   const payload = {
     reportId,
     scope,
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-    digest: error.digest,
-    componentStack,
+    name: limitString(error.name, STRING_LIMITS.name),
+    message: limitString(error.message, STRING_LIMITS.message),
+    stack: limitString(error.stack, STRING_LIMITS.stack),
+    digest: limitString(error.digest, STRING_LIMITS.digest),
+    componentStack: limitString(
+      componentStack,
+      STRING_LIMITS.componentStack,
+    ),
     url: getLocation(),
-    pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+    pathname: getPathname(),
     userAgent:
-      typeof navigator === "undefined" ? undefined : navigator.userAgent,
-    language: typeof navigator === "undefined" ? undefined : navigator.language,
+      typeof navigator === "undefined"
+        ? undefined
+        : limitString(navigator.userAgent, STRING_LIMITS.userAgent),
+    language:
+      typeof navigator === "undefined"
+        ? undefined
+        : limitString(navigator.language, STRING_LIMITS.language),
     viewport:
       typeof window === "undefined"
         ? undefined
@@ -64,6 +84,19 @@ export function reportClientError({
   return reportId;
 }
 
+function rememberReportedError(key: string, reportId: string) {
+  reportedErrorKeys.set(key, reportId);
+
+  if (reportedErrorKeys.size <= MAX_REPORTED_ERROR_KEYS) {
+    return;
+  }
+
+  const oldestKey = reportedErrorKeys.keys().next().value;
+  if (oldestKey) {
+    reportedErrorKeys.delete(oldestKey);
+  }
+}
+
 function createReportId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -77,5 +110,21 @@ function getLocation() {
     return undefined;
   }
 
-  return window.location.href;
+  return limitString(window.location.href, STRING_LIMITS.url);
+}
+
+function getPathname() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return limitString(window.location.pathname, STRING_LIMITS.pathname);
+}
+
+function limitString(value: string | undefined, limit: number) {
+  if (!value) {
+    return undefined;
+  }
+
+  return value.length > limit ? `${value.slice(0, limit)}...` : value;
 }

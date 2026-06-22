@@ -16,33 +16,59 @@ type ErrorFallbackContentProps = {
   error: ErrorWithDigest;
   scope: string;
   reset?: () => void;
-  reportId?: string | null;
   componentStack?: string;
   title?: string;
   className?: string;
-  reportOnMount?: boolean;
 };
 
 export function ErrorFallbackContent({
   error,
   scope,
   reset,
-  reportId: initialReportId,
   componentStack,
   title = "something broke",
   className,
-  reportOnMount = true,
 }: ErrorFallbackContentProps) {
-  const [reportId, setReportId] = React.useState(initialReportId ?? null);
+  const reportId = useClientErrorReport({ error, scope, componentStack });
+
+  return (
+    <ErrorFallbackView
+      error={error}
+      reset={reset}
+      reportId={reportId}
+      title={title}
+      className={className}
+    />
+  );
+}
+
+function useClientErrorReport({
+  error,
+  scope,
+  componentStack,
+}: ClientErrorReportInput) {
+  const [reportId, setReportId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (initialReportId || !reportOnMount) {
-      return;
-    }
-
     setReportId(reportClientError({ error, scope, componentStack }));
-  }, [componentStack, error, initialReportId, reportOnMount, scope]);
+  }, [componentStack, error, scope]);
 
+  return reportId;
+}
+
+function ErrorFallbackView({
+  error,
+  reset,
+  reportId,
+  title,
+  className,
+}: {
+  error: ErrorWithDigest;
+  reset?: () => void;
+  reportId?: string | null;
+  title: string;
+  className?: string;
+}) {
   return (
     <div
       className={cn(
@@ -138,13 +164,10 @@ export class ClientErrorBoundary extends React.Component<
   render() {
     if (this.state.error) {
       return (
-        <ErrorFallbackContent
+        <ErrorFallbackView
           error={this.state.error}
-          scope={this.props.scope}
-          componentStack={this.state.componentStack}
           reportId={this.state.reportId}
-          title={this.props.title}
-          reportOnMount={false}
+          title={this.props.title ?? "something broke"}
           reset={() => {
             this.setState({
               error: null,

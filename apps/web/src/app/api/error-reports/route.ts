@@ -1,3 +1,5 @@
+import { auth } from "@clerk/nextjs/server";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -36,8 +38,14 @@ type ErrorReportPayload = {
   timestamp?: string;
 };
 
+type AuthContext = {
+  userId?: string;
+  authError?: string;
+};
+
 export async function POST(request: Request) {
   const receivedAt = new Date().toISOString();
+  const authContext = await getAuthContext();
   let payload: unknown;
 
   try {
@@ -48,7 +56,7 @@ export async function POST(request: Request) {
         level: "error",
         event: "client_error_report_invalid_json",
         receivedAt,
-        server: getServerContext(request),
+        server: getServerContext(request, authContext),
         error: serializeUnknownError(error),
       }),
     );
@@ -64,7 +72,7 @@ export async function POST(request: Request) {
       event: "client_error_boundary",
       receivedAt,
       report,
-      server: getServerContext(request),
+      server: getServerContext(request, authContext),
     }),
   );
 
@@ -106,13 +114,36 @@ function sanitizePayload(payload: unknown): ErrorReportPayload {
   };
 }
 
-function getServerContext(request: Request) {
+async function getAuthContext(): Promise<AuthContext> {
+  const localDevUserId =
+    process.env.NODE_ENV === "development" &&
+    !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+      ? (process.env.LOCAL_DEV_USER_ID ?? null)
+      : null;
+
+  if (localDevUserId) {
+    return { userId: localDevUserId };
+  }
+
+  try {
+    const authData = await auth();
+    return { userId: authData.userId ?? undefined };
+  } catch (error) {
+    return {
+      authError: serializeUnknownError(error).message,
+    };
+  }
+}
+
+function getServerContext(request: Request, authContext: AuthContext) {
   return {
     vercelEnv: process.env.VERCEL_ENV,
     vercelUrl: process.env.VERCEL_URL,
     commitSha: process.env.VERCEL_GIT_COMMIT_SHA,
     requestId: request.headers.get("x-vercel-id") ?? undefined,
     referer: limitString(request.headers.get("referer"), 2_000),
+    userId: authContext.userId,
+    authError: authContext.authError,
   };
 }
 
