@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { WorkoutComponent } from "@/components/workout/workout";
+import { ClientErrorBoundary } from "@/components/error-boundary/app_error_boundary";
 import { H2, P } from "@/components/ui/typography";
 import { api } from "@/trpc/react"; // Import tRPC api
 import type { RouterInputs } from "@/trpc/react";
@@ -243,11 +244,13 @@ function WorkoutLoader({
 
 export default function WorkoutPage() {
   return (
-    <div className="container mx-auto max-w-md p-2">
-      <Suspense fallback={<LoadingState />}>
-        <WorkoutInitializer />
-      </Suspense>
-    </div>
+    <ClientErrorBoundary scope="workout" title="workout crashed">
+      <div className="container mx-auto max-w-md p-2">
+        <Suspense fallback={<LoadingState />}>
+          <WorkoutInitializer />
+        </Suspense>
+      </div>
+    </ClientErrorBoundary>
   );
 }
 

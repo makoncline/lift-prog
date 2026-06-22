@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { WorkoutComponent } from "@/components/workout/workout";
+import { ClientErrorBoundary } from "@/components/error-boundary/app_error_boundary";
 import { P } from "@/components/ui/typography";
 import { api } from "@/trpc/react";
 
@@ -44,17 +45,19 @@ export default function EditWorkoutPage() {
   const workout = workoutQuery.data;
 
   return (
-    <WorkoutComponent
-      workoutId={workoutId}
-      workoutName={workout.workoutName}
-      exercises={workout.exercises}
-      startTime={new Date(workout.startedAt).getTime()}
-      completedAt={
-        workout.completedAt ? new Date(workout.completedAt) : undefined
-      }
-      workoutNote={workout.notes ?? ""}
-      contextLabel={`editing past workout #${workoutId}`}
-      persistDraft={false}
-    />
+    <ClientErrorBoundary scope="workout" title="workout crashed">
+      <WorkoutComponent
+        workoutId={workoutId}
+        workoutName={workout.workoutName}
+        exercises={workout.exercises}
+        startTime={new Date(workout.startedAt).getTime()}
+        completedAt={
+          workout.completedAt ? new Date(workout.completedAt) : undefined
+        }
+        workoutNote={workout.notes ?? ""}
+        contextLabel={`editing past workout #${workoutId}`}
+        persistDraft={false}
+      />
+    </ClientErrorBoundary>
   );
 }
