@@ -17,8 +17,14 @@ export function workoutSetToCurrentSet(
 ): CurrentExerciseSet {
   const id = set.clientId ?? `exercise-${exerciseIndex}-set-${setIndex}`;
   const previousSet = exercise.previousSets[setIndex];
-  const displayWeight = set.weight ?? set.prevWeight ?? previousSet?.weight;
-  const displayReps = set.reps ?? set.prevReps ?? previousSet?.reps;
+  const displayWeight =
+    finiteNumber(set.weight) ??
+    finiteNumber(set.prevWeight) ??
+    finiteNumber(previousSet?.weight);
+  const displayReps =
+    finiteNumber(set.reps) ??
+    finiteNumber(set.prevReps) ??
+    finiteNumber(previousSet?.reps);
   const displayNote = set.notes ?? previousSet?.notes;
   const displayRestBefore = set.restBefore ?? previousSet?.restBefore;
   const rawWeight = displayWeight ?? 0;
@@ -44,13 +50,12 @@ export function workoutSetToCurrentSet(
 }
 
 export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
-  const parsedWeight =
-    set.weightAmount.trim() === "" ? null : Number(set.weightAmount);
+  const parsedWeight = parseFiniteTextNumber(set.weightAmount);
   const signedWeight =
     parsedWeight == null ? null : set.weightSign * parsedWeight;
   const weight =
     set.weightMode === "bodyweight" ? (signedWeight ?? 0) : parsedWeight;
-  const reps = set.reps.trim() === "" ? null : Number(set.reps);
+  const reps = parseFiniteTextNumber(set.reps);
 
   return {
     clientId: set.id,
@@ -70,6 +75,16 @@ export function currentSetToWorkoutSet(set: CurrentExerciseSet): WorkoutSet {
       : {}),
     ...(set.note?.trim() ? { notes: set.note.trim() } : {}),
   };
+}
+
+function finiteNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseFiniteTextNumber(value: string) {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function normalizeCurrentSetOrder(sets: CurrentExerciseSet[]) {
