@@ -5,15 +5,18 @@
   "main": "./index.ts",
   "scripts": {
     "start": "expo start",
-    "ios": "expo start --ios",
-    "android": "expo start --android",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/expo": "^3.1.5",
     "@babel/runtime": "^7.29.2",
+    "@clerk/expo": "^3.1.5",
+    "@lift-prog/workout-core": "file:../../packages/workout-core",
+    "@lift-prog/workout-sdk": "file:../../packages/workout-sdk",
     "expo": "^55.0.8",
     "expo-constants": "~55.0.9",
+    "expo-dev-client": "~55.0.35",
     "expo-secure-store": "~55.0.9",
     "expo-status-bar": "~55.0.4",
     "invariant": "^2.2.4",

@@ -13,10 +13,7 @@ import {
   TimelineFootnoteMarker,
   TimelineFootnoteRef,
 } from "@/components/workout-reference/timeline_notes";
-import {
-  ChartContainer,
-  type ChartConfig,
-} from "@/components/ui/chart";
+import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
 import { estimate1RM } from "@lift-prog/workout-core";
 import { LabelList, Line, LineChart, XAxis, YAxis } from "recharts";
 
@@ -29,7 +26,7 @@ export function HistoryDisclosure({
 }) {
   if (!expanded) return null;
   return (
-    <section className="relative mt-1 rounded-[4px] border border-[#ebe4d6] px-1 py-1 text-[#696457]">
+    <section className="relative mt-1 rounded-[7px] border border-[#d7cab8] px-2 py-2 text-[#7a7468]">
       <div className="relative overflow-hidden">{children}</div>
     </section>
   );
@@ -140,9 +137,9 @@ function HistoryStatsItem({
   return (
     <article
       ref={refCallback}
-      className="flex min-w-full snap-start flex-col gap-1.5 pr-1 text-[12px] leading-4"
+      className="flex min-w-full snap-start flex-col gap-2 pr-1 text-[18px] leading-6"
     >
-      <p className="text-[12px] leading-4 text-[#716b5d]">
+      <p className="text-[18px] leading-6 text-[#7a7468]">
         stats · last {stats.chartCount}{" "}
         {stats.chartCount === 1 ? "workout" : "workouts"}
       </p>
@@ -158,8 +155,8 @@ function HistoryStatsItem({
 function StatsLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[4.5rem_1fr] gap-1">
-      <span className="text-[#8a8373]">{label}</span>
-      <span className="text-[#17150f]">{value}</span>
+      <span className="text-[#7a7468]">{label}</span>
+      <span className="text-[#1f1c17]">{value}</span>
     </div>
   );
 }
@@ -167,7 +164,7 @@ function StatsLine({ label, value }: { label: string; value: string }) {
 const historyChartConfig = {
   value: {
     label: "pounds",
-    color: "#a79b83",
+    color: "#7a7468",
   },
 } satisfies ChartConfig;
 
@@ -180,18 +177,18 @@ function HistoryTinyChart({
 }) {
   return (
     <div className="flex flex-col gap-px">
-      <p className="text-[10px] leading-3 text-[#8a8373] lowercase">{title}</p>
+      <p className="text-[18px] leading-6 text-[#7a7468] lowercase">{title}</p>
       {points.length > 0 ? (
         <ChartContainer
           config={historyChartConfig}
-          className="h-12 w-full aspect-auto text-[10px]"
+          className="aspect-auto h-20 w-full text-[13px]"
           aria-label={`${title}: ${points
             .map((point) => point.displayValue)
             .join(", ")}`}
         >
           <LineChart
             data={points}
-            margin={{ top: 18, right: 14, bottom: 2, left: 14 }}
+            margin={{ top: 24, right: 16, bottom: 4, left: 16 }}
           >
             <XAxis
               dataKey="xValue"
@@ -217,14 +214,14 @@ function HistoryTinyChart({
                 dataKey="displayValue"
                 position="top"
                 offset={4}
-                fill="#716b5d"
-                fontSize={10}
+                fill="#7a7468"
+                fontSize={13}
               />
             </Line>
           </LineChart>
         </ChartContainer>
       ) : (
-        <div className="h-12 text-[11px] leading-4 text-[#8a8373]">
+        <div className="h-20 text-[18px] leading-6 text-[#7a7468]">
           more data soon
         </div>
       )}
@@ -267,7 +264,7 @@ function HistoryItem({
   return (
     <article
       ref={refCallback}
-      className="flex min-w-full snap-start flex-col gap-1.5 pr-1 text-[13px] leading-4"
+      className="flex min-w-full snap-start flex-col gap-2 pr-1 text-[18px] leading-6"
     >
       <div className="flex flex-col gap-0.5">
         <HistoryMeta item={item} />
@@ -283,7 +280,7 @@ function HistoryMeta({ item }: { item: PreviousExercise }) {
   const parts = [item.relation, item.relativeDate, item.date].filter(Boolean);
 
   return (
-    <p className="text-[12px] leading-4 text-[#716b5d]">{parts.join(" · ")}</p>
+    <p className="text-[18px] leading-6 text-[#7a7468]">{parts.join(" · ")}</p>
   );
 }
 
@@ -291,7 +288,7 @@ function HistoryNotes({ item }: { item: PreviousExercise }) {
   return (
     <div className="flex flex-col gap-0.5">
       {item.exerciseNoteChanged ? (
-        <details className="group text-[11px] leading-4 text-[#827a68]">
+        <details className="group text-[18px] leading-6 text-[#7a7468]">
           <summary className="cursor-pointer list-none">note changed</summary>
           <div className="mt-0.5">
             <NoteBadge>{item.historicalExerciseNote}</NoteBadge>
@@ -343,7 +340,7 @@ function ReadOnlyTimelineSetGroup({
 
 function HistoryTimelineSetHeading({ children }: { children: ReactNode }) {
   return (
-    <div className="text-[10px] leading-3 text-[#8a8373] lowercase">
+    <div className="text-[18px] leading-6 text-[#7a7468] lowercase">
       {children}
     </div>
   );
@@ -353,7 +350,7 @@ function ReadOnlyTimelineSetLine({ sets }: { sets: ExerciseSet[] }) {
   if (sets.length === 0) return null;
 
   return (
-    <div className="relative w-full pb-1">
+    <div className="relative w-full pb-1 text-[24px] leading-8 text-[#1f1c17]">
       <div className="flex flex-wrap items-baseline gap-x-0 gap-y-0.5">
         {sets.map((set, index) => {
           const previousSet = sets[index - 1];
@@ -388,7 +385,7 @@ function ReadOnlyTimelineSetNoteLane({ sets }: { sets: ExerciseSet[] }) {
   if (!sets.some((set) => set.note)) return null;
 
   return (
-    <div className="relative z-10 mt-px flex w-full flex-col gap-0.5 text-[11px]">
+    <div className="relative z-10 mt-1 flex w-full flex-col gap-[3px] text-[18px] leading-6">
       {sets.map((set, index) =>
         set.note ? (
           <SetNote
@@ -444,7 +441,14 @@ function buildHistoryStats(history: PreviousExercise[]): HistoryStats | null {
   const e1rmPoints = recentChronological.flatMap((entry, index) =>
     entry.stats.e1rm == null
       ? []
-      : [toHistoryChartPoint(entry, index, recentChartXValues, entry.stats.e1rm)],
+      : [
+          toHistoryChartPoint(
+            entry,
+            index,
+            recentChartXValues,
+            entry.stats.e1rm,
+          ),
+        ],
   );
   const volumePoints = recentChronological.flatMap((entry, index) =>
     entry.stats.volume == null

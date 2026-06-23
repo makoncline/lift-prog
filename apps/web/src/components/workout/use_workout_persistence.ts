@@ -108,6 +108,7 @@ function normalizeWorkoutState(workout: Workout): Workout {
     notes: normalizeNotes(workout.notes),
     startTime: finiteNumber(workout.startTime) ?? Date.now(),
     name: stringValue(workout.name) ?? "Workout",
+    bodyWeightLb: finiteNumber(workout.bodyWeightLb),
     isInProgress:
       typeof workout.isInProgress === "boolean" ? workout.isInProgress : true,
   };
@@ -217,6 +218,7 @@ function normalizeHistoryEntry(
     relation: stringValue(record.relation) ?? "",
     relativeDate: stringValue(record.relativeDate) ?? "",
     date: stringValue(record.date) ?? "",
+    bodyWeightLb: finiteNumber(record.bodyWeightLb),
     workoutNote: stringOrNull(record.workoutNote),
     workoutExerciseNote: stringOrNull(record.workoutExerciseNote),
     exerciseNotesSnapshot: stringOrNull(record.exerciseNotesSnapshot),

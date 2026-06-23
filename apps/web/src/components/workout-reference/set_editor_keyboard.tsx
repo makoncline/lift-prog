@@ -115,7 +115,7 @@ export function SetEditorKeyboard({
       </KeypadButton>
       {field === "weight" ? (
         <div
-          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[7px]"
           style={{ gridArea: "action1" }}
         >
           <IncreaseWeightDialog
@@ -147,7 +147,7 @@ export function SetEditorKeyboard({
         </KeypadButton>
       )}
       <div
-        className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
+        className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[7px]"
         style={{ gridArea: "action2" }}
       >
         <KeypadButton value="minus" onKeyPress={handleKeyPress}>
@@ -159,7 +159,7 @@ export function SetEditorKeyboard({
       </div>
       {field === "weight" ? (
         <div
-          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1"
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[7px]"
           style={{ gridArea: "action3" }}
         >
           <KeypadButton
@@ -208,7 +208,7 @@ export function SetEditorKeyboard({
 function KeypadShell({ children }: { children: ReactNode }) {
   return (
     <div
-      className="grid h-[180px] w-full min-w-0 gap-1"
+      className="grid h-[265px] w-full min-w-0 gap-[7px]"
       style={{
         gridTemplateColumns: "repeat(4,minmax(0,1fr))",
         gridTemplateRows: "repeat(4,1fr)",
@@ -285,9 +285,9 @@ function KeypadButton({
       variant="outline"
       disabled={disabled}
       className={cn(
-        "h-full w-full min-w-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-1 py-1 font-mono text-[13px] font-normal text-[#373226] shadow-none hover:bg-[#f6f1e8]",
-        active && "bg-[#eee8da] ring-1 ring-[#a79b83]",
-        primary && "bg-[#373226] text-[#fdfcf8] hover:bg-[#373226]/90",
+        "h-full w-full min-w-0 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-1 py-1 font-mono text-[22px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]",
+        active && "bg-[#eee9df] ring-1 ring-[#383225]",
+        primary && "bg-[#383225] text-[#fffefa] hover:bg-[#383225]/90",
       )}
       style={area ? { gridArea: area } : undefined}
       onClick={(event) => {
@@ -311,7 +311,7 @@ const KeypadTriggerButton = forwardRef<
       aria-label={label}
       variant="outline"
       className={cn(
-        "h-full w-full min-w-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-1 py-1 font-mono text-[13px] font-normal text-[#373226] shadow-none hover:bg-[#f6f1e8]",
+        "h-full w-full min-w-0 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-1 py-1 font-mono text-[22px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]",
         className,
       )}
       {...props}

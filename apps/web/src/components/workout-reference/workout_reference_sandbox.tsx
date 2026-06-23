@@ -215,7 +215,7 @@ function WorkoutBodyWeightSandbox() {
   const startTime = new Date("2026-06-19T09:00:00").getTime();
 
   return (
-    <div className="mx-auto mb-5 w-full max-w-[430px] px-3 pt-4">
+    <div className="mx-auto mb-5 w-full max-w-[390px] px-[14px] pt-4">
       <WorkoutHeader
         name={workoutName}
         startTime={startTime}

@@ -66,8 +66,7 @@ const getWholeMonthDifference = (fromDate: Date, toDate: Date) => {
 
 const formatRelativeWorkoutDate = (date: Date, now = new Date()) => {
   const dayDifference = Math.round(
-    (startOfLocalDay(now).getTime() - startOfLocalDay(date).getTime()) /
-      DAY_MS,
+    (startOfLocalDay(now).getTime() - startOfLocalDay(date).getTime()) / DAY_MS,
   );
   const absDays = Math.abs(dayDifference);
   const direction = dayDifference > 0 ? -1 : 1;
@@ -298,38 +297,46 @@ function AuthenticatedHomePage({
   return (
     <>
       {hasInProgress && (
-        <div className="mx-auto flex max-w-md items-center justify-between gap-3 px-4 pt-4 font-mono text-sm">
-          <span className="text-muted-foreground">workout in progress</span>
+        <div className="mx-auto flex w-full max-w-[390px] items-center justify-between gap-3 px-4 pt-4 font-mono text-[16px]">
+          <span className="text-[#7a7468]">workout in progress</span>
           <Button
             variant="outline"
             size="sm"
+            className="h-10 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-3 font-mono text-[18px] font-normal text-[#1f1c17] shadow-none"
             onClick={() => router.push("/workout")}
           >
-            Resume Workout
+            resume
           </Button>
         </div>
       )}
-      <div className="mx-auto max-w-md px-4 py-7 font-mono">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <h1 className="text-3xl font-semibold tracking-normal">
-            workout history
-          </h1>
+      <div className="mx-auto w-full max-w-[390px] px-4 py-7 font-mono text-[#1f1c17]">
+        <div className="mb-[18px] flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-[38px] leading-[40px] font-extrabold tracking-normal">
+              Lift Prog
+            </h1>
+            <div className="mt-2 text-[18px] leading-6 text-[#7a7468]">
+              workouts
+            </div>
+          </div>
           <Button
             type="button"
             variant="outline"
             size="icon"
-            className="h-8 w-8 rounded-sm"
+            className="h-10 min-w-12 rounded-[7px] border-[#d7cab8] bg-[#fffefa] p-0 font-mono text-[20px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]"
             onClick={() => setShowBuilder((value) => !value)}
-            aria-label={showBuilder ? "Hide new workout form" : "Add new workout"}
+            aria-label={
+              showBuilder ? "Hide new workout form" : "Add new workout"
+            }
             aria-pressed={showBuilder}
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-5 w-5" />
           </Button>
         </div>
 
         {showBuilder ? (
           <section className="mb-7 space-y-2">
-            <div className="text-[13px] leading-none text-stone-500">
+            <div className="text-[18px] leading-6 text-[#7a7468]">
               new workout
             </div>
             <form
@@ -343,21 +350,21 @@ function AuthenticatedHomePage({
                 value={exerciseSearch}
                 onChange={(event) => setExerciseSearch(event.target.value)}
                 placeholder="search or create exercise"
-                className="border-input bg-background h-9 min-w-0 flex-1 rounded-sm border px-2 text-sm"
+                className="h-10 min-w-0 flex-1 rounded-[5px] border border-[#d7cab8] bg-[#fffefa] px-2 font-mono text-[20px] text-[#1f1c17] outline-none placeholder:text-[#7a7468] focus:ring-1 focus:ring-[#383225]"
               />
               <Button
                 type="submit"
                 variant="outline"
                 size="sm"
-                className="h-9 rounded-sm px-2"
+                className="h-10 min-w-12 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-2 font-mono text-[18px] font-normal text-[#1f1c17] shadow-none"
                 disabled={!exerciseSearch.trim()}
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-5 w-5" />
               </Button>
             </form>
 
             {exerciseSearch.trim() && exercisesQuery.data?.length ? (
-              <div className="flex max-h-28 flex-col overflow-y-auto text-sm">
+              <div className="flex max-h-28 flex-col overflow-y-auto text-[18px] leading-6">
                 {exercisesQuery.data
                   .filter((exercise) =>
                     exercise.name
@@ -369,7 +376,7 @@ function AuthenticatedHomePage({
                     <button
                       key={exercise.id}
                       type="button"
-                      className="rounded-sm px-2 py-1 text-left hover:bg-stone-100"
+                      className="rounded-[5px] px-2 py-1 text-left hover:bg-[#eee9df]"
                       onClick={() => {
                         addSelectedExercise(exercise.name);
                         setExerciseSearch("");
@@ -386,7 +393,7 @@ function AuthenticatedHomePage({
                 {selectedExercises.map((exerciseName, index) => (
                   <div
                     key={`${exerciseName}-${index}`}
-                    className="flex items-center gap-1 text-sm"
+                    className="flex items-center gap-1 text-[19px] leading-6"
                   >
                     <span className="min-w-0 flex-1 truncate">
                       {exerciseName}
@@ -395,7 +402,7 @@ function AuthenticatedHomePage({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 rounded-sm"
+                      className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none"
                       disabled={index === 0}
                       onClick={() => moveSelectedExercise(index, -1)}
                       aria-label={`Move ${exerciseName} up`}
@@ -406,7 +413,7 @@ function AuthenticatedHomePage({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 rounded-sm"
+                      className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none"
                       disabled={index === selectedExercises.length - 1}
                       onClick={() => moveSelectedExercise(index, 1)}
                       aria-label={`Move ${exerciseName} down`}
@@ -417,7 +424,7 @@ function AuthenticatedHomePage({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 rounded-sm text-stone-500"
+                      className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none"
                       onClick={() => removeSelectedExercise(index)}
                       aria-label={`Remove ${exerciseName}`}
                     >
@@ -431,7 +438,7 @@ function AuthenticatedHomePage({
             <Button
               type="button"
               size="sm"
-              className="h-8 rounded-sm"
+              className="h-10 rounded-[7px] bg-[#383225] px-3 font-mono text-[18px] font-normal text-[#fffefa] shadow-none"
               disabled={selectedExercises.length === 0}
               onClick={startCustomWorkout}
             >
@@ -442,36 +449,28 @@ function AuthenticatedHomePage({
 
         <section>
           {showLoading ? (
-            <P className="text-muted-foreground text-sm">loading workouts...</P>
+            <P className="text-[16px] text-[#7a7468]">loading workouts...</P>
           ) : showError ? (
-            <P className="text-destructive text-sm">
+            <P className="text-[16px] text-[#9f2f2f]">
               error loading workouts: {recentWorkoutsQuery.error?.message}
             </P>
           ) : workouts.length > 0 ? (
-            <div className="space-y-7">
+            <div className="space-y-6">
               {workouts.map((workout) => (
-                <article key={workout.id} className="space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[13px] leading-tight text-stone-500">
-                        {workout.completedAt
-                          ? formatWorkoutMeta(
-                              new Date(workout.startedAt),
-                              new Date(workout.completedAt),
-                            )
-                          : "in progress"}
-                      </div>
-                      <div className="truncate text-[24px] leading-tight font-semibold tracking-normal">
+                <article key={workout.id} className="space-y-[5px] py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[26px] leading-8 font-extrabold tracking-normal">
                         {workout.name}
                       </div>
                     </div>
-                    <div className="flex shrink-0 gap-1 pt-1">
+                    <div className="flex shrink-0 gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => handleSelectRecent(workout.id)}
                         aria-label={`Copy ${workout.name} into a new workout`}
-                        className="text-muted-foreground h-8 w-8 rounded-sm"
+                        className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none hover:bg-[#eee9df]"
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
@@ -480,7 +479,7 @@ function AuthenticatedHomePage({
                         size="icon"
                         onClick={() => handleEditWorkout(workout.id)}
                         aria-label={`Edit ${workout.name}`}
-                        className="text-muted-foreground h-8 w-8 rounded-sm"
+                        className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none hover:bg-[#eee9df]"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -489,27 +488,35 @@ function AuthenticatedHomePage({
                         size="icon"
                         onClick={() => setDeleteWorkoutId(workout.id)}
                         aria-label={`Delete ${workout.name}`}
-                        className="text-muted-foreground hover:text-destructive h-8 w-8 rounded-sm"
+                        className="h-[34px] min-w-[44px] rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] shadow-none hover:bg-[#eee9df] hover:text-[#9f2f2f]"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
+                  <div className="text-[18px] leading-6 text-[#7a7468]">
+                    {workout.completedAt
+                      ? formatWorkoutMeta(
+                          new Date(workout.startedAt),
+                          new Date(workout.completedAt),
+                        )
+                      : "in progress"}
+                  </div>
 
                   {workout.exerciseSummaries?.length ? (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       {workout.exerciseSummaries.map((summary, index) => {
                         const { exerciseName, sets } =
                           splitExerciseSummary(summary);
                         return (
                           <div
                             key={`${workout.id}-${index}`}
-                            className="grid grid-cols-[minmax(5.5rem,auto)_1fr] gap-x-2 text-[15px] leading-tight"
+                            className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-2 text-[18px] leading-[25px]"
                           >
-                            <span className="truncate text-stone-500">
+                            <span className="truncate text-[#7a7468]">
                               {exerciseName}
                             </span>
-                            <span className="min-w-0 text-stone-950">
+                            <span className="min-w-0 text-[#1f1c17]">
                               {sets}
                             </span>
                           </div>
@@ -522,7 +529,7 @@ function AuthenticatedHomePage({
               {canShowMoreWorkouts ? (
                 <button
                   type="button"
-                  className="text-[13px] leading-tight text-stone-500 hover:text-stone-950 disabled:opacity-50"
+                  className="rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-3 py-2 text-[18px] leading-6 text-[#1f1c17] hover:bg-[#eee9df] disabled:opacity-50"
                   disabled={recentWorkoutsQuery.isFetching}
                   onClick={() =>
                     setVisibleWorkoutLimit((limit) =>
@@ -538,7 +545,7 @@ function AuthenticatedHomePage({
               ) : null}
             </div>
           ) : (
-            <P className="text-muted-foreground text-sm">
+            <P className="text-[16px] text-[#7a7468]">
               no completed workouts yet
             </P>
           )}
@@ -572,7 +579,7 @@ function AuthenticatedHomePage({
 
 function UnauthenticatedHomePage() {
   return (
-    <div className="mx-auto max-w-md px-4 py-8 font-mono">
+    <div className="mx-auto max-w-[390px] px-4 py-8 font-mono text-[#1f1c17]">
       <div className="flex flex-col items-center justify-center space-y-6 text-center">
         <div className="flex items-center gap-3">
           <Dumbbell className="h-12 w-12" />

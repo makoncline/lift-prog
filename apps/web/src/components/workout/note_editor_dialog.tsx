@@ -108,7 +108,7 @@ function NoteEditorDialogContent({
         aria-label={title}
         autoFocus
         value={draft}
-        className="min-h-24 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[16px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
+        className="min-h-[150px] w-full resize-none rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-[9px] py-[9px] font-mono text-[20px] leading-7 text-[#1f1c17] outline-none focus:ring-1 focus:ring-[#383225]"
         onChange={(event) => setDraft(event.target.value)}
       />
       {controls}

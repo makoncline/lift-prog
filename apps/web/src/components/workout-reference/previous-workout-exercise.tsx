@@ -106,7 +106,7 @@ export function PreviousWorkoutExercise({
         description={`Edit the pinned exercise note for ${exerciseName}.`}
         label={
           <span className="flex flex-col">
-            <span className="text-[#17150f]">{exerciseName}</span>
+            <span className="text-[#1f1c17]">{exerciseName}</span>
             <span>pinned exercise note</span>
           </span>
         }
@@ -130,7 +130,7 @@ export function PreviousWorkoutExercise({
         description={`Add a note for ${exerciseName} in this workout only.`}
         label={
           <span className="flex flex-col">
-            <span className="text-[#17150f]">{exerciseName}</span>
+            <span className="text-[#1f1c17]">{exerciseName}</span>
             <span>this workout note</span>
           </span>
         }
