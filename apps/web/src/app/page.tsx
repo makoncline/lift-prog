@@ -673,7 +673,7 @@ function UnauthenticatedHomePage() {
               inputMode="email"
               spellCheck={false}
               className="h-10 border-[#d9cdb9] bg-transparent font-mono text-[18px] shadow-none focus-visible:ring-0"
-              placeholder="makon@hey.com"
+              placeholder="email@example.com"
             />
           </div>
 

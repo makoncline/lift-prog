@@ -139,7 +139,7 @@ function AuthScreen() {
                 autoCorrect={false}
                 inputMode="email"
                 keyboardType="email-address"
-                placeholder="makon@hey.com"
+                placeholder="email@example.com"
                 placeholderTextColor={palette.muted}
                 style={styles.textInput}
               />
