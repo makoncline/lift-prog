@@ -1736,7 +1736,9 @@ function WorkoutScreen({
       void saveEditedWorkout();
       return;
     }
-    if (!completedAt) setCompletedAt(new Date());
+    if (!completedAt) {
+      setCompletedAt(defaultCompletedAtForStartTime(workout.startTime));
+    }
     setFinishPreviewOpen(true);
   };
 
@@ -1772,7 +1774,8 @@ function WorkoutScreen({
     const payload = finalizeWorkout(workout, workoutNote);
     return {
       ...payload,
-      completedAt: completedAt ?? new Date(),
+      completedAt:
+        completedAt ?? defaultCompletedAtForStartTime(workout.startTime),
       startedAt: new Date(workout.startTime),
     };
   }, [completedAt, finishPreviewOpen, workout]);
@@ -1830,7 +1833,8 @@ function WorkoutScreen({
     const payload = finalizeWorkout(workout, workoutNoteText);
     return {
       ...payload,
-      completedAt: completedAt ?? new Date(),
+      completedAt:
+        completedAt ?? defaultCompletedAtForStartTime(workout.startTime),
       startedAt: new Date(workout.startTime),
     };
   };
@@ -4992,6 +4996,14 @@ function formatWorkoutStartDate(date: Date) {
       year: "numeric",
     })
     .toLowerCase();
+}
+
+function defaultCompletedAtForStartTime(startTime: number) {
+  const startDate = new Date(startTime);
+  const now = new Date();
+  const completedAt = mergeTimePart(startDate, now);
+  const minimumCompletedAt = startTime + 60_000;
+  return new Date(Math.max(minimumCompletedAt, completedAt.getTime()));
 }
 
 function mergeDatePart(startDate: Date, selectedDate: Date) {
