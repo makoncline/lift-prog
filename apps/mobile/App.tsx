@@ -150,8 +150,6 @@ function AuthScreen({
           <View style={styles.form}>
             {isCodeScreen ? (
               <View style={styles.fieldBlock}>
-                <Text style={styles.label}>email</Text>
-                <Text style={styles.readonlyValue}>{codeEmail || "email"}</Text>
                 <Text style={styles.label}>code</Text>
                 <TextInput
                   value={draft.otp}
@@ -275,7 +273,10 @@ function AuthScreen({
                 accessibilityRole="button"
                 testID="auth-already-have-code-button"
                 onPress={() => {
-                  if (!trimmedEmail) return;
+                  if (!trimmedEmail) {
+                    setError("enter email first");
+                    return;
+                  }
                   setDraft((current) => ({
                     ...current,
                     email: trimmedEmail,
@@ -285,14 +286,7 @@ function AuthScreen({
                   setError(null);
                 }}
               >
-                <Text
-                  style={[
-                    styles.changeEmailText,
-                    !trimmedEmail ? styles.disabledText : undefined,
-                  ]}
-                >
-                  already have a code
-                </Text>
+                <Text style={styles.changeEmailText}>already have a code</Text>
               </Pressable>
             )}
           </View>
