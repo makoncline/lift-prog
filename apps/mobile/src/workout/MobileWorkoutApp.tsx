@@ -143,6 +143,10 @@ type StoredWorkoutDraft = {
   savedAt: number;
 };
 
+type PendingWorkoutDraft = StoredWorkoutDraft & {
+  dismissed?: boolean;
+};
+
 type WorkoutSession = {
   past: Workout[];
   present: Workout;
@@ -780,6 +784,9 @@ export function LiftMobileApp({
     name: "home",
     refreshKey: 0,
   }));
+  const [pendingDraft, setPendingDraft] = useState<PendingWorkoutDraft | null>(
+    null,
+  );
   const checkedDraftRef = useRef(false);
   const returnHome = useCallback(() => {
     setScreen((current) => ({
@@ -795,29 +802,7 @@ export function LiftMobileApp({
     let cancelled = false;
     void readActiveWorkoutDraft().then((draft) => {
       if (cancelled || !draft || draft.workout.exercises.length === 0) return;
-
-      Alert.alert("Restore workout?", draft.workout.name, [
-        { text: "not now", style: "cancel" },
-        {
-          text: "discard",
-          style: "destructive",
-          onPress: () => void clearActiveWorkoutDraft(),
-        },
-        {
-          text: "restore",
-          onPress: () =>
-            setScreen({
-              name: "workout",
-              key: Date.now(),
-              prepared: blankPreparedWorkout(draft.workout.bodyWeightLb ?? null),
-              draftWorkout: draft.workout,
-              completedAt: draft.completedAt
-                ? new Date(draft.completedAt)
-                : null,
-              contextLabel: "restored draft",
-            }),
-        },
-      ]);
+      setPendingDraft(draft);
     });
 
     return () => {
@@ -855,7 +840,28 @@ export function LiftMobileApp({
     <HomeScreen
       api={api}
       refreshKey={screen.refreshKey}
+      pendingDraft={pendingDraft}
       onSignOut={onSignOut}
+      onContinueDraft={(draft) => {
+        setPendingDraft(null);
+        setScreen({
+          name: "workout",
+          key: Date.now(),
+          prepared: blankPreparedWorkout(draft.workout.bodyWeightLb ?? null),
+          draftWorkout: draft.workout,
+          completedAt: draft.completedAt ? new Date(draft.completedAt) : null,
+          contextLabel: "continued active workout",
+        });
+      }}
+      onDismissDraft={() =>
+        setPendingDraft((current) =>
+          current ? { ...current, dismissed: true } : current,
+        )
+      }
+      onDiscardDraft={() => {
+        setPendingDraft(null);
+        void clearActiveWorkoutDraft();
+      }}
       onStartBlank={(bodyWeightLb) =>
         setScreen({
           name: "workout",
@@ -885,14 +891,22 @@ export function LiftMobileApp({
 function HomeScreen({
   api,
   refreshKey,
+  pendingDraft,
   onSignOut,
+  onContinueDraft,
+  onDismissDraft,
+  onDiscardDraft,
   onStartBlank,
   onStartPrepared,
   onEditWorkout,
 }: {
   api: WorkoutApiClient;
   refreshKey: number;
+  pendingDraft: PendingWorkoutDraft | null;
   onSignOut?: () => void;
+  onContinueDraft: (draft: StoredWorkoutDraft) => void;
+  onDismissDraft: () => void;
+  onDiscardDraft: () => void;
   onStartBlank: (bodyWeightLb: number | null) => void;
   onStartPrepared: (prepared: PreparedWorkout) => void;
   onEditWorkout: (workoutId: number, details: WorkoutDetails) => void;
@@ -1107,7 +1121,79 @@ function HomeScreen({
           </Pressable>
         ) : null}
       </ScrollView>
+      <ActiveWorkoutDraftSheet
+        draft={pendingDraft?.dismissed ? null : pendingDraft}
+        onContinue={onContinueDraft}
+        onDismiss={onDismissDraft}
+        onDiscard={onDiscardDraft}
+      />
     </SafeAreaView>
+  );
+}
+
+function ActiveWorkoutDraftSheet({
+  draft,
+  onContinue,
+  onDismiss,
+  onDiscard,
+}: {
+  draft: PendingWorkoutDraft | null;
+  onContinue: (draft: StoredWorkoutDraft) => void;
+  onDismiss: () => void;
+  onDiscard: () => void;
+}) {
+  if (!draft) return null;
+
+  const exerciseCount = draft.workout.exercises.length;
+  const savedAt = new Date(draft.savedAt);
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
+      <View style={styles.modalShade}>
+        <SafeAreaView style={styles.recoverySheetSafeArea}>
+          <View style={styles.recoverySheet}>
+            <Text style={styles.subtleTitle}>workout in progress</Text>
+            <Text style={styles.historyTitle}>{draft.workout.name}</Text>
+            <Text style={styles.metaText}>
+              {exerciseCount} {exerciseCount === 1 ? "exercise" : "exercises"} .
+              saved {formatRelativeDate(savedAt)} . {formatTime(savedAt)}
+            </Text>
+            <Text style={styles.mutedText}>
+              Continue where you left off, leave it saved for later, or discard
+              the saved draft from this phone.
+            </Text>
+            <View style={styles.recoveryActions}>
+              <Pressable
+                accessibilityLabel="Discard saved workout draft"
+                accessibilityRole="button"
+                style={styles.textButton}
+                testID="active-draft-discard"
+                onPress={onDiscard}
+              >
+                <Text style={styles.textButtonText}>discard</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Keep saved workout draft for later"
+                accessibilityRole="button"
+                style={styles.textButton}
+                testID="active-draft-not-now"
+                onPress={onDismiss}
+              >
+                <Text style={styles.textButtonText}>not now</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Continue workout in progress"
+                accessibilityRole="button"
+                style={[styles.textButton, styles.primaryWideButton]}
+                testID="active-draft-continue"
+                onPress={() => onContinue(draft)}
+              >
+                <Text style={styles.primaryWideButtonText}>continue</Text>
+              </Pressable>
+            </View>
+          </View>
+        </SafeAreaView>
+      </View>
+    </Modal>
   );
 }
 

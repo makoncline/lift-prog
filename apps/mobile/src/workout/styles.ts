@@ -210,6 +210,23 @@ export const styles = StyleSheet.create({
     fontFamily: monoFont,
     fontSize: 16,
   },
+  recoverySheetSafeArea: {
+    justifyContent: "flex-end",
+  },
+  recoverySheet: {
+    backgroundColor: palette.canvas,
+    borderColor: palette.line,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    borderWidth: 1,
+    gap: 7,
+    padding: 12,
+  },
+  recoveryActions: {
+    flexDirection: "row",
+    gap: 7,
+    marginTop: 5,
+  },
   inlineEditRow: {
     alignItems: "center",
     flexDirection: "row",
