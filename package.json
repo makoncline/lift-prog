@@ -32,9 +32,5 @@
     "prisma": "^6.5.0",
     "typescript": "^5.8.2"
   },
-  "packageManager": "npm@11.3.0",
-  "dependencies": {
-    "better-auth": "^1.6.20",
-    "expo-linking": "~55.0.15"
-  }
+  "packageManager": "npm@11.3.0"
 }

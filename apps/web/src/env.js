@@ -34,6 +34,11 @@ if (process.env.NODE_ENV === "production") {
 }
 loadRootEnvFile("../../../.env");
 
+const requiredInProduction = () =>
+  process.env.NODE_ENV === "production"
+    ? z.string().min(1)
+    : z.string().optional();
+
 export const env = createEnv({
   /**
    * Specify your server-side environment variables schema here. This way you can ensure the app
@@ -46,11 +51,11 @@ export const env = createEnv({
     TURSO_DATABASE_URL: z.string(),
     TURSO_AUTH_TOKEN: z.string(),
     ADMIN_USER_IDS: z.string().optional(),
-    BETTER_AUTH_SECRET: z.string().optional(),
+    BETTER_AUTH_SECRET: requiredInProduction(),
     BETTER_AUTH_URL: z.string().url().optional(),
     AUTH_OWNER_EMAIL: z.string().email().optional(),
-    SMTP_USER: z.string().optional(),
-    SMTP_PASS: z.string().optional(),
+    SMTP_USER: requiredInProduction(),
+    SMTP_PASS: requiredInProduction(),
     SMTP_HOST: z.string().optional(),
     SMTP_PORT: z.string().optional(),
     SMTP_SECURE: z.string().optional(),

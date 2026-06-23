@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@lift-prog/workout-core";
 import { authClient } from "@/lib/auth-client";
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 
@@ -763,6 +764,7 @@ function UnauthenticatedHomePage() {
 
 export default function HomePage() {
   const { data: session, isPending } = authClient.useSession();
+  const hasLocalDevAuth = isLocalDevAuthBypassEnabled();
 
   if (isPending) {
     return (
@@ -772,9 +774,13 @@ export default function HomePage() {
     );
   }
 
-  if (!session?.user) {
+  if (!session?.user && !hasLocalDevAuth) {
     return <UnauthenticatedHomePage />;
   }
 
-  return <AuthenticatedHomePage />;
+  return (
+    <AuthenticatedHomePage
+      historyEnabled={Boolean(session?.user) || hasLocalDevAuth}
+    />
+  );
 }

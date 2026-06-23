@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/trpc/react";
 import { authClient } from "@/lib/auth-client";
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { NoteEditorDialog } from "@/components/workout/note_editor_dialog";
 import { DeleteExerciseDialog } from "@/components/workout/delete_exercise_dialog";
@@ -268,10 +269,11 @@ function cloneWorkout(workout: Workout): Workout {
 
 export function WorkoutComponent({ ...props }: WorkoutProps) {
   const { data: session, isPending } = authClient.useSession();
+  const hasLocalDevAuth = isLocalDevAuthBypassEnabled();
   return (
     <WorkoutComponentInner
       {...props}
-      canSaveWorkout={Boolean(session?.user)}
+      canSaveWorkout={Boolean(session?.user) || hasLocalDevAuth}
       userStateLoaded={!isPending}
     />
   );

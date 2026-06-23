@@ -1,8 +1,7 @@
-import { auth } from "@/server/auth";
-import { resolveAppUserIdForAuthUser } from "@/server/auth/app-user";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 
 const STRING_LIMITS = {
   reportId: 120,
@@ -133,19 +132,19 @@ function sanitizePayload(payload: unknown): ErrorReportPayload {
 
 async function getAuthContext(request: Request): Promise<AuthContext> {
   const localDevUserId =
-    process.env.NODE_ENV === "development"
+    isLocalDevAuthBypassEnabled()
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
 
-  if (localDevUserId) {
-    return { userId: localDevUserId };
-  }
-
   try {
+    const [{ auth }, { resolveAppUserIdForAuthUser }] = await Promise.all([
+      import("@/server/auth"),
+      import("@/server/auth/app-user"),
+    ]);
     const session = await auth.api.getSession({ headers: request.headers });
     const userId = session?.user
       ? await resolveAppUserIdForAuthUser(session.user)
-      : undefined;
+      : (localDevUserId ?? undefined);
     return { userId };
   } catch (error) {
     return {

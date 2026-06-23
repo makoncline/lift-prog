@@ -20,9 +20,14 @@ export const userRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { clerkUserId } = input;
 
-      // Preserve the legacy column as the stable external auth identifier.
-      const existingUser = await ctx.db.user.findUnique({
-        where: { id: clerkUserId },
+      const existingUser = await ctx.db.user.findFirst({
+        where: {
+          OR: [
+            { id: clerkUserId },
+            { clerkUserId },
+            { authUserId: clerkUserId },
+          ],
+        },
       });
 
       if (existingUser) {
@@ -37,6 +42,8 @@ export const userRouter = createTRPCRouter({
         data: {
           id: clerkUserId,
           clerkUserId,
+          authUserId: clerkUserId,
+          authProvider: "better-auth",
         },
       });
 

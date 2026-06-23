@@ -310,7 +310,7 @@ function UserManager() {
               {usersQuery.data.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-mono text-xs">
-                    {user.clerkUserId}
+                    {user.authUserId ?? user.clerkUserId}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     {user.id} {/* Display DB ID as well */}
@@ -349,7 +349,11 @@ function UserManager() {
                           <DialogDescription>
                             Are you sure you want to delete the user with auth
                             ID &quot;
-                            <strong>{userToDelete?.clerkUserId}</strong>&quot;?
+                            <strong>
+                              {userToDelete?.authUserId ??
+                                userToDelete?.clerkUserId}
+                            </strong>
+                            &quot;?
                             This will also delete all their associated workout
                             data. This action cannot be undone.
                           </DialogDescription>

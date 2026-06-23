@@ -10,9 +10,8 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { db } from "@/server/db";
-import { auth } from "@/server/auth";
-import { resolveAppUserIdForAuthUser } from "@/server/auth/app-user";
 
 /**
  * 1. CONTEXT
@@ -45,16 +44,18 @@ export const createInnerTRPCContext = (opts: {
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const localDevUserId =
-    process.env.NODE_ENV === "development"
+    isLocalDevAuthBypassEnabled()
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
-  const session =
-    localDevUserId !== null
-      ? null
-      : await auth.api.getSession({ headers: opts.headers });
+  const [{ auth }, { resolveAppUserIdForAuthUser }] = await Promise.all([
+    import("@/server/auth"),
+    import("@/server/auth/app-user"),
+  ]);
+  const session = await auth.api.getSession({ headers: opts.headers });
   const userId =
-    localDevUserId ??
-    (session?.user ? await resolveAppUserIdForAuthUser(session.user) : null);
+    session?.user
+      ? await resolveAppUserIdForAuthUser(session.user)
+      : localDevUserId;
 
   return createInnerTRPCContext({
     auth: { userId },

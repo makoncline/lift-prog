@@ -7,6 +7,7 @@ import { expo } from "@better-auth/expo";
 
 import { env } from "@/env";
 import { db } from "@/server/db";
+import { assertAuthEmailCanSignIn } from "@/server/auth/app-user";
 import { sendAuthOtpEmail } from "@/server/auth/email";
 
 const baseFallback =
@@ -76,6 +77,15 @@ export const auth = betterAuth({
   verification: {
     modelName: "authVerification",
   },
+  databaseHooks: {
+    user: {
+      create: {
+        async before(user) {
+          await assertAuthEmailCanSignIn(user.email);
+        },
+      },
+    },
+  },
   plugins: [
     expo(),
     emailOTP({
@@ -83,6 +93,9 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 60 * 10,
       async sendVerificationOTP({ email, otp, type }) {
+        if (type === "sign-in") {
+          await assertAuthEmailCanSignIn(email);
+        }
         await sendAuthOtpEmail({ email, otp, type });
       },
     }),
