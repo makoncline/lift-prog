@@ -129,7 +129,7 @@ export function SetEditorReadout({
       aria-label="Swipe between sets"
       className="w-full min-w-0 pb-1"
     >
-      <div className="mb-0.5 truncate text-[11px] leading-4 text-[#716b5d]">
+      <div className="mb-1 truncate text-[18px] leading-6 text-[#7a7468]">
         {exerciseName}
       </div>
       <SetEditorSummaryLine
@@ -147,7 +147,7 @@ export function SetEditorReadout({
       {editingNote ? null : (
         <div
           ref={scrollRef}
-          className="flex h-[47px] w-full min-w-0 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
+          className="flex h-[70px] w-full min-w-0 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden"
           style={{ scrollbarWidth: "none" }}
           onScroll={handleScroll}
         >
@@ -177,9 +177,7 @@ export function SetEditorReadout({
                   field={field}
                   interactive={isActive}
                   noteLabel={
-                    readoutSet.note
-                      ? `Edit ${label} note`
-                      : `Add ${label} note`
+                    readoutSet.note ? `Edit ${label} note` : `Add ${label} note`
                   }
                   deleteLabel={`Delete ${label}`}
                   className={cn(!isActive && "opacity-55")}
@@ -255,8 +253,8 @@ function SetEditorSummaryLine({
   const workingSets = sets.filter((set) => set.kind === "working");
 
   return (
-    <div className={cn("relative mb-1 min-w-0", onAddSet && "pr-8")}>
-      <div className="flex min-h-6 min-w-0 flex-col gap-0.5 text-[13px] leading-5 text-[#696457]">
+    <div className={cn("relative mb-2 min-w-0", onAddSet && "pr-12")}>
+      <div className="flex min-h-6 min-w-0 flex-col gap-1 text-[24px] leading-8 text-[#7a7468]">
         {warmupSets.length > 0 ? (
           <SetEditorSummaryGroup
             sets={warmupSets}
@@ -281,10 +279,10 @@ function SetEditorSummaryLine({
         <button
           type="button"
           aria-label="Add set"
-          className="absolute top-0 right-0 flex size-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] text-[#817a69] hover:bg-[#eee8da]"
+          className="absolute top-0 right-0 flex h-[34px] min-w-10 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df]"
           onClick={onAddSet}
         >
-          <Plus className="size-3.5" aria-hidden="true" />
+          <Plus className="size-4" aria-hidden="true" />
         </button>
       ) : null}
     </div>
@@ -330,8 +328,8 @@ function SetEditorSummaryGroup({
                 aria-label={`Change rest before ${formatCurrentReps(set)}`}
                 title={isCompound ? "short rest" : "standard rest"}
                 className={cn(
-                  "inline-flex min-w-3 justify-center rounded-[3px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]",
-                  isCompound && "font-semibold text-[#373226]",
+                  "inline-flex min-w-[13px] justify-center rounded-[5px] border border-[#eee9df] text-[#7a7468] hover:bg-[#eee9df]",
+                  isCompound && "font-semibold text-[#383225]",
                 )}
                 onClick={() => onCycleRestBefore(set.id)}
               >
@@ -339,7 +337,7 @@ function SetEditorSummaryGroup({
               </button>
             ) : null}
             {index === 0 && warmup ? (
-              <span className="rounded-[3px] px-0.5">W</span>
+              <span className="rounded-[5px] px-0.5">W</span>
             ) : null}
             {showWeight ? (
               <>
@@ -347,10 +345,10 @@ function SetEditorSummaryGroup({
                   type="button"
                   aria-label={`Edit ${formatCurrentWeight(set)} weight`}
                   className={cn(
-                    "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
+                    "rounded-[5px] border border-[#eee9df] px-0.5 hover:bg-[#eee9df]",
                     active &&
                       activeField === "weight" &&
-                      "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
+                      "bg-[#eee9df] text-[#1f1c17] outline outline-1 outline-offset-1 outline-[#383225]",
                   )}
                   onClick={() => onEdit(set.id, "weight")}
                 >
@@ -363,10 +361,10 @@ function SetEditorSummaryGroup({
               type="button"
               aria-label={`Edit ${formatCurrentReps(set)} reps`}
               className={cn(
-                "rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]",
+                "rounded-[5px] border border-[#eee9df] px-0.5 hover:bg-[#eee9df]",
                 active &&
                   activeField === "reps" &&
-                  "bg-[#eee8da] text-[#17150f] outline outline-1 outline-offset-1 outline-[#a79b83]",
+                  "bg-[#eee9df] text-[#1f1c17] outline outline-1 outline-offset-1 outline-[#383225]",
               )}
               onClick={() => onEdit(set.id, "reps")}
             >
@@ -466,18 +464,18 @@ function SetEditorReadoutPanel({
 
   return (
     <div className={cn("w-full min-w-0", className)}>
-      <div className="pb-0.5 text-[11px] leading-4 text-[#716b5d]">
+      <div className="pb-1 text-[18px] leading-6 text-[#7a7468]">
         {preview.label}
       </div>
-      <div className="flex min-w-0 items-center justify-between gap-2 text-[16px] leading-6">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+      <div className="flex min-w-0 items-center justify-between gap-[7px] text-[30px] leading-10">
+        <div className="flex min-w-0 flex-1 items-center gap-[7px] overflow-hidden">
           <button
             type="button"
             aria-label="toggle warmup"
             disabled={!interactive}
             className={cn(
-              "flex size-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] text-[11px] leading-none text-[#5b5445]",
-              preview.kind === "warmup" && "bg-[#e7e0d0] font-semibold",
+              "flex size-[45px] items-center justify-center rounded-[6px] border border-[#d7cab8] text-[22px] leading-none text-[#1f1c17]",
+              preview.kind === "warmup" && "bg-[#eee9df] font-semibold",
               !interactive && "pointer-events-none",
             )}
             onClick={onToggleWarmup}
@@ -497,7 +495,7 @@ function SetEditorReadoutPanel({
                     disabled={!interactive}
                     title="standard rest"
                     className={cn(
-                      "inline-flex min-w-3 justify-center rounded-[3px] border border-transparent text-[#8a8374] hover:border-[#ebe4d6] hover:bg-[#eee8da] hover:text-[#373226]",
+                      "inline-flex min-w-[13px] justify-center rounded-[5px] border border-transparent text-[#7a7468] hover:border-[#eee9df] hover:bg-[#eee9df] hover:text-[#383225]",
                       !interactive && "pointer-events-none",
                     )}
                     onClick={() => onUseStandardRestBefore?.(segment.id)}
@@ -511,11 +509,11 @@ function SetEditorReadoutPanel({
                       type="button"
                       disabled={!interactive}
                       className={cn(
-                        "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
+                        "min-w-0 truncate rounded-[5px] border border-[#eee9df] px-2 text-left",
                         field === "weight" &&
                           segment.active &&
                           interactive &&
-                          "bg-[#eee8da]",
+                          "bg-[#eee9df]",
                         !interactive && "pointer-events-none",
                       )}
                       onClick={() => {
@@ -528,18 +526,18 @@ function SetEditorReadoutPanel({
                     >
                       {segment.weight}
                     </button>
-                    <span className="text-[#8a8374]">×</span>
+                    <span className="text-[#7a7468]">×</span>
                   </>
                 ) : null}
                 <button
                   type="button"
                   disabled={!interactive}
                   className={cn(
-                    "min-w-0 truncate rounded-[4px] border border-[#ebe4d6] px-1 text-left",
+                    "min-w-0 truncate rounded-[5px] border border-[#eee9df] px-2 text-left",
                     field === "reps" &&
                       segment.active &&
                       interactive &&
-                      "bg-[#eee8da]",
+                      "bg-[#eee9df]",
                     !interactive && "pointer-events-none",
                   )}
                   onClick={() => {
@@ -556,14 +554,14 @@ function SetEditorReadoutPanel({
             ))}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-[7px]">
           {confirmingDelete ? (
             <>
               <button
                 type="button"
                 disabled={!interactive}
                 className={cn(
-                  "flex h-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] px-1.5 text-[11px] leading-none text-[#817a69] hover:bg-[#eee8da]",
+                  "flex h-[34px] items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[16px] leading-none text-[#7a7468] hover:bg-[#eee9df]",
                   !interactive && "pointer-events-none",
                 )}
                 onClick={() => setConfirmingDelete(false)}
@@ -575,7 +573,7 @@ function SetEditorReadoutPanel({
                 aria-label={`Confirm ${deleteLabel}`}
                 disabled={!interactive}
                 className={cn(
-                  "flex h-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#5f2018] px-1.5 text-[11px] leading-none text-[#fdfcf8] hover:bg-[#5f2018]/90",
+                  "flex h-[34px] items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#9f2f2f] px-2 text-[16px] leading-none text-[#fffefa] hover:bg-[#9f2f2f]/90",
                   !interactive && "pointer-events-none",
                 )}
                 onClick={onDelete}
@@ -590,24 +588,24 @@ function SetEditorReadoutPanel({
                 aria-label={noteLabel}
                 disabled={!interactive}
                 className={cn(
-                  "flex size-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] text-[#817a69] hover:bg-[#eee8da]",
+                  "flex h-[34px] min-w-[44px] items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df]",
                   !interactive && "pointer-events-none",
                 )}
                 onClick={onEditNote}
               >
-                <Pencil className="size-3.5" aria-hidden="true" />
+                <Pencil className="size-4" aria-hidden="true" />
               </button>
               <button
                 type="button"
                 aria-label={deleteLabel}
                 disabled={!interactive}
                 className={cn(
-                  "flex size-6 items-center justify-center rounded-[4px] border border-[#d7cfbc] text-[#817a69] hover:bg-[#eee8da]",
+                  "flex h-[34px] min-w-[44px] items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df]",
                   !interactive && "pointer-events-none",
                 )}
                 onClick={() => setConfirmingDelete(true)}
               >
-                <Trash2 className="size-3.5" aria-hidden="true" />
+                <Trash2 className="size-4" aria-hidden="true" />
               </button>
             </>
           )}

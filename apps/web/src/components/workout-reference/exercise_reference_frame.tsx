@@ -12,7 +12,7 @@ export function ExerciseReferenceShell({
   return (
     <section
       className={cn(
-        "mx-auto min-h-screen w-full max-w-[390px] overflow-hidden bg-[#fdfcf8] px-3 py-5 font-mono text-[#17150f]",
+        "mx-auto min-h-screen w-full max-w-[390px] overflow-hidden bg-[#fbfaf7] px-[14px] py-0 font-mono text-[#1f1c17]",
         className,
       )}
       {...props}
@@ -42,19 +42,19 @@ export function ExerciseReferenceHeader({
   onEditWorkoutExerciseNote: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
+    <div className="flex flex-col gap-[5px]">
+      <div className="flex items-center justify-between gap-[7px]">
         <button
           type="button"
           aria-label={`Edit ${name} pinned exercise note`}
           className="min-w-0 text-left"
           onClick={onEditExerciseNote}
         >
-          <h1 className="min-w-0 text-[18px] leading-6 font-semibold tracking-normal">
+          <h1 className="min-w-0 text-[31px] leading-9 font-extrabold tracking-normal">
             {name}
           </h1>
         </button>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-[7px]">
           <ExerciseNoteButton
             hasNote={Boolean(workoutExerciseNote.trim())}
             onEdit={onEditWorkoutExerciseNote}
@@ -81,7 +81,7 @@ export function ExerciseReferenceHeader({
         </button>
       ) : null}
       {plateSettingsText?.trim() ? (
-        <div className="text-[11px] leading-3 text-[#716b5d]">
+        <div className="text-[18px] leading-6 text-[#7a7468]">
           {plateSettingsText}
         </div>
       ) : null}
@@ -102,10 +102,10 @@ function ExerciseNoteButton({
       aria-label={
         hasNote ? "Edit workout exercise note" : "Add workout exercise note"
       }
-      className="inline-flex size-6 items-center justify-center rounded-[4px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]"
+      className="inline-flex h-[34px] min-w-[44px] items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df]"
       onClick={onEdit}
     >
-      <Pencil className="size-3.5" aria-hidden="true" />
+      <Pencil className="size-4" aria-hidden="true" />
     </button>
   );
 }
@@ -122,13 +122,13 @@ function HistoryToggleButton({
       type="button"
       aria-label={visible ? "Hide exercise history" : "Show exercise history"}
       aria-pressed={visible}
-      className="inline-flex size-6 shrink-0 items-center justify-center rounded-[4px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]"
+      className="inline-flex h-[34px] min-w-[44px] shrink-0 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df]"
       onClick={onToggle}
     >
       {visible ? (
-        <CircleChevronUp className="size-3.5" aria-hidden="true" />
+        <CircleChevronUp className="size-4" aria-hidden="true" />
       ) : (
-        <Clock className="size-3.5" aria-hidden="true" />
+        <Clock className="size-4" aria-hidden="true" />
       )}
     </button>
   );

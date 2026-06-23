@@ -518,8 +518,8 @@ describe("workout.listRecent", () => {
       }),
     );
     expect(workouts[0]?.exerciseSummaries).toEqual([
-      "Pull-ups - BW:x10,x10,x9+1+4",
-      "Tricep overhead - 40lb:x15,x12,x8+4",
+      "Pull-ups - BWx10,10,9+1+4",
+      "Tricep overhead - 40lbx15,12,8+4",
     ]);
   });
 });

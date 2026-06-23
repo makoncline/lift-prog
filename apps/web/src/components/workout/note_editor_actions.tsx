@@ -84,10 +84,10 @@ function NoteDeleteButton({
     <button
       type="button"
       aria-label={deleteLabel}
-      className="inline-flex h-8 w-9 items-center justify-center rounded-[4px] border border-[#d7cfbc] text-[#817a69] hover:bg-[#eee8da] hover:text-[#5f2018]"
+      className="inline-flex h-10 min-w-12 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df] hover:text-[#9f2f2f]"
       onClick={onDelete}
     >
-      <Trash2 className="size-3.5" aria-hidden="true" />
+      <Trash2 className="size-4" aria-hidden="true" />
     </button>
   );
 }

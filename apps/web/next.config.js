@@ -8,6 +8,7 @@ import "./src/env.js";
 const nextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["lift2.makon.dev"],
+  devIndicators: false,
   transpilePackages: ["@lift-prog/workout-core"],
 };
 

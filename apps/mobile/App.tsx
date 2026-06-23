@@ -1,4 +1,10 @@
-import { ClerkProvider, useAuth, useClerk, useSignIn, useSignUp } from "@clerk/expo";
+import {
+  ClerkProvider,
+  useAuth,
+  useClerk,
+  useSignIn,
+  useSignUp,
+} from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { StatusBar } from "expo-status-bar";
 import React, { useState } from "react";
@@ -13,7 +19,13 @@ import {
   View,
 } from "react-native";
 
-import { mobileClerkPublishableKey } from "./src/lib/config";
+import {
+  mobileClerkPublishableKey,
+  mobileLocalDevUserId,
+  mobileSkipClerk,
+} from "./src/lib/config";
+import { MobileErrorBoundary } from "./src/workout/MobileErrorBoundary";
+import { LiftMobileApp } from "./src/workout/MobileWorkoutApp";
 
 const palette = {
   canvas: "#f4efe6",
@@ -39,9 +51,11 @@ const getClerkErrorMessage = (error: unknown) => {
         .errors,
     )
   ) {
-    const firstError = (error as {
-      errors: Array<{ longMessage?: string; message?: string }>;
-    }).errors[0];
+    const firstError = (
+      error as {
+        errors: Array<{ longMessage?: string; message?: string }>;
+      }
+    ).errors[0];
 
     if (firstError?.longMessage) {
       return firstError.longMessage;
@@ -102,13 +116,11 @@ function AuthScreen() {
     return <LoadingScreen message="Loading authentication…" />;
   }
 
-  const finalizeFlow = async (
-    flow: {
-      finalize: (options: {
-        navigate: (payload: unknown) => void;
-      }) => Promise<{ error: unknown | null }>;
-    },
-  ) => {
+  const finalizeFlow = async (flow: {
+    finalize: (options: {
+      navigate: (payload: unknown) => void;
+    }) => Promise<{ error: unknown | null }>;
+  }) => {
     const result = await flow.finalize({
       navigate: () => undefined,
     });
@@ -234,7 +246,9 @@ function AuthScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.hero}>
           <Text style={styles.eyebrow}>Lift Prog</Text>
-          <Text style={styles.heroTitle}>A fresh iPhone app, starting from auth.</Text>
+          <Text style={styles.heroTitle}>
+            A fresh iPhone app, starting from auth.
+          </Text>
           <Text style={styles.heroBody}>
             The old workout-specific mobile flow has been removed. Sign in with
             your existing account while the new iOS product takes shape.
@@ -383,53 +397,16 @@ function AuthScreen() {
 }
 
 function SignedInHomeScreen() {
+  const { getToken } = useAuth();
   const { signOut } = useClerk();
-  const { isLoaded, sessionId, userId } = useAuth();
-
-  if (!isLoaded) {
-    return <LoadingScreen message="Loading account…" />;
-  }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Lift Prog</Text>
-          <Text style={styles.heroTitle}>Mobile has been reset.</Text>
-          <Text style={styles.heroBody}>
-            Auth is still wired up and working. The old workout experience is
-            gone so the iPhone app can be rebuilt around a new format.
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Current state</Text>
-          <Text style={styles.cardBody}>
-            You are signed in successfully. This is the new clean starting
-            point for the iOS app.
-          </Text>
-
-          <View style={styles.metaBlock}>
-            <Text style={styles.metaLabel}>User ID</Text>
-            <Text style={styles.metaValue}>{userId ?? "Unavailable"}</Text>
-          </View>
-          <View style={styles.metaBlock}>
-            <Text style={styles.metaLabel}>Session ID</Text>
-            <Text style={styles.metaValue}>{sessionId ?? "Unavailable"}</Text>
-          </View>
-
-          <Pressable
-            style={styles.primaryAction}
-            onPress={() => {
-              void signOut();
-            }}
-          >
-            <Text style={styles.primaryActionText}>Sign out</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <LiftMobileApp
+      getToken={getToken}
+      onSignOut={() => {
+        void signOut();
+      }}
+    />
   );
 }
 
@@ -447,7 +424,15 @@ function MobileRoot() {
   return <SignedInHomeScreen />;
 }
 
-export default function App() {
+function AppContent() {
+  if (__DEV__ && mobileSkipClerk) {
+    return <LiftMobileApp />;
+  }
+
+  if (__DEV__ && mobileLocalDevUserId) {
+    return <LiftMobileApp localDevUserId={mobileLocalDevUserId} />;
+  }
+
   if (!mobileClerkPublishableKey) {
     return <ConfigurationErrorScreen />;
   }
@@ -459,6 +444,14 @@ export default function App() {
     >
       <MobileRoot />
     </ClerkProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <MobileErrorBoundary scope="mobile-root" screen="app" title="app crashed">
+      <AppContent />
+    </MobileErrorBoundary>
   );
 }
 

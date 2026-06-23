@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./workout-summary";
+export * from "./weight-helper";
 export * from "./workout-templates";
 export * from "./workout-logic";
 export * from "./calc/barbell-utils";

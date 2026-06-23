@@ -41,22 +41,25 @@ export function WorkoutExercisePlan({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <section className="mb-3 text-[#17150f]" aria-label="Workout exercises">
+    <section
+      className="mb-[22px] text-[#1f1c17]"
+      aria-label="Workout exercises"
+    >
       <button
         type="button"
-        className="flex min-h-7 w-full min-w-0 items-center gap-1 text-left font-mono text-[12px] leading-4 text-[#716b5d]"
+        className="flex min-h-[34px] w-full min-w-0 items-center gap-1 text-left font-mono text-[18px] leading-6 text-[#7a7468]"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
       >
         {expanded ? (
-          <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+          <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
         ) : (
-          <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
+          <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
         )}
         <span className="shrink-0">exercises</span>
       </button>
       {expanded ? (
-        <div className="mt-0.5">
+        <div className="mt-1">
           <WorkoutExercisePlanList>
             {exercises.map((exerciseName, exerciseIndex) => (
               <WorkoutExercisePlanItem
@@ -86,7 +89,7 @@ export function WorkoutExercisePlan({
 }
 
 function WorkoutExercisePlanList({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-col gap-0.5">{children}</div>;
+  return <div className="flex flex-col gap-[7px]">{children}</div>;
 }
 
 function WorkoutExercisePlanItem({
@@ -124,22 +127,22 @@ function WorkoutExercisePlanItem({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "group flex min-h-7 items-center gap-1 rounded-[3px] px-0.5 text-[13px] leading-5",
-        dragging && "bg-[#eee8da]",
+        "group flex min-h-[34px] items-center gap-[7px] rounded-[5px] px-0.5 text-[19px] leading-6",
+        dragging && "bg-[#eee9df]",
       )}
     >
       <GripVertical
-        className="size-3.5 shrink-0 text-[#a49b86]"
+        className="size-4 shrink-0 text-[#7a7468]"
         aria-hidden="true"
       />
       <span className="min-w-0 flex-1 truncate">{exerciseName}</span>
       <button
         type="button"
         aria-label={`Delete ${exerciseName}`}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-[3px] text-[#817a69] hover:bg-[#eee8da] hover:text-[#5f2018]"
+        className="inline-flex h-[34px] min-w-[44px] shrink-0 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df] hover:text-[#9f2f2f]"
         onClick={() => onDeleteExercise(exerciseIndex)}
       >
-        <Trash2 className="size-3.5" aria-hidden="true" />
+        <Trash2 className="size-4" aria-hidden="true" />
       </button>
     </div>
   );
@@ -173,9 +176,9 @@ function WorkoutExercisePlanAddForm({
   );
 
   return (
-    <div className="mt-1.5">
+    <div className="mt-2">
       <form
-        className="flex min-w-0 gap-1"
+        className="flex min-w-0 gap-[6px]"
         onSubmit={(event) => {
           event.preventDefault();
           onAddExercise(exerciseName);
@@ -184,27 +187,27 @@ function WorkoutExercisePlanAddForm({
         <input
           value={exerciseName}
           onChange={(event) => onExerciseNameChange(event.target.value)}
-          placeholder="search or create exercise"
-          className="h-7 min-w-0 flex-1 rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[16px] leading-4 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
+          placeholder="exercise name"
+          className="h-10 min-w-0 flex-1 rounded-[5px] border border-[#d7cab8] bg-[#fffefa] px-2 font-mono text-[20px] leading-6 text-[#1f1c17] outline-none placeholder:text-[#7a7468] focus:ring-1 focus:ring-[#383225]"
         />
         <Button
           type="submit"
           variant="outline"
           size="sm"
-          className="h-7 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[12px] font-normal text-[#373226] shadow-none"
+          className="h-10 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-3 font-mono text-[16px] font-normal text-[#7a7468] shadow-none hover:bg-[#eee9df]"
           disabled={addingExerciseName != null || !exerciseName.trim()}
         >
-          <Plus className="size-3.5" />
+          <Plus className="size-4" />
           add
         </Button>
       </form>
       {trimmedName ? (
-        <div className="mt-1 flex max-h-32 flex-col overflow-y-auto font-mono text-[13px] leading-5">
+        <div className="mt-1 flex max-h-32 flex-col overflow-y-auto font-mono text-[18px] leading-6">
           {matchingSuggestions.map((name) => (
             <button
               key={name}
               type="button"
-              className="rounded-[3px] px-1.5 py-0.5 text-left text-[#373226] hover:bg-[#eee8da]"
+              className="rounded-[5px] px-2 py-1 text-left text-[#1f1c17] hover:bg-[#eee9df]"
               onClick={() => onAddExercise(name)}
             >
               {name}
@@ -213,7 +216,7 @@ function WorkoutExercisePlanAddForm({
           {exerciseSuggestionsLoaded && !hasExactMatch ? (
             <button
               type="button"
-              className="rounded-[3px] px-1.5 py-0.5 text-left text-[#8a8373] hover:bg-[#eee8da] hover:text-[#373226]"
+              className="rounded-[5px] px-2 py-1 text-left text-[#7a7468] hover:bg-[#eee9df] hover:text-[#1f1c17]"
               onClick={() => onAddExercise(trimmedName)}
             >
               create {trimmedName}

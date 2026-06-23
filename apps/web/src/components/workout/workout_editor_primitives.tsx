@@ -13,7 +13,7 @@ export function WorkoutEditorContent({
   return (
     <DialogContent
       className={cn(
-        "top-auto bottom-0 left-1/2 w-[calc(100vw-16px)] max-w-[390px] min-w-0 translate-y-0 gap-2 rounded-none border-x-0 border-b-0 border-[#d7cfbc] bg-[#fdfcf8] p-2 font-mono text-[#17150f] shadow-none sm:top-auto sm:bottom-0 sm:max-w-[390px] sm:translate-y-0",
+        "top-auto bottom-0 left-1/2 w-[calc(100vw-16px)] max-w-[390px] min-w-0 translate-y-0 gap-3 rounded-t-[4px] border-[#d7cab8] bg-[#fbfaf7] p-3 font-mono text-[#1f1c17] shadow-none sm:top-auto sm:bottom-0 sm:max-w-[390px] sm:translate-y-0",
         className,
       )}
       {...props}
@@ -24,7 +24,7 @@ export function WorkoutEditorContent({
 }
 
 export function WorkoutEditorLabel({ children }: { children: ReactNode }) {
-  return <div className="text-[11px] leading-4 text-[#716b5d]">{children}</div>;
+  return <div className="text-[18px] leading-6 text-[#7a7468]">{children}</div>;
 }
 
 export function WorkoutEditorActionRow({
@@ -54,7 +54,7 @@ export function WorkoutEditorPrimaryAction({
     <Button
       type="button"
       className={cn(
-        "h-8 rounded-[4px] bg-[#373226] font-mono text-[12px] font-normal text-[#fdfcf8] shadow-none hover:bg-[#373226]/90",
+        "h-10 rounded-[7px] bg-[#383225] font-mono text-[20px] font-normal text-[#fffefa] shadow-none hover:bg-[#383225]/90",
         className,
       )}
       {...props}
@@ -71,7 +71,7 @@ export function WorkoutEditorSecondaryAction({
       type="button"
       variant="outline"
       className={cn(
-        "h-8 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[12px] font-normal text-[#373226] shadow-none",
+        "h-10 rounded-[7px] border-[#d7cab8] bg-[#fffefa] font-mono text-[20px] font-normal text-[#1f1c17] shadow-none",
         className,
       )}
       {...props}
@@ -87,7 +87,7 @@ export function WorkoutEditorDangerAction({
     <Button
       type="button"
       className={cn(
-        "h-8 rounded-[4px] bg-[#5f2018] font-mono text-[12px] font-normal text-[#fdfcf8] shadow-none hover:bg-[#5f2018]/90",
+        "h-10 rounded-[7px] bg-[#9f2f2f] font-mono text-[20px] font-normal text-[#fffefa] shadow-none hover:bg-[#9f2f2f]/90",
         className,
       )}
       {...props}

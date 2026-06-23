@@ -1,11 +1,6 @@
 "use client";
-import {
-  Dialog,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { H4 } from "@/components/ui/typography";
 import {
   WorkoutEditorActionRow,
   WorkoutEditorContent,
@@ -41,10 +36,10 @@ export function TitleEditor({
       >
         <button
           type="button"
-          className="min-w-0 max-w-full cursor-pointer appearance-none rounded-[4px] border border-[#ebe4d6] bg-[#fdfcf8] px-1 py-0.5 text-left text-inherit hover:bg-[#eee8da]"
+          className="max-w-full min-w-0 cursor-pointer appearance-none rounded-[5px] border border-[#d7cab8] bg-[#fffefa] px-2 py-1 text-left text-[34px] leading-10 font-extrabold tracking-normal text-[#1f1c17] hover:bg-[#eee9df]"
           onClick={onStartEditing}
         >
-          <H4 className="truncate">{name}</H4>
+          <span className="block truncate">{name}</span>
         </button>
         <WorkoutEditorContent>
           <DialogTitle className="sr-only">Workout name</DialogTitle>
@@ -60,7 +55,7 @@ export function TitleEditor({
               if (e.key === "Enter") onSave();
               if (e.key === "Escape") onCancel();
             }}
-            className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[16px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
+            className="h-12 rounded-[5px] border-[#d7cab8] bg-[#fffefa] font-mono text-[28px] text-[#1f1c17] shadow-none focus-visible:ring-[#383225]"
             placeholder="Workout name"
           />
           <WorkoutEditorActionRow>

@@ -200,7 +200,7 @@ export function TimelineExerciseInput({
   }
 
   return (
-    <section className="mt-2 text-[14px] leading-5">
+    <section className="mt-2">
       <CurrentExerciseHeader
         note={workoutExerciseNote}
         onEditNote={onEditWorkoutExerciseNote}
