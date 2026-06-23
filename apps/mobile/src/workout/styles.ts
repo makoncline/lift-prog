@@ -253,15 +253,16 @@ export const styles = StyleSheet.create({
   bodyWeightInputBox: {
     ...controlChrome,
     alignItems: "center",
+    flexShrink: 0,
     flexDirection: "row",
     minHeight: 28,
     paddingHorizontal: 5,
   },
   bodyWeightInput: {
     color: palette.ink,
+    flexShrink: 0,
     fontFamily: monoFont,
     fontSize: 18,
-    minWidth: 34,
     paddingHorizontal: 0,
     paddingVertical: 2,
   },
