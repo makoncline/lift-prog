@@ -2969,7 +2969,7 @@ function SetEditorModal({
           : String(values.reps),
     );
     setFirstPress(true);
-  }, [exercise, field, set, setIndex]);
+  }, [field, target?.exerciseIndex, target?.setId]);
 
   useEffect(() => {
     setHelperMode(null);
@@ -3000,20 +3000,28 @@ function SetEditorModal({
     );
   };
 
+  const selectField = (nextField: "weight" | "reps") => {
+    setField(nextField);
+    setFirstPress(true);
+  };
+
   const handleKey = (key: string) => {
+    const currentEntry = firstPress ? "" : entry;
     const next =
-      firstPress || entry === "0"
-        ? key
-        : key === "." && entry.includes(".")
-          ? entry
-          : `${entry}${key}`;
+      key === "." && currentEntry.includes(".")
+        ? currentEntry
+        : key === "."
+          ? currentEntry || "0."
+          : currentEntry === "0"
+            ? key
+            : `${currentEntry}${key}`;
     setEntry(next);
     setFirstPress(false);
     commitValue(next);
   };
 
   const backspace = () => {
-    const next = entry.slice(0, -1);
+    const next = firstPress ? "" : entry.slice(0, -1);
     setEntry(next);
     setFirstPress(false);
     commitValue(next);
@@ -3186,11 +3194,9 @@ function SetEditorModal({
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalShade}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.keyboardSheet}
-        >
-          <View style={styles.keyboardHeader}>
+        <SafeAreaView style={styles.keyboardSafeArea}>
+          <View style={styles.keyboardSheet}>
+            <View style={styles.keyboardHeader}>
             <View style={styles.flexColumn}>
               <Text style={styles.metaText}>{exercise.name}</Text>
               {splitSets(exercise).warmups.length > 0 ? (
@@ -3221,10 +3227,10 @@ function SetEditorModal({
             >
               <Icon name="close-outline" size={24} />
             </Pressable>
-          </View>
+            </View>
 
-          {noteEditing ? (
-            <>
+            {noteEditing ? (
+              <>
               <Text style={styles.subtleTitle}>
                 {setLabel(exercise, setIndex)} note
               </Text>
@@ -3257,9 +3263,9 @@ function SetEditorModal({
                   <Text style={styles.primaryWideButtonText}>done</Text>
                 </Pressable>
               </View>
-            </>
-          ) : (
-            <>
+              </>
+            ) : (
+              <>
               <Text style={styles.subtleTitle}>
                 {setLabel(exercise, setIndex)}
               </Text>
@@ -3290,7 +3296,7 @@ function SetEditorModal({
                     field === "weight" ? styles.inlineSetChipActive : null,
                   ]}
                   testID="set-keyboard-weight"
-                  onPress={() => setField("weight")}
+                  onPress={() => selectField("weight")}
                 >
                   <Text style={styles.bigValueText}>
                     {formatWeightLabel(values.weight, values.weightModifier)}
@@ -3305,7 +3311,7 @@ function SetEditorModal({
                     field === "reps" ? styles.inlineSetChipActive : null,
                   ]}
                   testID="set-keyboard-reps"
-                  onPress={() => setField("reps")}
+                  onPress={() => selectField("reps")}
                 >
                   <Text style={styles.bigValueText}>
                     {values.reps == null ? "" : formatNumber(values.reps)}
@@ -3441,16 +3447,17 @@ function SetEditorModal({
                   <KeypadButton
                     primary
                     onPress={() =>
-                      setField(field === "weight" ? "reps" : "weight")
+                      selectField(field === "weight" ? "reps" : "weight")
                     }
                   >
                     Next
                   </KeypadButton>
                 </View>
               </View>
-            </>
-          )}
-        </KeyboardAvoidingView>
+              </>
+            )}
+          </View>
+        </SafeAreaView>
 
         <IncreaseWeightHelperModal
           visible={helperMode === "increase"}

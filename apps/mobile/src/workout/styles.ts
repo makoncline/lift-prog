@@ -536,14 +536,18 @@ export const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "flex-end",
   },
+  keyboardSafeArea: {
+    maxHeight: "92%",
+  },
   keyboardSheet: {
     backgroundColor: palette.canvas,
     borderColor: palette.line,
     borderTopLeftRadius: 4,
     borderTopRightRadius: 4,
     borderWidth: 1,
-    maxHeight: "90%",
-    padding: 10,
+    paddingHorizontal: 9,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   keyboardHeader: {
     alignItems: "flex-start",
@@ -554,7 +558,7 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 5,
-    marginTop: 4,
+    marginTop: 2,
   },
   valueChip: {
     borderColor: palette.soft,
@@ -566,21 +570,21 @@ export const styles = StyleSheet.create({
   bigValueText: {
     color: palette.ink,
     fontFamily: monoFont,
-    fontSize: 24,
+    fontSize: 22,
   },
   keypad: {
-    gap: 5,
-    marginTop: 9,
+    gap: 4,
+    marginTop: 7,
   },
   keypadRow: {
     flexDirection: "row",
-    gap: 5,
-    height: 51,
+    gap: 4,
+    height: 43,
   },
   keypadSplitCell: {
     flex: 1,
     flexDirection: "row",
-    gap: 5,
+    gap: 4,
   },
   keyIconPair: {
     alignItems: "center",
@@ -606,9 +610,9 @@ export const styles = StyleSheet.create({
     borderColor: palette.line,
     borderRadius: 6,
     borderWidth: 1,
-    height: 38,
+    height: 34,
     justifyContent: "center",
-    width: 38,
+    width: 34,
   },
   keyActive: {
     backgroundColor: palette.softStrong,
@@ -624,12 +628,12 @@ export const styles = StyleSheet.create({
   keyText: {
     color: palette.ink,
     fontFamily: monoFont,
-    fontSize: 20,
+    fontSize: 18,
   },
   keyDarkText: {
     color: palette.raised,
     fontFamily: monoFont,
-    fontSize: 20,
+    fontSize: 18,
   },
   helperShade: {
     ...StyleSheet.absoluteFillObject,
