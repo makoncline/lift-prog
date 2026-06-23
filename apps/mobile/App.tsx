@@ -29,6 +29,20 @@ const palette = {
   danger: "#9f2f2f",
 };
 
+type AuthDraft = {
+  email: string;
+  otp: string;
+  sentTo: string;
+  screen: "email" | "code";
+};
+
+const initialAuthDraft: AuthDraft = {
+  email: "",
+  otp: "",
+  sentTo: "",
+  screen: "email",
+};
+
 function getAuthErrorMessage(error: unknown) {
   if (
     typeof error === "object" &&
@@ -58,18 +72,22 @@ function LoadingScreen({ message }: { message: string }) {
   );
 }
 
-function AuthScreen() {
-  const [email, setEmail] = useState("");
-  const [sentTo, setSentTo] = useState("");
-  const [otp, setOtp] = useState("");
+function AuthScreen({
+  draft,
+  setDraft,
+}: {
+  draft: AuthDraft;
+  setDraft: React.Dispatch<React.SetStateAction<AuthDraft>>;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  const codeSent = Boolean(sentTo);
+  const trimmedEmail = draft.email.trim().toLowerCase();
+  const codeEmail = draft.sentTo || trimmedEmail;
+  const isCodeScreen = draft.screen === "code";
 
   const sendCode = async () => {
-    const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || isSending) return;
 
     setIsSending(true);
@@ -80,8 +98,13 @@ function AuthScreen() {
         type: "sign-in",
       });
       if (result.error) throw result.error;
-      setSentTo(trimmedEmail);
-      setOtp("");
+      setDraft((current) => ({
+        ...current,
+        email: trimmedEmail,
+        sentTo: trimmedEmail,
+        otp: "",
+        screen: "code",
+      }));
     } catch (authError) {
       setError(getAuthErrorMessage(authError));
     } finally {
@@ -90,15 +113,15 @@ function AuthScreen() {
   };
 
   const verifyCode = async () => {
-    if (!sentTo || otp.length < 6 || isVerifying) return;
+    if (!codeEmail || draft.otp.length < 6 || isVerifying) return;
 
     setIsVerifying(true);
     setError(null);
     try {
       const result = await authClient.signIn.emailOtp({
-        email: sentTo,
-        otp,
-        name: sentTo.split("@")[0] ?? sentTo,
+        email: codeEmail,
+        otp: draft.otp,
+        name: codeEmail.split("@")[0] ?? codeEmail,
       });
       if (result.error) throw result.error;
       await authClient.getSession();
@@ -119,39 +142,24 @@ function AuthScreen() {
         <View style={styles.authShell}>
           <View style={styles.titleBlock}>
             <Text style={styles.title}>Lift Prog</Text>
-            <Text style={styles.subtitle}>email code sign in</Text>
+            <Text style={styles.subtitle}>
+              {isCodeScreen ? "enter email code" : "email code sign in"}
+            </Text>
           </View>
 
           <View style={styles.form}>
-            <View style={styles.fieldBlock}>
-              <Text style={styles.label}>email</Text>
-              <TextInput
-                accessibilityLabel="email"
-                testID="auth-email-input"
-                value={email}
-                onChangeText={(value) => {
-                  setEmail(value);
-                  if (sentTo) setSentTo("");
-                  if (otp) setOtp("");
-                  if (error) setError(null);
-                }}
-                autoCapitalize="none"
-                autoCorrect={false}
-                inputMode="email"
-                keyboardType="email-address"
-                placeholder="email@example.com"
-                placeholderTextColor={palette.muted}
-                style={styles.textInput}
-              />
-            </View>
-
-            {codeSent ? (
+            {isCodeScreen ? (
               <View style={styles.fieldBlock}>
+                <Text style={styles.label}>email</Text>
+                <Text style={styles.readonlyValue}>{codeEmail || "email"}</Text>
                 <Text style={styles.label}>code</Text>
                 <TextInput
-                  value={otp}
+                  value={draft.otp}
                   onChangeText={(value) => {
-                    setOtp(value.replace(/\D/g, "").slice(0, 6));
+                    setDraft((current) => ({
+                      ...current,
+                      otp: value.replace(/\D/g, "").slice(0, 6),
+                    }));
                     if (error) setError(null);
                   }}
                   autoComplete="one-time-code"
@@ -166,34 +174,61 @@ function AuthScreen() {
                   style={[styles.textInput, styles.otpInput]}
                 />
               </View>
-            ) : null}
+            ) : (
+              <View style={styles.fieldBlock}>
+                <Text style={styles.label}>email</Text>
+                <TextInput
+                  accessibilityLabel="email"
+                  testID="auth-email-input"
+                  value={draft.email}
+                  onChangeText={(value) => {
+                    setDraft((current) => ({
+                      ...current,
+                      email: value,
+                      sentTo: "",
+                      otp: "",
+                    }));
+                    if (error) setError(null);
+                  }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  inputMode="email"
+                  keyboardType="email-address"
+                  placeholder="email@example.com"
+                  placeholderTextColor={palette.muted}
+                  style={styles.textInput}
+                />
+              </View>
+            )}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <View style={styles.actions}>
               <Pressable
-                accessibilityLabel={codeSent ? "sign in" : "send code"}
+                accessibilityLabel={isCodeScreen ? "sign in" : "send code"}
                 accessibilityRole="button"
-                testID={codeSent ? "auth-sign-in-button" : "auth-send-code-button"}
+                testID={
+                  isCodeScreen ? "auth-sign-in-button" : "auth-send-code-button"
+                }
                 style={[
                   styles.primaryButton,
-                  codeSent
-                    ? otp.length < 6 || isVerifying
+                  isCodeScreen
+                    ? draft.otp.length < 6 || !codeEmail || isVerifying
                       ? styles.disabledButton
                       : undefined
-                    : !email.trim() || isSending
+                    : !trimmedEmail || isSending
                       ? styles.disabledButton
                       : undefined,
                 ]}
-                onPress={codeSent ? verifyCode : sendCode}
+                onPress={isCodeScreen ? verifyCode : sendCode}
                 disabled={
-                  codeSent
-                    ? otp.length < 6 || isVerifying
-                    : !email.trim() || isSending
+                  isCodeScreen
+                    ? draft.otp.length < 6 || !codeEmail || isVerifying
+                    : !trimmedEmail || isSending
                 }
               >
                 <Text style={styles.primaryButtonText}>
-                  {codeSent
+                  {isCodeScreen
                     ? isVerifying
                       ? "checking..."
                       : "sign in"
@@ -203,7 +238,7 @@ function AuthScreen() {
                 </Text>
               </Pressable>
 
-              {codeSent ? (
+              {isCodeScreen ? (
                 <Pressable
                   accessibilityLabel="resend code"
                   accessibilityRole="button"
@@ -217,20 +252,49 @@ function AuthScreen() {
               ) : null}
             </View>
 
-            {codeSent ? (
+            {isCodeScreen ? (
               <Pressable
                 accessibilityLabel="change email"
                 accessibilityRole="button"
                 testID="auth-change-email-button"
                 onPress={() => {
-                  setSentTo("");
-                  setOtp("");
+                  setDraft((current) => ({
+                    ...current,
+                    sentTo: "",
+                    otp: "",
+                    screen: "email",
+                  }));
                   setError(null);
                 }}
               >
                 <Text style={styles.changeEmailText}>change email</Text>
               </Pressable>
-            ) : null}
+            ) : (
+              <Pressable
+                accessibilityLabel="already have a code"
+                accessibilityRole="button"
+                testID="auth-already-have-code-button"
+                onPress={() => {
+                  if (!trimmedEmail) return;
+                  setDraft((current) => ({
+                    ...current,
+                    email: trimmedEmail,
+                    sentTo: trimmedEmail,
+                    screen: "code",
+                  }));
+                  setError(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.changeEmailText,
+                    !trimmedEmail ? styles.disabledText : undefined,
+                  ]}
+                >
+                  already have a code
+                </Text>
+              </Pressable>
+            )}
           </View>
 
           <Text style={styles.footerText}>
@@ -255,6 +319,7 @@ function SignedInHomeScreen() {
 
 function AppContent() {
   const { data: session, isPending } = authClient.useSession();
+  const [authDraft, setAuthDraft] = useState<AuthDraft>(initialAuthDraft);
 
   if (__DEV__ && mobileLocalDevUserId) {
     return <LiftMobileApp localDevUserId={mobileLocalDevUserId} />;
@@ -265,7 +330,7 @@ function AppContent() {
   }
 
   if (!session?.user) {
-    return <AuthScreen />;
+    return <AuthScreen draft={authDraft} setDraft={setAuthDraft} />;
   }
 
   return <SignedInHomeScreen />;
@@ -350,6 +415,12 @@ const styles = StyleSheet.create({
   otpInput: {
     letterSpacing: 4,
   },
+  readonlyValue: {
+    color: palette.ink,
+    fontFamily: "Courier",
+    fontSize: 18,
+    lineHeight: 24,
+  },
   errorText: {
     color: palette.danger,
     fontFamily: "Courier",
@@ -396,6 +467,9 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontFamily: "Courier",
     fontSize: 14,
+  },
+  disabledText: {
+    opacity: 0.45,
   },
   footerText: {
     color: palette.muted,
