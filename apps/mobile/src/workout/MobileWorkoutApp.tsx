@@ -130,6 +130,13 @@ type IconName = React.ComponentProps<typeof Ionicons>["name"];
 const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
 const REST_TIMER_SECONDS = 180;
 
+function formatCountdown(seconds: number) {
+  const safeSeconds = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = String(safeSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
+}
+
 type StoredWorkoutDraft = {
   workout: Workout;
   completedAt: string | null;
@@ -1265,6 +1272,7 @@ function WorkoutScreen({
     message: null,
   });
   const [timerStatus, setTimerStatus] = useState<string | null>(null);
+  const [restTimerEndsAt, setRestTimerEndsAt] = useState<number | null>(null);
   const [planDragging, setPlanDragging] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const draftWriteGenerationRef = useRef(0);
@@ -1277,9 +1285,10 @@ function WorkoutScreen({
   );
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const tickMs = restTimerEndsAt == null ? 30_000 : 1_000;
+    const timer = setInterval(() => setNow(Date.now()), tickMs);
     return () => clearInterval(timer);
-  }, []);
+  }, [restTimerEndsAt]);
 
   useEffect(
     () => () => {
@@ -1676,6 +1685,7 @@ function WorkoutScreen({
       clearTimeout(restTimerTimeoutRef.current);
       restTimerTimeoutRef.current = null;
     }
+    setRestTimerEndsAt(null);
 
     setTimerStatus("starting 3m timer");
     try {
@@ -1685,8 +1695,12 @@ function WorkoutScreen({
         "Notification permission did not respond.",
       );
       if (result.scheduled) {
-        setTimerStatus("3m timer set");
+        const endsAt = Date.now() + REST_TIMER_SECONDS * 1000;
+        setNow(Date.now());
+        setRestTimerEndsAt(endsAt);
+        setTimerStatus(null);
         restTimerTimeoutRef.current = setTimeout(() => {
+          setRestTimerEndsAt(null);
           setTimerStatus("3m timer done");
           restTimerTimeoutRef.current = null;
         }, REST_TIMER_SECONDS * 1000);
@@ -1699,6 +1713,15 @@ function WorkoutScreen({
     }
   };
 
+  const restTimerRemainingSeconds =
+    restTimerEndsAt == null ? null : Math.ceil((restTimerEndsAt - now) / 1000);
+  const restTimerCountdown =
+    restTimerRemainingSeconds == null || restTimerRemainingSeconds <= 0
+      ? null
+      : formatCountdown(restTimerRemainingSeconds);
+  const timerStatusText = restTimerCountdown
+    ? `rest ${restTimerCountdown}`
+    : timerStatus;
   const healthStatusText = healthWorkout.starting
     ? "health starting"
     : healthWorkout.saving
@@ -1771,7 +1794,9 @@ function WorkoutScreen({
             testID="workout-rest-timer"
             onPress={() => void startRestTimer()}
           >
-            <Text style={styles.timerButtonText}>3m</Text>
+            <Text style={styles.timerButtonText}>
+              {restTimerCountdown ?? "3m"}
+            </Text>
           </Pressable>
           <Pressable
             accessibilityLabel={
@@ -1822,9 +1847,9 @@ function WorkoutScreen({
             <> ({formatDuration(new Date(workout.startTime), new Date(now))})</>
           )}
         </Text>
-        {healthStatusText || timerStatus ? (
+        {healthStatusText || timerStatusText ? (
           <Text style={styles.metaText}>
-            {[healthStatusText, timerStatus].filter(Boolean).join(" . ")}
+            {[healthStatusText, timerStatusText].filter(Boolean).join(" . ")}
           </Text>
         ) : null}
 
