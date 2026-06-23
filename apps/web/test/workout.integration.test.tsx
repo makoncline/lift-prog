@@ -21,8 +21,13 @@ const trpcMocks = vi.hoisted(() => ({
   updatePlateDefaultsMutate: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs", () => ({
-  useUser: () => ({ user: { id: "user_1" }, isLoaded: true }),
+vi.mock("@/lib/auth-client", () => ({
+  authClient: {
+    useSession: () => ({
+      data: { user: { id: "auth_user_1", email: "makon@hey.com" } },
+      isPending: false,
+    }),
+  },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -218,7 +223,7 @@ describe("WorkoutComponent", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "exercises" }));
     fireEvent.change(
-      await screen.findByPlaceholderText("search or create exercise"),
+      await screen.findByPlaceholderText("exercise name"),
       {
         target: { value: "pull-ups" },
       },

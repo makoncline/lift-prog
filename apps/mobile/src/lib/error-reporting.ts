@@ -8,7 +8,7 @@ export type MobileErrorReportInput = {
   scope: string;
   screen?: string;
   componentStack?: string;
-  getToken?: () => Promise<string | null>;
+  getHeaders?: () => Promise<Record<string, string>>;
 };
 
 const STRING_LIMITS = {
@@ -32,7 +32,7 @@ export function reportMobileError({
   scope,
   screen,
   componentStack,
-  getToken,
+  getHeaders,
 }: MobileErrorReportInput) {
   const key = [
     scope,
@@ -54,7 +54,7 @@ export function reportMobileError({
     scope,
     screen,
     componentStack,
-    getToken,
+    getHeaders,
     reportId,
   });
 
@@ -66,17 +66,14 @@ async function sendMobileErrorReport({
   scope,
   screen,
   componentStack,
-  getToken,
+  getHeaders,
   reportId,
 }: MobileErrorReportInput & { reportId: string }) {
   try {
-    const token = await getToken?.().catch(() => null);
     const headers: Record<string, string> = {
+      ...((await getHeaders?.().catch(() => ({}))) ?? {}),
       "content-type": "application/json",
     };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
 
     await fetch(`${mobileWorkoutApiBaseUrl}/api/error-reports`, {
       method: "POST",

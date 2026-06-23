@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 
 const STRING_LIMITS = {
   reportId: 120,
@@ -57,7 +57,7 @@ type AuthContext = {
 
 export async function POST(request: Request) {
   const receivedAt = new Date().toISOString();
-  const authContext = await getAuthContext();
+  const authContext = await getAuthContext(request);
   let payload: unknown;
 
   try {
@@ -130,20 +130,22 @@ function sanitizePayload(payload: unknown): ErrorReportPayload {
   };
 }
 
-async function getAuthContext(): Promise<AuthContext> {
+async function getAuthContext(request: Request): Promise<AuthContext> {
   const localDevUserId =
-    process.env.NODE_ENV === "development" &&
-    !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    isLocalDevAuthBypassEnabled()
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
 
-  if (localDevUserId) {
-    return { userId: localDevUserId };
-  }
-
   try {
-    const authData = await auth();
-    return { userId: authData.userId ?? undefined };
+    const [{ auth }, { resolveAppUserIdForAuthUser }] = await Promise.all([
+      import("@/server/auth"),
+      import("@/server/auth/app-user"),
+    ]);
+    const session = await auth.api.getSession({ headers: request.headers });
+    const userId = session?.user
+      ? await resolveAppUserIdForAuthUser(session.user)
+      : (localDevUserId ?? undefined);
+    return { userId };
   } catch (error) {
     return {
       authError: serializeUnknownError(error).message,

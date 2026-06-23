@@ -15,7 +15,7 @@ type MobileErrorBoundaryProps = {
   scope: string;
   screen?: string;
   title?: string;
-  getToken?: () => Promise<string | null>;
+  getHeaders?: () => Promise<Record<string, string>>;
   recoverLabel?: string;
   onRecover?: () => void;
 };
@@ -43,7 +43,7 @@ export class MobileErrorBoundary extends React.Component<
       scope: this.props.scope,
       screen: this.props.screen,
       componentStack: info.componentStack ?? undefined,
-      getToken: this.props.getToken,
+      getHeaders: this.props.getHeaders,
     });
     this.setState({ reportId });
   }

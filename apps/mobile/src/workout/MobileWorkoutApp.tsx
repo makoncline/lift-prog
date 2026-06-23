@@ -747,11 +747,11 @@ function createLocalWorkoutApiClient(
 }
 
 export function LiftMobileApp({
-  getToken,
+  getHeaders,
   localDevUserId,
   onSignOut,
 }: {
-  getToken?: () => Promise<string | null>;
+  getHeaders?: () => Promise<Record<string, string>>;
   localDevUserId?: string;
   onSignOut?: () => void;
 }) {
@@ -765,9 +765,9 @@ export function LiftMobileApp({
         ? createLocalWorkoutApiClient(localFixtures)
         : createWorkoutApiClient({
             baseUrl: mobileWorkoutApiBaseUrl,
-            getToken,
+            getHeaders,
           }),
-    [getToken, localFixtures],
+    [getHeaders, localFixtures],
   );
   const [screen, setScreen] = useState<AppScreen>(() => ({
     name: "home",
@@ -825,7 +825,7 @@ export function LiftMobileApp({
         scope="mobile-workout"
         screen={screen.workoutId ? "workout-edit" : "workout"}
         title="workout crashed"
-        getToken={getToken}
+        getHeaders={getHeaders}
         recoverLabel="home"
         onRecover={returnHome}
       >

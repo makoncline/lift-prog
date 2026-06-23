@@ -200,7 +200,7 @@ const isUserManagementAccessError = (code: string | undefined) =>
 function UserManager() {
   const utils = api.useUtils();
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
-  const [newUserClerkId, setNewUserClerkId] = useState(""); // <-- State for new user ID input
+  const [newUserAuthId, setNewUserAuthId] = useState("");
 
   const usersQuery = api.user.list.useQuery();
 
@@ -209,7 +209,7 @@ function UserManager() {
     onSuccess: async () => {
       toast.success("User added successfully!");
       await utils.user.list.invalidate(); // Refetch list
-      setNewUserClerkId(""); // Clear input
+      setNewUserAuthId("");
     },
     onError: (error) => {
       toast.error(
@@ -252,8 +252,8 @@ function UserManager() {
 
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newUserClerkId.trim()) {
-      addUserMutation.mutate({ clerkUserId: newUserClerkId.trim() });
+    if (newUserAuthId.trim()) {
+      addUserMutation.mutate({ clerkUserId: newUserAuthId.trim() });
     }
   };
 
@@ -271,15 +271,15 @@ function UserManager() {
       <form onSubmit={handleAddUser} className="mb-4 flex gap-2">
         <Input
           type="text"
-          placeholder="New user Clerk ID (e.g., user_2abc...)"
-          value={newUserClerkId}
-          onChange={(e) => setNewUserClerkId(e.target.value)}
+          placeholder="New user auth ID"
+          value={newUserAuthId}
+          onChange={(e) => setNewUserAuthId(e.target.value)}
           disabled={addUserMutation.isPending}
           className="font-mono text-xs"
         />
         <Button
           type="submit"
-          disabled={addUserMutation.isPending || !newUserClerkId.trim()}
+          disabled={addUserMutation.isPending || !newUserAuthId.trim()}
         >
           {addUserMutation.isPending ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -300,7 +300,7 @@ function UserManager() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Clerk User ID</TableHead>
+                <TableHead>Auth User ID</TableHead>
                 <TableHead>DB ID</TableHead>
                 <TableHead>Created At</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -310,7 +310,7 @@ function UserManager() {
               {usersQuery.data.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-mono text-xs">
-                    {user.clerkUserId}
+                    {user.authUserId ?? user.clerkUserId}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     {user.id} {/* Display DB ID as well */}
@@ -347,9 +347,13 @@ function UserManager() {
                         <DialogHeader>
                           <DialogTitle>Delete User?</DialogTitle>
                           <DialogDescription>
-                            Are you sure you want to delete the user with Clerk
+                            Are you sure you want to delete the user with auth
                             ID &quot;
-                            <strong>{userToDelete?.clerkUserId}</strong>&quot;?
+                            <strong>
+                              {userToDelete?.authUserId ??
+                                userToDelete?.clerkUserId}
+                            </strong>
+                            &quot;?
                             This will also delete all their associated workout
                             data. This action cannot be undone.
                           </DialogDescription>

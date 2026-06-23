@@ -3,6 +3,18 @@ import { vi } from "vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+vi.mock("server-only", () => ({}));
+vi.mock("@/server/auth", () => ({
+  auth: {
+    api: {
+      getSession: vi.fn(),
+    },
+  },
+}));
+vi.mock("@/server/auth/app-user", () => ({
+  resolveAppUserIdForAuthUser: vi.fn(),
+}));
+
 class ResizeObserverMock {
   constructor(private callback: ResizeObserverCallback) {}
 

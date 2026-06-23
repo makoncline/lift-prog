@@ -2,9 +2,9 @@
 import React, { useReducer, useState, useRef, useEffect } from "react";
 import type { TouchEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { H4 } from "@/components/ui/typography";
+import { authClient } from "@/lib/auth-client";
 import {
   Table,
   TableHeader,
@@ -128,7 +128,7 @@ export default function WorkoutComponent({
   onInitialSave,
 }: WorkoutProps) {
   const router = useRouter();
-  const { user, isLoaded: isUserLoaded } = useUser();
+  const { data: session, isPending: isAuthPending } = authClient.useSession();
 
   // Initialize workout state with the reducer
   const initialState: Workout = {
@@ -532,7 +532,7 @@ export default function WorkoutComponent({
 
   // Updated function to handle workout completion and save data
   const handleFinishWorkout = () => {
-    if (!user || !isUserLoaded) {
+    if (!session?.user || isAuthPending) {
       toast.error("User not loaded. Cannot save workout.");
       return;
     }

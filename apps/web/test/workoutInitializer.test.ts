@@ -80,6 +80,8 @@ describe("buildInitialExercisesForNames", () => {
         name: "Pull-ups",
         sets: DEFAULT_SETS,
         notes: null,
+        plateStartingWeight: null,
+        plateLoadMode: null,
       },
     ]);
   });
@@ -137,6 +139,8 @@ describe("buildInitialExercisesForNames", () => {
           { weight: 155, reps: 6, weightModifier: "bodyweight" },
         ],
         notes: "Felt strong",
+        plateStartingWeight: null,
+        plateLoadMode: null,
         history: [
           {
             relation: "last time",
@@ -292,6 +296,8 @@ describe("buildInitialExercisesForNames", () => {
           },
         ],
         notes: "Feeling weak today",
+        plateStartingWeight: null,
+        plateLoadMode: null,
         history: [
           {
             relation: "last time",
@@ -358,6 +364,8 @@ describe("buildInitialExercisesForNames", () => {
         name: "Squat",
         sets: DEFAULT_SETS,
         notes: null,
+        plateStartingWeight: null,
+        plateLoadMode: null,
       },
     ]);
   });
@@ -483,6 +491,8 @@ describe("buildInitialExercisesFromWorkout", () => {
           },
         ],
         notes: "Wide grip today",
+        plateStartingWeight: null,
+        plateLoadMode: null,
         history: [
           {
             relation: "last time",
@@ -500,6 +510,8 @@ describe("buildInitialExercisesFromWorkout", () => {
         name: "Pull Up",
         sets: [{ weight: -10, reps: 8, weightModifier: "bodyweight" }],
         notes: null,
+        plateStartingWeight: null,
+        plateLoadMode: null,
         history: [
           {
             relation: "last time",
@@ -581,6 +593,8 @@ describe("buildInitialExercisesFromWorkout", () => {
         exerciseNotesSnapshot: "Old bench setup",
         sets: [{ weight: 135, reps: 8, rir: 1 }],
         notes: null,
+        plateStartingWeight: null,
+        plateLoadMode: null,
         history: [
           {
             relation: "last time",

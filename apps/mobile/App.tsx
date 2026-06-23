@@ -1,18 +1,11 @@
-import {
-  ClerkProvider,
-  useAuth,
-  useClerk,
-  useSignIn,
-  useSignUp,
-} from "@clerk/expo";
-import { tokenCache } from "@clerk/expo/token-cache";
 import { StatusBar } from "expo-status-bar";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -20,436 +13,272 @@ import {
 } from "react-native";
 
 import {
-  mobileClerkPublishableKey,
-  mobileLocalDevUserId,
-  mobileSkipClerk,
-} from "./src/lib/config";
+  authClient,
+  getBetterAuthCookieHeaders,
+} from "./src/lib/auth-client";
+import { mobileLocalDevUserId } from "./src/lib/config";
 import { MobileErrorBoundary } from "./src/workout/MobileErrorBoundary";
 import { LiftMobileApp } from "./src/workout/MobileWorkoutApp";
 
 const palette = {
-  canvas: "#f4efe6",
-  surface: "#fffaf2",
-  surfaceStrong: "#f9f2e4",
-  line: "#d8ccba",
-  ink: "#1e293b",
-  muted: "#6b7280",
-  accent: "#0f766e",
-  danger: "#b91c1c",
+  canvas: "#fbfaf7",
+  line: "#d9cdb9",
+  ink: "#1f1c17",
+  muted: "#7a7468",
+  fill: "#ede6d9",
+  danger: "#9f2f2f",
 };
 
-type AuthMode = "sign-in" | "sign-up";
-type VerificationStage = "none" | "sign-in-email" | "sign-up-email";
-
-const getClerkErrorMessage = (error: unknown) => {
+function getAuthErrorMessage(error: unknown) {
   if (
     typeof error === "object" &&
     error !== null &&
-    "errors" in error &&
-    Array.isArray(
-      (error as { errors?: Array<{ longMessage?: string; message?: string }> })
-        .errors,
-    )
+    "message" in error &&
+    typeof error.message === "string"
   ) {
-    const firstError = (
-      error as {
-        errors: Array<{ longMessage?: string; message?: string }>;
-      }
-    ).errors[0];
-
-    if (firstError?.longMessage) {
-      return firstError.longMessage;
-    }
-
-    if (firstError?.message) {
-      return firstError.message;
-    }
+    return error.message;
   }
 
   if (error instanceof Error) {
     return error.message;
   }
 
-  return "Authentication failed. Please try again.";
-};
+  return "could not sign in";
+}
 
 function LoadingScreen({ message }: { message: string }) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <View style={styles.centeredView}>
-        <ActivityIndicator color={palette.accent} />
+        <ActivityIndicator color={palette.ink} />
         <Text style={styles.loadingText}>{message}</Text>
       </View>
     </SafeAreaView>
   );
 }
 
-function ConfigurationErrorScreen() {
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <View style={styles.centeredView}>
-        <Text style={styles.loadingText}>Missing Clerk publishable key.</Text>
-        <Text style={styles.configBody}>
-          Symlink `apps/mobile/.env` to the repo root `.env`, or set a mobile
-          Clerk publishable key before launching Expo.
-        </Text>
-      </View>
-    </SafeAreaView>
-  );
-}
-
 function AuthScreen() {
-  const { signIn } = useSignIn();
-  const { signUp } = useSignUp();
-  const [mode, setMode] = useState<AuthMode>("sign-in");
-  const [verificationStage, setVerificationStage] =
-    useState<VerificationStage>("none");
-  const [emailAddress, setEmailAddress] = useState("");
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [sentTo, setSentTo] = useState("");
+  const [otp, setOtp] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
-  if (!signIn || !signUp) {
-    return <LoadingScreen message="Loading authentication…" />;
-  }
+  const codeSent = Boolean(sentTo);
 
-  const finalizeFlow = async (flow: {
-    finalize: (options: {
-      navigate: (payload: unknown) => void;
-    }) => Promise<{ error: unknown | null }>;
-  }) => {
-    const result = await flow.finalize({
-      navigate: () => undefined,
-    });
+  const sendCode = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || isSending) return;
 
-    if (result.error) {
-      throw result.error;
-    }
-  };
-
-  const handleSwitchMode = (nextMode: AuthMode) => {
-    setMode(nextMode);
-    setVerificationStage("none");
-    setAuthError(null);
-    setCode("");
-  };
-
-  const handleSignUp = async () => {
-    setIsSubmitting(true);
-    setAuthError(null);
-
+    setIsSending(true);
+    setError(null);
     try {
-      const result = await signUp.password({
-        emailAddress,
-        password,
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: trimmedEmail,
+        type: "sign-in",
       });
-
-      if (result.error) {
-        throw result.error;
-      }
-
-      await signUp.verifications.sendEmailCode();
-      setVerificationStage("sign-up-email");
-    } catch (error) {
-      setAuthError(getClerkErrorMessage(error));
+      if (result.error) throw result.error;
+      setSentTo(trimmedEmail);
+      setOtp("");
+    } catch (authError) {
+      setError(getAuthErrorMessage(authError));
     } finally {
-      setIsSubmitting(false);
+      setIsSending(false);
     }
   };
 
-  const handleSignIn = async () => {
-    setIsSubmitting(true);
-    setAuthError(null);
+  const verifyCode = async () => {
+    if (!sentTo || otp.length < 6 || isVerifying) return;
 
+    setIsVerifying(true);
+    setError(null);
     try {
-      const result = await signIn.password({
-        emailAddress,
-        password,
+      const result = await authClient.signIn.emailOtp({
+        email: sentTo,
+        otp,
+        name: sentTo.split("@")[0] ?? sentTo,
       });
-
-      if (result.error) {
-        throw result.error;
-      }
-
-      if (signIn.status === "complete") {
-        await finalizeFlow(signIn);
-        return;
-      }
-
-      if (
-        signIn.status === "needs_client_trust" ||
-        signIn.status === "needs_second_factor"
-      ) {
-        await signIn.mfa.sendEmailCode();
-        setVerificationStage("sign-in-email");
-        return;
-      }
-
-      setAuthError(
-        "Clerk still needs another step. Finish sign-in on web once, then try again here.",
-      );
-    } catch (error) {
-      setAuthError(getClerkErrorMessage(error));
+      if (result.error) throw result.error;
+      await authClient.getSession();
+    } catch (authError) {
+      setError(getAuthErrorMessage(authError));
     } finally {
-      setIsSubmitting(false);
+      setIsVerifying(false);
     }
   };
-
-  const handleVerifySignUp = async () => {
-    setIsSubmitting(true);
-    setAuthError(null);
-
-    try {
-      await signUp.verifications.verifyEmailCode({ code });
-
-      if (signUp.status !== "complete") {
-        setAuthError("Email verification is still incomplete.");
-        return;
-      }
-
-      await finalizeFlow(signUp);
-    } catch (error) {
-      setAuthError(getClerkErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleVerifySignIn = async () => {
-    setIsSubmitting(true);
-    setAuthError(null);
-
-    try {
-      await signIn.mfa.verifyEmailCode({ code });
-
-      if (signIn.status !== "complete") {
-        setAuthError("Sign-in is still waiting for another factor.");
-        return;
-      }
-
-      await finalizeFlow(signIn);
-    } catch (error) {
-      setAuthError(getClerkErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const isVerificationScreen = verificationStage !== "none";
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Lift Prog</Text>
-          <Text style={styles.heroTitle}>
-            A fresh iPhone app, starting from auth.
-          </Text>
-          <Text style={styles.heroBody}>
-            The old workout-specific mobile flow has been removed. Sign in with
-            your existing account while the new iOS product takes shape.
-          </Text>
-        </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.keyboardAvoider}
+      >
+        <View style={styles.authShell}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.title}>Lift Prog</Text>
+            <Text style={styles.subtitle}>email code sign in</Text>
+          </View>
 
-        <View style={styles.modeSwitch}>
-          <Pressable
-            style={[
-              styles.modeChip,
-              mode === "sign-in" ? styles.modeChipActive : undefined,
-            ]}
-            onPress={() => handleSwitchMode("sign-in")}
-            disabled={isSubmitting}
-          >
-            <Text
-              style={[
-                styles.modeChipText,
-                mode === "sign-in" ? styles.modeChipTextActive : undefined,
-              ]}
-            >
-              Sign in
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.modeChip,
-              mode === "sign-up" ? styles.modeChipActive : undefined,
-            ]}
-            onPress={() => handleSwitchMode("sign-up")}
-            disabled={isSubmitting}
-          >
-            <Text
-              style={[
-                styles.modeChipText,
-                mode === "sign-up" ? styles.modeChipTextActive : undefined,
-              ]}
-            >
-              Create account
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {verificationStage === "sign-up-email"
-              ? "Verify your email"
-              : verificationStage === "sign-in-email"
-                ? "Confirm this device"
-                : mode === "sign-up"
-                  ? "Create your account"
-                  : "Welcome back"}
-          </Text>
-          <Text style={styles.cardBody}>
-            {verificationStage === "none"
-              ? "Use the same Clerk account as the web app."
-              : "Enter the email code Clerk just sent you."}
-          </Text>
-
-          {verificationStage === "none" ? (
-            <>
+          <View style={styles.form}>
+            <View style={styles.fieldBlock}>
+              <Text style={styles.label}>email</Text>
               <TextInput
-                style={styles.textField}
-                value={emailAddress}
-                onChangeText={setEmailAddress}
+                accessibilityLabel="email"
+                testID="auth-email-input"
+                value={email}
+                onChangeText={(value) => {
+                  setEmail(value);
+                  if (sentTo) setSentTo("");
+                  if (otp) setOtp("");
+                  if (error) setError(null);
+                }}
                 autoCapitalize="none"
                 autoCorrect={false}
+                inputMode="email"
                 keyboardType="email-address"
-                placeholder="Email address"
+                placeholder="email@example.com"
                 placeholderTextColor={palette.muted}
+                style={styles.textInput}
               />
-              <TextInput
-                style={styles.textField}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                placeholder="Password"
-                placeholderTextColor={palette.muted}
-              />
-              <Pressable
-                style={[
-                  styles.primaryAction,
-                  isSubmitting ? styles.buttonDisabled : undefined,
-                ]}
-                onPress={mode === "sign-up" ? handleSignUp : handleSignIn}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.primaryActionText}>
-                    {mode === "sign-up" ? "Create account" : "Sign in"}
-                  </Text>
-                )}
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <TextInput
-                style={styles.textField}
-                value={code}
-                onChangeText={setCode}
-                keyboardType="number-pad"
-                placeholder="Verification code"
-                placeholderTextColor={palette.muted}
-              />
-              <Pressable
-                style={[
-                  styles.primaryAction,
-                  isSubmitting ? styles.buttonDisabled : undefined,
-                ]}
-                onPress={
-                  verificationStage === "sign-up-email"
-                    ? handleVerifySignUp
-                    : handleVerifySignIn
-                }
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.primaryActionText}>Verify code</Text>
-                )}
-              </Pressable>
-              {verificationStage === "sign-up-email" ? (
-                <Pressable
-                  style={styles.secondaryAction}
-                  onPress={() => {
-                    setVerificationStage("none");
-                    setCode("");
+            </View>
+
+            {codeSent ? (
+              <View style={styles.fieldBlock}>
+                <Text style={styles.label}>code</Text>
+                <TextInput
+                  value={otp}
+                  onChangeText={(value) => {
+                    setOtp(value.replace(/\D/g, "").slice(0, 6));
+                    if (error) setError(null);
                   }}
-                  disabled={isSubmitting}
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="000000"
+                  placeholderTextColor={palette.muted}
+                  textContentType="oneTimeCode"
+                  accessibilityLabel="verification code"
+                  testID="auth-code-input"
+                  style={[styles.textInput, styles.otpInput]}
+                />
+              </View>
+            ) : null}
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            <View style={styles.actions}>
+              <Pressable
+                accessibilityLabel={codeSent ? "sign in" : "send code"}
+                accessibilityRole="button"
+                testID={codeSent ? "auth-sign-in-button" : "auth-send-code-button"}
+                style={[
+                  styles.primaryButton,
+                  codeSent
+                    ? otp.length < 6 || isVerifying
+                      ? styles.disabledButton
+                      : undefined
+                    : !email.trim() || isSending
+                      ? styles.disabledButton
+                      : undefined,
+                ]}
+                onPress={codeSent ? verifyCode : sendCode}
+                disabled={
+                  codeSent
+                    ? otp.length < 6 || isVerifying
+                    : !email.trim() || isSending
+                }
+              >
+                <Text style={styles.primaryButtonText}>
+                  {codeSent
+                    ? isVerifying
+                      ? "checking..."
+                      : "sign in"
+                    : isSending
+                      ? "sending..."
+                      : "send code"}
+                </Text>
+              </Pressable>
+
+              {codeSent ? (
+                <Pressable
+                  accessibilityLabel="resend code"
+                  accessibilityRole="button"
+                  testID="auth-resend-code-button"
+                  style={styles.secondaryButton}
+                  onPress={sendCode}
+                  disabled={isSending}
                 >
-                  <Text style={styles.secondaryActionText}>Back</Text>
+                  <Text style={styles.secondaryButtonText}>resend</Text>
                 </Pressable>
               ) : null}
-            </>
-          )}
+            </View>
 
-          {authError ? <Text style={styles.errorText}>{authError}</Text> : null}
+            {codeSent ? (
+              <Pressable
+                accessibilityLabel="change email"
+                accessibilityRole="button"
+                testID="auth-change-email-button"
+                onPress={() => {
+                  setSentTo("");
+                  setOtp("");
+                  setError(null);
+                }}
+              >
+                <Text style={styles.changeEmailText}>change email</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <Text style={styles.footerText}>
+            One code, long-lived session. No password.
+          </Text>
         </View>
-      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 function SignedInHomeScreen() {
-  const { getToken } = useAuth();
-  const { signOut } = useClerk();
-
   return (
     <LiftMobileApp
-      getToken={getToken}
+      getHeaders={getBetterAuthCookieHeaders}
       onSignOut={() => {
-        void signOut();
+        void authClient.signOut();
       }}
     />
   );
 }
 
-function MobileRoot() {
-  const { isLoaded, isSignedIn } = useAuth();
+function AppContent() {
+  const { data: session, isPending } = authClient.useSession();
 
-  if (!isLoaded) {
-    return <LoadingScreen message="Loading authentication…" />;
+  if (__DEV__ && mobileLocalDevUserId) {
+    return <LiftMobileApp localDevUserId={mobileLocalDevUserId} />;
   }
 
-  if (!isSignedIn) {
+  if (isPending) {
+    return <LoadingScreen message="loading..." />;
+  }
+
+  if (!session?.user) {
     return <AuthScreen />;
   }
 
   return <SignedInHomeScreen />;
 }
 
-function AppContent() {
-  if (__DEV__ && mobileSkipClerk) {
-    return <LiftMobileApp />;
-  }
-
-  if (__DEV__ && mobileLocalDevUserId) {
-    return <LiftMobileApp localDevUserId={mobileLocalDevUserId} />;
-  }
-
-  if (!mobileClerkPublishableKey) {
-    return <ConfigurationErrorScreen />;
-  }
-
-  return (
-    <ClerkProvider
-      publishableKey={mobileClerkPublishableKey}
-      tokenCache={tokenCache}
-    >
-      <MobileRoot />
-    </ClerkProvider>
-  );
-}
-
 export default function App() {
   return (
-    <MobileErrorBoundary scope="mobile-root" screen="app" title="app crashed">
+    <MobileErrorBoundary
+      scope="mobile-root"
+      screen="app"
+      title="app crashed"
+      getHeaders={getBetterAuthCookieHeaders}
+    >
       <AppContent />
     </MobileErrorBoundary>
   );
@@ -460,158 +289,117 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.canvas,
   },
+  keyboardAvoider: {
+    flex: 1,
+  },
   centeredView: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    gap: 12,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-    gap: 18,
+    gap: 10,
   },
   loadingText: {
-    color: palette.ink,
+    color: palette.muted,
+    fontFamily: "Courier",
     fontSize: 16,
-    fontWeight: "600",
-    textAlign: "center",
   },
-  configBody: {
-    color: palette.muted,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  hero: {
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    borderRadius: 24,
-    padding: 22,
-    gap: 10,
-  },
-  eyebrow: {
-    color: palette.accent,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 2,
-    textTransform: "uppercase",
-  },
-  heroTitle: {
-    color: palette.ink,
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: "800",
-  },
-  heroBody: {
-    color: palette.muted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  modeSwitch: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  modeChip: {
+  authShell: {
     flex: 1,
-    alignItems: "center",
     justifyContent: "center",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: palette.surface,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    gap: 24,
   },
-  modeChipActive: {
-    backgroundColor: palette.accent,
-    borderColor: palette.accent,
+  titleBlock: {
+    gap: 4,
   },
-  modeChipText: {
+  title: {
     color: palette.ink,
-    fontSize: 14,
+    fontFamily: "Courier",
+    fontSize: 34,
     fontWeight: "700",
+    letterSpacing: 0,
   },
-  modeChipTextActive: {
-    color: "#ffffff",
+  subtitle: {
+    color: palette.muted,
+    fontFamily: "Courier",
+    fontSize: 15,
   },
-  card: {
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    borderRadius: 24,
-    padding: 20,
+  form: {
     gap: 12,
   },
-  cardTitle: {
-    color: palette.ink,
-    fontSize: 24,
-    fontWeight: "800",
+  fieldBlock: {
+    gap: 6,
   },
-  cardBody: {
+  label: {
     color: palette.muted,
+    fontFamily: "Courier",
     fontSize: 14,
-    lineHeight: 20,
   },
-  textField: {
-    backgroundColor: palette.surfaceStrong,
+  textInput: {
+    minHeight: 42,
     borderWidth: 1,
     borderColor: palette.line,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderRadius: 6,
     color: palette.ink,
-    fontSize: 15,
+    fontFamily: "Courier",
+    fontSize: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  primaryAction: {
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 18,
-    backgroundColor: palette.accent,
-    paddingVertical: 15,
-    paddingHorizontal: 18,
-  },
-  primaryActionText: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  secondaryAction: {
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: palette.surface,
-    paddingVertical: 15,
-    paddingHorizontal: 18,
-  },
-  secondaryActionText: {
-    color: palette.ink,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  buttonDisabled: {
-    opacity: 0.6,
+  otpInput: {
+    letterSpacing: 4,
   },
   errorText: {
     color: palette.danger,
-    fontSize: 13,
-    lineHeight: 18,
+    fontFamily: "Courier",
+    fontSize: 14,
   },
-  metaBlock: {
-    gap: 4,
+  actions: {
+    flexDirection: "row",
+    gap: 8,
   },
-  metaLabel: {
-    color: palette.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
+  primaryButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 6,
+    backgroundColor: palette.fill,
+    paddingHorizontal: 12,
   },
-  metaValue: {
+  primaryButtonText: {
     color: palette.ink,
+    fontFamily: "Courier",
+    fontSize: 18,
+  },
+  secondaryButton: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+  },
+  secondaryButtonText: {
+    color: palette.muted,
+    fontFamily: "Courier",
+    fontSize: 15,
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  changeEmailText: {
+    color: palette.muted,
+    fontFamily: "Courier",
+    fontSize: 14,
+  },
+  footerText: {
+    color: palette.muted,
+    fontFamily: "Courier",
     fontSize: 14,
     lineHeight: 20,
   },

@@ -10,8 +10,8 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
+import { isLocalDevAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { db } from "@/server/db";
-import { auth } from "@clerk/nextjs/server";
 
 /**
  * 1. CONTEXT
@@ -44,14 +44,21 @@ export const createInnerTRPCContext = (opts: {
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const localDevUserId =
-    process.env.NODE_ENV === "development" &&
-    !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    isLocalDevAuthBypassEnabled()
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
-  const authData = localDevUserId ? { userId: localDevUserId } : await auth();
+  const [{ auth }, { resolveAppUserIdForAuthUser }] = await Promise.all([
+    import("@/server/auth"),
+    import("@/server/auth/app-user"),
+  ]);
+  const session = await auth.api.getSession({ headers: opts.headers });
+  const userId =
+    session?.user
+      ? await resolveAppUserIdForAuthUser(session.user)
+      : localDevUserId;
 
   return createInnerTRPCContext({
-    auth: authData,
+    auth: { userId },
     db,
     headers: opts.headers,
   });
