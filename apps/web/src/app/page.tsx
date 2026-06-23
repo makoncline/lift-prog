@@ -613,7 +613,7 @@ function UnauthenticatedHomePage() {
         email: trimmedEmail,
         type: "sign-in",
       });
-      if (result.error) throw result.error;
+      if (result.error) throw new Error(getAuthErrorMessage(result.error));
       setSentTo(trimmedEmail);
       setOtp("");
     } catch (authError) {
@@ -635,7 +635,7 @@ function UnauthenticatedHomePage() {
         otp,
         name: sentTo.split("@")[0] ?? sentTo,
       });
-      if (result.error) throw result.error;
+      if (result.error) throw new Error(getAuthErrorMessage(result.error));
     } catch (authError) {
       setError(getAuthErrorMessage(authError));
     } finally {

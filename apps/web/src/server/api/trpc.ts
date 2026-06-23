@@ -48,14 +48,13 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
     process.env.NODE_ENV === "development"
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
-  const session = localDevUserId
-    ? null
-    : await auth.api.getSession({ headers: opts.headers });
-  const userId = localDevUserId
-    ? localDevUserId
-    : session?.user
-      ? await resolveAppUserIdForAuthUser(session.user)
-      : null;
+  const session =
+    localDevUserId !== null
+      ? null
+      : await auth.api.getSession({ headers: opts.headers });
+  const userId =
+    localDevUserId ??
+    (session?.user ? await resolveAppUserIdForAuthUser(session.user) : null);
 
   return createInnerTRPCContext({
     auth: { userId },
