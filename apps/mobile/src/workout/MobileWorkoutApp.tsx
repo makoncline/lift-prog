@@ -1972,6 +1972,8 @@ function WorkoutScreen({
           ? "health running"
           : "health save on finish"
         : healthWorkout.message;
+  const bodyWeightText =
+    workout.bodyWeightLb == null ? "" : formatNumber(workout.bodyWeightLb);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
@@ -2165,11 +2167,7 @@ function WorkoutScreen({
           <Text style={styles.subtleTitle}>body weight</Text>
           <View style={styles.bodyWeightInputBox}>
             <TextInput
-              value={
-                workout.bodyWeightLb == null
-                  ? ""
-                  : formatNumber(workout.bodyWeightLb)
-              }
+              value={bodyWeightText}
               placeholder="add"
               placeholderTextColor={palette.muted}
               onChangeText={(value) => {
@@ -2189,7 +2187,12 @@ function WorkoutScreen({
                 }
               }}
               keyboardType="decimal-pad"
-              style={styles.bodyWeightInput}
+              style={[
+                styles.bodyWeightInput,
+                {
+                  width: getInlineTextInputWidth(bodyWeightText || "add"),
+                },
+              ]}
             />
             {workout.bodyWeightLb == null ? null : (
               <Text style={styles.bodyWeightUnit}>lb</Text>
@@ -5151,6 +5154,10 @@ function findSetIndex(exercise: WorkoutExercise | undefined, setId: string) {
 
 function getSetTargetId(set: WorkoutSet, setIndex: number) {
   return set.clientId ?? makeSetTargetId(setIndex);
+}
+
+function getInlineTextInputWidth(text: string) {
+  return Math.max(34, text.length * 12 + 2);
 }
 
 function makeSetTargetId(setIndex: number) {
