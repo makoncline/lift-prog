@@ -2754,7 +2754,7 @@ function ExerciseSection({
               exerciseIndex,
               sets: [...exercise.sets, nextSet],
             });
-            onOpenSetEditor(makeSetTargetId(nextSetIndex), "weight");
+            onOpenSetEditor(getSetTargetId(nextSet, nextSetIndex), "weight");
           }}
         >
           <Icon name="add-outline" size={24} color={palette.muted} />
@@ -3166,7 +3166,7 @@ function SetGroup({
     .map(({ set, index }, noteIndex) => ({
       letter: String.fromCharCode(97 + noteIndex),
       note: set.notes!.trim(),
-      setId: makeSetTargetId(index),
+      setId: getSetTargetId(set, index),
     }));
   const noteBySetId = new Map(
     noteEntries.map((entry) => [entry.setId, entry.letter]),
@@ -3178,7 +3178,7 @@ function SetGroup({
       <View style={styles.setLine}>
         {sets.length === 0 ? <Text style={styles.metaText}>none</Text> : null}
         {sets.map((indexedSet, index) => {
-          const setId = makeSetTargetId(indexedSet.index);
+          const setId = getSetTargetId(indexedSet.set, indexedSet.index);
           const token = getSetLineToken(exercise, indexedSet, sets[index - 1]);
           const fullLabel = formatSetInline(exercise, indexedSet) || "set";
           const setAccessibilityName = setLabel(exercise, indexedSet.index);
@@ -3480,7 +3480,7 @@ function SetEditorModal({
     });
     onRetarget({
       exerciseIndex: target.exerciseIndex,
-      setId: makeSetTargetId(setIndex + 1),
+      setId: getSetTargetId(nextSet, setIndex + 1),
       field: "reps",
     });
     setField("reps");
@@ -3501,6 +3501,10 @@ function SetEditorModal({
             );
             const nextSet =
               remainingSets[Math.min(setIndex, remainingSets.length - 1)];
+            const nextSetIndex = Math.min(
+              setIndex,
+              remainingSets.length - 1,
+            );
             onDispatch({
               type: "DELETE_SET",
               exerciseIndex: target.exerciseIndex,
@@ -3509,9 +3513,7 @@ function SetEditorModal({
             if (nextSet) {
               onRetarget({
                 exerciseIndex: target.exerciseIndex,
-                setId: makeSetTargetId(
-                  Math.min(setIndex, remainingSets.length - 1),
-                ),
+                setId: getSetTargetId(nextSet, nextSetIndex),
                 field,
               });
             } else {
@@ -5138,12 +5140,17 @@ function toggleRest(
 
 function findSetIndex(exercise: WorkoutExercise | undefined, setId: string) {
   if (!exercise) return null;
+  const stableIndex = exercise.sets.findIndex((set) => set.clientId === setId);
+  if (stableIndex >= 0) return stableIndex;
   const indexTarget = parseSetTargetId(setId);
   if (indexTarget != null) {
     return exercise.sets[indexTarget] ? indexTarget : null;
   }
-  const index = exercise.sets.findIndex((set) => set.clientId === setId);
-  return index >= 0 ? index : null;
+  return null;
+}
+
+function getSetTargetId(set: WorkoutSet, setIndex: number) {
+  return set.clientId ?? makeSetTargetId(setIndex);
 }
 
 function makeSetTargetId(setIndex: number) {
