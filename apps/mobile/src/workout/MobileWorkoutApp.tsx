@@ -3112,7 +3112,8 @@ function SetEditorModal({
   if (!target || !exercise || setIndex == null || !set) return null;
 
   const commitValue = (nextEntry: string, nextField = field) => {
-    const parsed = parseKeypadEntry(nextEntry, nextField);
+    const parsed =
+      nextEntry.trim() === "" ? null : parseKeypadEntry(nextEntry, nextField);
     if (parsed === "pending") return;
 
     onDispatch(
@@ -3432,7 +3433,10 @@ function SetEditorModal({
                   onPress={() => selectField("weight")}
                 >
                   <Text style={styles.bigValueText}>
-                    {formatWeightLabel(values.weight, values.weightModifier)}
+                    {formatKeyboardWeightLabel(
+                      values.weight,
+                      values.weightModifier,
+                    )}
                   </Text>
                 </Pressable>
                 <Text style={styles.bigValueText}>x</Text>
@@ -3447,7 +3451,7 @@ function SetEditorModal({
                   onPress={() => selectField("reps")}
                 >
                   <Text style={styles.bigValueText}>
-                    {values.reps == null ? "" : formatNumber(values.reps)}
+                    {values.reps == null ? "-" : formatNumber(values.reps)}
                   </Text>
                 </Pressable>
                 <View style={styles.flexSpacer} />
@@ -3625,6 +3629,14 @@ function parseKeypadEntry(
   if (!Number.isFinite(numericValue)) return "pending";
   if (field === "reps") return Math.max(0, Math.trunc(numericValue));
   return numericValue;
+}
+
+function formatKeyboardWeightLabel(
+  weight: number | null,
+  weightModifier?: "bodyweight",
+) {
+  if (weight == null) return weightModifier === "bodyweight" ? "BW" : "-lb";
+  return formatWeightLabel(weight, weightModifier);
 }
 
 function KeypadButton({

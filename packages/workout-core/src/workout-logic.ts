@@ -1212,7 +1212,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = {
         ...set,
         weight,
-        weightExplicit: weight !== null,
+        weightExplicit: true,
         completed: weight !== null && set.reps !== null ? true : set.completed,
       };
       return {
@@ -1234,7 +1234,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = {
         ...set,
         reps,
-        repsExplicit: reps !== null,
+        repsExplicit: true,
         completed: set.weight !== null && reps !== null ? true : set.completed,
       };
       return {
