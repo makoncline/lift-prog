@@ -3,14 +3,6 @@
 import "@/styles/globals.css";
 
 import { Geist } from "next/font/google";
-import {
-  ClerkProvider,
-  SignInButton,
-  SignUpButton,
-  SignedIn,
-  SignedOut,
-  UserButton,
-} from "@clerk/nextjs";
 
 import { TRPCReactProvider } from "@/trpc/react";
 import { Toaster } from "@/components/ui/sonner";
@@ -19,26 +11,17 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { usePathname } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
 
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-geist-sans",
 });
 
-const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const app = <AppShell>{children}</AppShell>;
-
-  if (!clerkPublishableKey) {
-    return app;
-  }
-
-  return (
-    <ClerkProvider publishableKey={clerkPublishableKey}>{app}</ClerkProvider>
-  );
+  return <AppShell>{children}</AppShell>;
 }
 
 function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -73,21 +56,7 @@ function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
                     <Link href="/">Home</Link>
                     <Link href="/calc">Calculator</Link>
                   </div>
-                  {clerkPublishableKey ? (
-                    <div className="flex gap-2">
-                      <SignedOut>
-                        <Button asChild variant="outline">
-                          <SignInButton />
-                        </Button>
-                        <Button asChild variant="outline">
-                          <SignUpButton />
-                        </Button>
-                      </SignedOut>
-                      <SignedIn>
-                        <UserButton />
-                      </SignedIn>
-                    </div>
-                  ) : null}
+                  <AuthStatus />
                 </header>
               ) : null}
               {children}
@@ -97,5 +66,28 @@ function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
         </TRPCReactProvider>
       </body>
     </html>
+  );
+}
+
+function AuthStatus() {
+  const { data: session } = authClient.useSession();
+
+  if (!session?.user) {
+    return (
+      <Button asChild variant="outline">
+        <Link href="/">sign in</Link>
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      variant="outline"
+      onClick={() => {
+        void authClient.signOut();
+      }}
+    >
+      sign out
+    </Button>
   );
 }

@@ -1,10 +1,10 @@
 "use client";
 import { useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/trpc/react";
+import { authClient } from "@/lib/auth-client";
 import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { NoteEditorDialog } from "@/components/workout/note_editor_dialog";
 import { DeleteExerciseDialog } from "@/components/workout/delete_exercise_dialog";
@@ -267,20 +267,12 @@ function cloneWorkout(workout: Workout): Workout {
 }
 
 export function WorkoutComponent({ ...props }: WorkoutProps) {
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
-    return <WorkoutComponentInner {...props} canSaveWorkout userStateLoaded />;
-  }
-
-  return <ClerkWorkoutComponent {...props} />;
-}
-
-function ClerkWorkoutComponent(props: WorkoutProps) {
-  const { user, isLoaded } = useUser();
+  const { data: session, isPending } = authClient.useSession();
   return (
     <WorkoutComponentInner
       {...props}
-      canSaveWorkout={Boolean(user)}
-      userStateLoaded={isLoaded}
+      canSaveWorkout={Boolean(session?.user)}
+      userStateLoaded={!isPending}
     />
   );
 }

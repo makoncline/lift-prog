@@ -1,16 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { type FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import { P } from "@/components/ui/typography";
 import { Button } from "@/components/ui/button";
 import {
   ChevronDown,
   ChevronUp,
   Copy,
-  Dumbbell,
-  LogIn,
   Pencil,
   Plus,
   Trash2,
@@ -29,9 +26,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { LOCAL_STORAGE_WORKOUT_KEY } from "@lift-prog/workout-core";
+import { authClient } from "@/lib/auth-client";
+import { Input } from "@/components/ui/input";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 
-const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-const localDevMode = process.env.NODE_ENV === "development";
 const INITIAL_WORKOUT_HISTORY_LIMIT = 6;
 const WORKOUT_HISTORY_LIMIT_INCREMENT = 6;
 const MAX_WORKOUT_HISTORY_LIMIT = 50;
@@ -577,29 +575,186 @@ function AuthenticatedHomePage({
   );
 }
 
+const getAuthErrorMessage = (error: unknown) => {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "could not sign in";
+};
+
 function UnauthenticatedHomePage() {
+  const [email, setEmail] = useState("");
+  const [sentTo, setSentTo] = useState("");
+  const [otp, setOtp] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const codeSent = Boolean(sentTo);
+
+  const sendCode = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || isSending) return;
+
+    setIsSending(true);
+    setError(null);
+    try {
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: trimmedEmail,
+        type: "sign-in",
+      });
+      if (result.error) throw result.error;
+      setSentTo(trimmedEmail);
+      setOtp("");
+    } catch (authError) {
+      setError(getAuthErrorMessage(authError));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const verifyCode = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (!sentTo || otp.length < 6 || isVerifying) return;
+
+    setIsVerifying(true);
+    setError(null);
+    try {
+      const result = await authClient.signIn.emailOtp({
+        email: sentTo,
+        otp,
+        name: sentTo.split("@")[0] ?? sentTo,
+      });
+      if (result.error) throw result.error;
+    } catch (authError) {
+      setError(getAuthErrorMessage(authError));
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   return (
-    <div className="mx-auto max-w-[390px] px-4 py-8 font-mono text-[#1f1c17]">
-      <div className="flex flex-col items-center justify-center space-y-6 text-center">
-        <div className="flex items-center gap-3">
-          <Dumbbell className="h-12 w-12" />
-          <h1 className="text-3xl font-semibold tracking-normal">Lift Prog</h1>
+    <div className="mx-auto flex min-h-screen w-full max-w-[390px] flex-col justify-center px-5 py-8 font-mono text-[#1f1c17]">
+      <div className="space-y-6">
+        <div className="space-y-1">
+          <h1 className="text-[34px] font-semibold leading-none tracking-normal">
+            Lift Prog
+          </h1>
+          <div className="text-[15px] text-[#7a7468]">email code sign in</div>
         </div>
 
-        <div className="space-y-4">
-          <P className="text-muted-foreground">
-            Track your workouts, monitor your progress, and reach your fitness
-            goals.
-          </P>
+        <form
+          className="space-y-3"
+          onSubmit={codeSent ? verifyCode : sendCode}
+        >
+          <div className="space-y-1.5">
+            <div className="text-[14px] text-[#7a7468]">email</div>
+            <Input
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                if (sentTo) setSentTo("");
+                if (otp) setOtp("");
+                if (error) setError(null);
+              }}
+              autoCapitalize="none"
+              autoComplete="email"
+              autoCorrect="off"
+              inputMode="email"
+              spellCheck={false}
+              className="h-10 border-[#d9cdb9] bg-transparent font-mono text-[18px] shadow-none focus-visible:ring-0"
+              placeholder="makon@hey.com"
+            />
+          </div>
 
-          <Button asChild size="lg" className="gap-2">
-            <SignInButton>
-              <span className="flex items-center gap-2">
-                <LogIn className="h-4 w-4" />
-                Sign In to Get Started
-              </span>
-            </SignInButton>
-          </Button>
+          {codeSent ? (
+            <div className="space-y-1.5">
+              <div className="text-[14px] text-[#7a7468]">code</div>
+              <InputOTP
+                maxLength={6}
+                value={otp}
+                onChange={(value) => {
+                  setOtp(value);
+                  if (error) setError(null);
+                }}
+                containerClassName="gap-1"
+              >
+                <InputOTPGroup className="gap-1">
+                  {Array.from({ length: 6 }, (_, index) => (
+                    <InputOTPSlot
+                      key={index}
+                      index={index}
+                      className="h-10 w-9 rounded border border-[#d9cdb9] bg-transparent font-mono text-[18px] shadow-none data-[active=true]:ring-0"
+                    />
+                  ))}
+                </InputOTPGroup>
+              </InputOTP>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="text-[14px] text-[#9f2f2f]">{error}</div>
+          ) : null}
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={
+                codeSent
+                  ? otp.length < 6 || isVerifying
+                  : !email.trim() || isSending
+              }
+              className="h-10 flex-1 border-[#d9cdb9] bg-[#ede6d9] font-mono text-[18px] text-[#2f2a20] shadow-none hover:bg-[#e6dece]"
+            >
+              {codeSent
+                ? isVerifying
+                  ? "checking..."
+                  : "sign in"
+                : isSending
+                  ? "sending..."
+                  : "send code"}
+            </Button>
+            {codeSent ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void sendCode()}
+                disabled={isSending}
+                className="h-10 border-[#d9cdb9] bg-transparent px-3 font-mono text-[15px] shadow-none"
+              >
+                resend
+              </Button>
+            ) : null}
+          </div>
+
+          {codeSent ? (
+            <button
+              type="button"
+              className="font-mono text-[14px] text-[#7a7468]"
+              onClick={() => {
+                setSentTo("");
+                setOtp("");
+                setError(null);
+              }}
+            >
+              change email
+            </button>
+          ) : null}
+        </form>
+
+        <div className="text-[14px] leading-5 text-[#7a7468]">
+          One code, long-lived session. No password.
         </div>
       </div>
     </div>
@@ -607,18 +762,19 @@ function UnauthenticatedHomePage() {
 }
 
 export default function HomePage() {
-  if (!clerkEnabled) {
-    return <AuthenticatedHomePage historyEnabled={localDevMode} />;
+  const { data: session, isPending } = authClient.useSession();
+
+  if (isPending) {
+    return (
+      <div className="mx-auto flex min-h-screen w-full max-w-[390px] items-center px-5 font-mono text-[16px] text-[#7a7468]">
+        loading...
+      </div>
+    );
   }
 
-  return (
-    <>
-      <SignedIn>
-        <AuthenticatedHomePage />
-      </SignedIn>
-      <SignedOut>
-        <UnauthenticatedHomePage />
-      </SignedOut>
-    </>
-  );
+  if (!session?.user) {
+    return <UnauthenticatedHomePage />;
+  }
+
+  return <AuthenticatedHomePage />;
 }

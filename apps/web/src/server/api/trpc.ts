@@ -11,7 +11,8 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { db } from "@/server/db";
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/server/auth";
+import { resolveAppUserIdForAuthUser } from "@/server/auth/app-user";
 
 /**
  * 1. CONTEXT
@@ -44,14 +45,20 @@ export const createInnerTRPCContext = (opts: {
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const localDevUserId =
-    process.env.NODE_ENV === "development" &&
-    !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    process.env.NODE_ENV === "development"
       ? (process.env.LOCAL_DEV_USER_ID ?? null)
       : null;
-  const authData = localDevUserId ? { userId: localDevUserId } : await auth();
+  const session = localDevUserId
+    ? null
+    : await auth.api.getSession({ headers: opts.headers });
+  const userId = localDevUserId
+    ? localDevUserId
+    : session?.user
+      ? await resolveAppUserIdForAuthUser(session.user)
+      : null;
 
   return createInnerTRPCContext({
-    auth: authData,
+    auth: { userId },
     db,
     headers: opts.headers,
   });

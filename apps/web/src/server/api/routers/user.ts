@@ -10,33 +10,33 @@ export const userRouter = createTRPCRouter({
     });
   }),
 
-  // Procedure to add a new user by Clerk ID
+  // Procedure to add a new user by external auth ID.
   add: adminProcedure
     .input(
       z.object({
-        clerkUserId: z.string().min(1, "Clerk User ID cannot be empty"),
+        clerkUserId: z.string().min(1, "Auth user ID cannot be empty"),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const { clerkUserId } = input;
 
-      // Check if user already exists by clerkUserId (which is also the primary id)
+      // Preserve the legacy column as the stable external auth identifier.
       const existingUser = await ctx.db.user.findUnique({
-        where: { id: clerkUserId }, // Check using the primary ID field
+        where: { id: clerkUserId },
       });
 
       if (existingUser) {
         throw new TRPCError({
           code: "CONFLICT",
-          message: `User with Clerk ID "${clerkUserId}" already exists.`,
+          message: `User with auth ID "${clerkUserId}" already exists.`,
         });
       }
 
       // Create the new user
       const newUser = await ctx.db.user.create({
         data: {
-          id: clerkUserId, // Set the primary key
-          clerkUserId: clerkUserId, // Set the unique clerkUserId field
+          id: clerkUserId,
+          clerkUserId,
         },
       });
 
@@ -45,7 +45,7 @@ export const userRouter = createTRPCRouter({
 
   // Procedure to delete a user
   delete: adminProcedure
-    .input(z.object({ id: z.string() })) // User ID is string (Clerk ID)
+    .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       // WARNING: Deleting a user will likely cascade delete their workouts
       // due to the schema relation (onDelete: Cascade).
