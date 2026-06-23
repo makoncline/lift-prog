@@ -125,6 +125,7 @@ type NoteEditTarget =
   | { kind: "exercise"; exerciseIndex: number }
   | { kind: "workout-exercise"; exerciseIndex: number }
   | { kind: "set"; exerciseIndex: number; setId: string };
+type TimeEditPart = "start-date" | "start-time";
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
@@ -1349,6 +1350,7 @@ function WorkoutScreen({
     useState(false);
   const [setEditor, setSetEditor] = useState<SetEditTarget | null>(null);
   const [noteEditor, setNoteEditor] = useState<NoteEditTarget | null>(null);
+  const [timeEditor, setTimeEditor] = useState<TimeEditPart | null>(null);
   const [finishPreviewOpen, setFinishPreviewOpen] = useState(false);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
     requested: false,
@@ -1603,6 +1605,18 @@ function WorkoutScreen({
     } else {
       dispatch({ type: "ADD_EXERCISE_NOTE", exerciseIndex, text: nextText });
     }
+  };
+
+  const updateStartTime = (startTime: number) => {
+    const previousStartTime = workout.startTime;
+    if (!Number.isFinite(startTime) || startTime === previousStartTime) return;
+
+    if (isEditingPastWorkout && completedAt) {
+      const durationMs = completedAt.getTime() - previousStartTime;
+      setCompletedAt(new Date(startTime + Math.max(60_000, durationMs)));
+    }
+
+    dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime });
   };
 
   const handleFinishPress = () => {
@@ -1920,19 +1934,46 @@ function WorkoutScreen({
         {contextLabel ? (
           <Text style={styles.metaText}>{contextLabel}</Text>
         ) : null}
-        <Text style={styles.metaText}>
-          {formatRelativeDate(new Date(workout.startTime), new Date(now))} .{" "}
-          {formatDateTime(new Date(workout.startTime))}
+        <View style={styles.timeInlineRow}>
+          <Text style={styles.metaText}>
+            {formatRelativeDate(new Date(workout.startTime), new Date(now))} .{" "}
+          </Text>
+          <Pressable
+            accessibilityLabel="Edit start date"
+            accessibilityRole="button"
+            style={styles.timeTextButton}
+            testID="workout-start-date"
+            onPress={() => setTimeEditor("start-date")}
+          >
+            <Text style={styles.timeTextButtonText}>
+              {formatWorkoutStartDate(new Date(workout.startTime))}
+            </Text>
+          </Pressable>
+          <Text style={styles.metaText}> </Text>
+          <Pressable
+            accessibilityLabel="Edit start time"
+            accessibilityRole="button"
+            style={styles.timeTextButton}
+            testID="workout-start-time"
+            onPress={() => setTimeEditor("start-time")}
+          >
+            <Text style={styles.timeTextButtonText}>
+              {formatTime(new Date(workout.startTime))}
+            </Text>
+          </Pressable>
           {isEditingPastWorkout && completedAt ? (
-            <>
+            <Text style={styles.metaText}>
               {" "}
               - {formatTime(completedAt)} (
               {formatDuration(new Date(workout.startTime), completedAt)})
-            </>
+            </Text>
           ) : (
-            <> ({formatDuration(new Date(workout.startTime), new Date(now))})</>
+            <Text style={styles.metaText}>
+              {" "}
+              ({formatDuration(new Date(workout.startTime), new Date(now))})
+            </Text>
           )}
-        </Text>
+        </View>
         {healthStatusText || timerStatusText ? (
           <Text style={styles.metaText}>
             {[healthStatusText, timerStatusText].filter(Boolean).join(" . ")}
@@ -2059,6 +2100,12 @@ function WorkoutScreen({
             }
           }
         }}
+      />
+      <WorkoutStartTimeEditor
+        part={timeEditor}
+        startTime={workout.startTime}
+        onClose={() => setTimeEditor(null)}
+        onSave={updateStartTime}
       />
       <FinishPreviewModal
         workout={finishedWorkout}
@@ -4318,6 +4365,101 @@ function NoteEditorModal({
   );
 }
 
+function WorkoutStartTimeEditor({
+  part,
+  startTime,
+  onClose,
+  onSave,
+}: {
+  part: TimeEditPart | null;
+  startTime: number;
+  onClose: () => void;
+  onSave: (startTime: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const startDate = new Date(startTime);
+
+  useEffect(() => {
+    if (!part) return;
+    setValue(
+      part === "start-date"
+        ? formatDateInputValue(startDate)
+        : formatTimeInputValue(startDate),
+    );
+    setError(null);
+  }, [part, startTime]);
+
+  if (!part) return null;
+
+  const label = part === "start-date" ? "start date" : "start time";
+  const placeholder = part === "start-date" ? "yyyy-mm-dd" : "hh:mm";
+
+  const save = () => {
+    const nextDate =
+      part === "start-date"
+        ? applyDateInput(startDate, value)
+        : applyTimeInput(startDate, value);
+    if (!nextDate) {
+      setError(part === "start-date" ? "use yyyy-mm-dd" : "use hh:mm");
+      return;
+    }
+    onSave(nextDate.getTime());
+    onClose();
+  };
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalShade}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.noteSheet}
+        >
+          <View style={styles.keyboardHeader}>
+            <Text style={styles.metaText}>{label}</Text>
+            <Pressable
+              accessibilityLabel="Close time editor"
+              accessibilityRole="button"
+              style={styles.iconButtonSmall}
+              testID="time-editor-close"
+              onPress={onClose}
+            >
+              <Icon name="close-outline" size={24} />
+            </Pressable>
+          </View>
+          <TextInput
+            accessibilityLabel={label}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+            inputMode={part === "start-date" ? "numeric" : "numeric"}
+            keyboardType="numbers-and-punctuation"
+            placeholder={placeholder}
+            placeholderTextColor={palette.muted}
+            style={styles.timeEditorInput}
+            testID={`workout-${part}-input`}
+            value={value}
+            onChangeText={(text) => {
+              setValue(text);
+              if (error) setError(null);
+            }}
+          />
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          <Pressable
+            accessibilityLabel={`Save ${label}`}
+            accessibilityRole="button"
+            style={[styles.textButton, styles.primaryWideButton]}
+            testID="time-editor-done"
+            onPress={save}
+          >
+            <Text style={styles.primaryWideButtonText}>done</Text>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
 function FinishPreviewModal({
   workout,
   saving,
@@ -4426,6 +4568,67 @@ function findSetIndex(exercise: WorkoutExercise | undefined, setId: string) {
   if (!exercise) return null;
   const index = exercise.sets.findIndex((set) => set.clientId === setId);
   return index >= 0 ? index : null;
+}
+
+function formatWorkoutStartDate(date: Date) {
+  return date
+    .toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+    .toLowerCase();
+}
+
+function formatDateInputValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function formatTimeInputValue(date: Date) {
+  return [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+  ].join(":");
+}
+
+function applyDateInput(startDate: Date, value: string) {
+  const match = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const nextDate = new Date(startDate);
+  nextDate.setFullYear(year, month - 1, day);
+  if (
+    nextDate.getFullYear() !== year ||
+    nextDate.getMonth() !== month - 1 ||
+    nextDate.getDate() !== day
+  ) {
+    return null;
+  }
+  return nextDate;
+}
+
+function applyTimeInput(startDate: Date, value: string) {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+
+  const [, hoursText, minutesText] = match;
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+  const nextDate = new Date(startDate);
+  nextDate.setHours(hours, minutes, 0, 0);
+  return nextDate;
 }
 
 function getNoteValue(workout: Workout, target: NoteEditTarget) {

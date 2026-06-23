@@ -62,6 +62,25 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 21,
   },
+  timeInlineRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 1,
+  },
+  timeTextButton: {
+    borderColor: palette.soft,
+    borderRadius: 5,
+    borderWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  timeTextButtonText: {
+    color: palette.muted,
+    fontFamily: monoFont,
+    fontSize: 16,
+    lineHeight: 21,
+  },
   errorText: {
     color: palette.danger,
     fontFamily: monoFont,
@@ -969,6 +988,17 @@ export const styles = StyleSheet.create({
     minHeight: 132,
     padding: 8,
     textAlignVertical: "top",
+  },
+  timeEditorInput: {
+    borderColor: palette.line,
+    borderRadius: 7,
+    borderWidth: 1,
+    color: palette.ink,
+    fontFamily: monoFont,
+    fontSize: 24,
+    minHeight: 48,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   noteActions: {
     flexDirection: "row",
