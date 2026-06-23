@@ -575,13 +575,12 @@ export const initialiseExercises = (
         : null,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
-        const isPrevBodyweight = s.weightModifier === "bodyweight";
         return {
-          weight: isPrevBodyweight ? s.weight : null,
-          reps: null,
-          completed: false,
-          weightExplicit: false,
-          repsExplicit: false,
+          weight: s.weight,
+          reps: s.reps,
+          completed: s.weight !== null && s.reps !== null,
+          weightExplicit: s.weight !== null,
+          repsExplicit: s.reps !== null,
           prevWeight: s.weight,
           prevReps: s.reps,
           modifier,

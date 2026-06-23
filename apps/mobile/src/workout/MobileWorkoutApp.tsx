@@ -3330,19 +3330,13 @@ function SetEditorModal({
     if (parsed === "pending") return;
 
     onDispatch(
-      nextField === "weight"
-        ? {
-            type: "UPDATE_SET_WEIGHT",
-            exerciseIndex: target.exerciseIndex,
-            setIndex,
-            weight: parsed,
-          }
-        : {
-            type: "UPDATE_SET_REPS",
-            exerciseIndex: target.exerciseIndex,
-            setIndex,
-            reps: parsed,
-          },
+      {
+        type: "REPLACE_EXERCISE_SETS",
+        exerciseIndex: target.exerciseIndex,
+        sets: materializeEditedExerciseSets(exercise, setIndex, {
+          [nextField]: parsed,
+        }),
+      },
       { deferHistory: true },
     );
   };
@@ -3503,23 +3497,14 @@ function SetEditorModal({
       : 8;
 
   const useWeightSuggestion = (suggestion: WeightSuggestion) => {
-    const nextSets = exercise.sets.map((currentSet, currentSetIndex) =>
-      currentSetIndex === setIndex
-        ? {
-            ...currentSet,
-            weight: suggestion.weight,
-            reps: suggestion.reps,
-            weightModifier: undefined,
-            weightExplicit: true,
-            repsExplicit: true,
-            completed: true,
-          }
-        : currentSet,
-    );
     onDispatch({
       type: "REPLACE_EXERCISE_SETS",
       exerciseIndex: target.exerciseIndex,
-      sets: nextSets,
+      sets: materializeEditedExerciseSets(exercise, setIndex, {
+        weight: suggestion.weight,
+        reps: suggestion.reps,
+        weightModifier: undefined,
+      }),
     });
     setEntry(
       field === "weight"
@@ -3913,6 +3898,40 @@ function formatKeyboardWeightLabel(
 ) {
   if (weight == null) return weightModifier === "bodyweight" ? "BW" : "-lb";
   return formatWeightLabel(weight, weightModifier);
+}
+
+function materializeEditedExerciseSets(
+  exercise: WorkoutExercise,
+  editedSetIndex: number,
+  updates: {
+    weight?: number | null;
+    reps?: number | null;
+    weightModifier?: WorkoutSet["weightModifier"];
+  },
+) {
+  return exercise.sets.map((set, setIndex) => {
+    const displayed = getSetDisplayValues(exercise, set, setIndex);
+    const isEditedSet = setIndex === editedSetIndex;
+    const hasWeightUpdate = isEditedSet && "weight" in updates;
+    const hasRepsUpdate = isEditedSet && "reps" in updates;
+    const nextWeight = hasWeightUpdate ? updates.weight! : displayed.weight;
+    const nextReps = hasRepsUpdate ? updates.reps! : displayed.reps;
+    const nextWeightModifier =
+      isEditedSet && "weightModifier" in updates
+        ? updates.weightModifier
+        : displayed.weightModifier;
+
+    return {
+      ...set,
+      weight: nextWeight,
+      reps: nextReps,
+      weightModifier: nextWeightModifier,
+      weightExplicit:
+        set.weightExplicit || nextWeight !== null || hasWeightUpdate,
+      repsExplicit: set.repsExplicit || nextReps !== null || hasRepsUpdate,
+      completed: nextWeight !== null && nextReps !== null,
+    };
+  });
 }
 
 function KeypadButton({
