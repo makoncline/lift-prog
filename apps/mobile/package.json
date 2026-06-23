@@ -14,6 +14,7 @@
     "@better-auth/expo": "^1.6.20",
     "@lift-prog/workout-core": "file:../../packages/workout-core",
     "@lift-prog/workout-sdk": "file:../../packages/workout-sdk",
+    "@react-native-community/datetimepicker": "8.6.0",
     "better-auth": "^1.6.20",
     "expo": "^55.0.8",
     "expo-constants": "~55.0.9",
@@ -24,7 +25,8 @@
     "expo-status-bar": "~55.0.4",
     "invariant": "^2.2.4",
     "react": "19.2.4",
-    "react-native": "0.83.2"
+    "react-native": "0.83.2",
+    "react-native-safe-area-context": "^5.8.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0"

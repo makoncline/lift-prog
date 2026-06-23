@@ -575,13 +575,12 @@ export const initialiseExercises = (
         : null,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
-        const isPrevBodyweight = s.weightModifier === "bodyweight";
         return {
-          weight: isPrevBodyweight ? s.weight : null,
-          reps: null,
-          completed: false,
-          weightExplicit: false,
-          repsExplicit: false,
+          weight: s.weight,
+          reps: s.reps,
+          completed: s.weight !== null && s.reps !== null,
+          weightExplicit: s.weight !== null,
+          repsExplicit: s.reps !== null,
           prevWeight: s.weight,
           prevReps: s.reps,
           modifier,
@@ -1212,7 +1211,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = {
         ...set,
         weight,
-        weightExplicit: weight !== null,
+        weightExplicit: true,
         completed: weight !== null && set.reps !== null ? true : set.completed,
       };
       return {
@@ -1234,7 +1233,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       const updatedSet: WorkoutSet = {
         ...set,
         reps,
-        repsExplicit: reps !== null,
+        repsExplicit: true,
         completed: set.weight !== null && reps !== null ? true : set.completed,
       };
       return {

@@ -4,8 +4,7 @@ const workoutApiBaseUrl =
   process.env.EXPO_PUBLIC_WORKOUT_API_BASE_URL ??
   process.env.NEXT_PUBLIC_APP_URL ??
   "https://lift.makon.dev";
-const authBaseUrl =
-  process.env.EXPO_PUBLIC_AUTH_BASE_URL ?? workoutApiBaseUrl;
+const authBaseUrl = process.env.EXPO_PUBLIC_AUTH_BASE_URL ?? workoutApiBaseUrl;
 const localDevUserId = process.env.EXPO_PUBLIC_MOBILE_LOCAL_DEV_USER_ID;
 
 const config: ExpoConfig = {
@@ -29,7 +28,7 @@ const config: ExpoConfig = {
         "Lift Prog saves strength training workouts to Apple Health when you choose to start a Health workout.",
     },
   },
-  plugins: ["expo-secure-store"],
+  plugins: ["expo-secure-store", "@react-native-community/datetimepicker"],
   extra: {
     workoutApiBaseUrl,
     authBaseUrl,

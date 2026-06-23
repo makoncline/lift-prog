@@ -43,6 +43,11 @@ describe("initialiseExercises previous summary", () => {
 
     expect(exercise.previousSummary).toBe("Bench Press - 100lbx8,6,90lbx6");
     expect(exercise.previousNotes).toBe("Paused reps last set");
+    expect(exercise.sets).toMatchObject([
+      { weight: 100, reps: 8, weightExplicit: true, repsExplicit: true },
+      { weight: 100, reps: 6, weightExplicit: true, repsExplicit: true },
+      { weight: 90, reps: 6, weightExplicit: true, repsExplicit: true },
+    ]);
     expect(exercise.sets[0]!.notes).toBeUndefined();
     expect(exercise.previousSets[0]!.notes).toBe("do not copy");
   });
