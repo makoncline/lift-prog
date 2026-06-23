@@ -30,6 +30,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -1229,23 +1230,65 @@ function ActiveWorkoutDraftSheet({
 
 function DismissibleModalShade({
   children,
+  keyboardAvoiding = false,
   onDismiss,
   style = styles.modalShade,
 }: {
   children: React.ReactNode;
+  keyboardAvoiding?: boolean;
   onDismiss: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
-  return (
-    <Pressable style={style} onPress={onDismiss}>
-      <Pressable
-        style={styles.dismissibleModalContent}
-        onPress={(event) => event.stopPropagation()}
-      >
-        {children}
-      </Pressable>
+  const content = (
+    <Pressable
+      style={styles.dismissibleModalContent}
+      onPress={(event) => event.stopPropagation()}
+    >
+      {children}
     </Pressable>
   );
+
+  return (
+    <Pressable style={style} onPress={onDismiss}>
+      {keyboardAvoiding ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.keyboardAvoidingModalContent}
+        >
+          {content}
+        </KeyboardAvoidingView>
+      ) : (
+        content
+      )}
+    </Pressable>
+  );
+}
+
+function useNativeKeyboardFrame() {
+  const [frame, setFrame] = useState({ height: 0, visible: false });
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const show = Keyboard.addListener(showEvent, (event) =>
+      setFrame({
+        height: Math.max(0, event.endCoordinates.height),
+        visible: true,
+      }),
+    );
+    const hide = Keyboard.addListener(hideEvent, () =>
+      setFrame((current) => ({ ...current, visible: false })),
+    );
+
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  return frame;
 }
 
 function WorkoutHistoryRow({
@@ -3240,6 +3283,7 @@ function SetEditorModal({
   onDispatch: (action: Action, options?: WorkoutDispatchOptions) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const nativeKeyboard = useNativeKeyboardFrame();
   const [field, setField] = useState<"weight" | "reps">("weight");
   const [entry, setEntry] = useState("");
   const [firstPress, setFirstPress] = useState(true);
@@ -3500,12 +3544,17 @@ function SetEditorModal({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <DismissibleModalShade onDismiss={onClose}>
+      <DismissibleModalShade keyboardAvoiding onDismiss={onClose}>
         <View style={styles.keyboardDock}>
           <View
             style={[
               styles.keyboardSheet,
-              { paddingBottom: Math.max(6, insets.bottom + 6) },
+              {
+                paddingBottom:
+                  noteEditing && nativeKeyboard.visible
+                    ? 6
+                    : Math.max(6, insets.bottom + 6),
+              },
             ]}
           >
             <View style={styles.keyboardHeader}>
@@ -3585,6 +3634,18 @@ function SetEditorModal({
                     <Text style={styles.textButtonText}>done</Text>
                   </Pressable>
                 </View>
+                {nativeKeyboard.visible ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.nativeKeyboardBackgroundFill,
+                      {
+                        bottom: -nativeKeyboard.height,
+                        height: nativeKeyboard.height,
+                      },
+                    ]}
+                  />
+                ) : null}
               </>
             ) : (
               <>
@@ -4508,6 +4569,7 @@ function NoteEditorModal({
   onSave: (target: NoteEditTarget, text: string) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const nativeKeyboard = useNativeKeyboardFrame();
   const [value, setValue] = useState("");
 
   useEffect(() => {
@@ -4522,15 +4584,16 @@ function NoteEditorModal({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <DismissibleModalShade onDismiss={onClose}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.sheetDock}
-        >
+      <DismissibleModalShade keyboardAvoiding onDismiss={onClose}>
+        <View style={styles.sheetDock}>
           <View
             style={[
               styles.noteSheet,
-              { paddingBottom: Math.max(12, insets.bottom + 8) },
+              {
+                paddingBottom: nativeKeyboard.visible
+                  ? 8
+                  : Math.max(12, insets.bottom + 8),
+              },
             ]}
           >
             <View style={styles.keyboardHeader}>
@@ -4593,8 +4656,20 @@ function NoteEditorModal({
                 <Text style={styles.textButtonText}>done</Text>
               </Pressable>
             </View>
+            {nativeKeyboard.visible ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.nativeKeyboardBackgroundFill,
+                  {
+                    bottom: -nativeKeyboard.height,
+                    height: nativeKeyboard.height,
+                  },
+                ]}
+              />
+            ) : null}
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </DismissibleModalShade>
     </Modal>
   );
@@ -4632,10 +4707,7 @@ function WorkoutStartTimeEditor({
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <DismissibleModalShade onDismiss={onClose}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.sheetDock}
-        >
+        <View style={styles.sheetDock}>
           <View
             style={[
               styles.noteSheet,
@@ -4683,7 +4755,7 @@ function WorkoutStartTimeEditor({
               </Pressable>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </DismissibleModalShade>
     </Modal>
   );

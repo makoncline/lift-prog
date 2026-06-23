@@ -572,6 +572,17 @@ export const styles = StyleSheet.create({
   dismissibleModalContent: {
     width: "100%",
   },
+  keyboardAvoidingModalContent: {
+    flex: 1,
+    justifyContent: "flex-end",
+    width: "100%",
+  },
+  nativeKeyboardBackgroundFill: {
+    backgroundColor: palette.canvas,
+    left: -1,
+    position: "absolute",
+    right: -1,
+  },
   keyboardDock: {
     backgroundColor: palette.canvas,
     maxHeight: "92%",
@@ -584,12 +595,11 @@ export const styles = StyleSheet.create({
   keyboardSheet: {
     backgroundColor: palette.canvas,
     borderColor: palette.line,
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
     borderWidth: 1,
     paddingHorizontal: 9,
     paddingTop: 8,
     paddingBottom: 6,
+    position: "relative",
   },
   keyboardHeader: {
     alignItems: "flex-start",
@@ -961,10 +971,9 @@ export const styles = StyleSheet.create({
   noteSheet: {
     backgroundColor: palette.canvas,
     borderColor: palette.line,
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
     borderWidth: 1,
     padding: 12,
+    position: "relative",
   },
   noteInput: {
     ...controlChrome,
