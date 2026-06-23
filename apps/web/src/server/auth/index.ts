@@ -11,6 +11,16 @@ import { sendAuthOtpEmail } from "@/server/auth/email";
 
 const baseFallback =
   env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const configuredAuthHosts = [baseFallback, process.env.NEXT_PUBLIC_APP_URL]
+  .map((url) => {
+    if (!url) return null;
+    try {
+      return new URL(url).host;
+    } catch {
+      return null;
+    }
+  })
+  .filter((host): host is string => Boolean(host));
 
 const trustedOrigins = Array.from(
   new Set(
@@ -37,6 +47,7 @@ export const auth = betterAuth({
   appName: "Lift Prog",
   baseURL: {
     allowedHosts: [
+      ...configuredAuthHosts,
       "localhost:*",
       "127.0.0.1:*",
       "lift.makon.dev",
