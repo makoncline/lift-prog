@@ -5,12 +5,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from "react-native-safe-area-context";
 
 import {
   authClient,
@@ -332,14 +335,16 @@ function AppContent() {
 
 export default function App() {
   return (
-    <MobileErrorBoundary
-      scope="mobile-root"
-      screen="app"
-      title="app crashed"
-      getHeaders={getBetterAuthCookieHeaders}
-    >
-      <AppContent />
-    </MobileErrorBoundary>
+    <SafeAreaProvider>
+      <MobileErrorBoundary
+        scope="mobile-root"
+        screen="app"
+        title="app crashed"
+        getHeaders={getBetterAuthCookieHeaders}
+      >
+        <AppContent />
+      </MobileErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 

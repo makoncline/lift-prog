@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import * as SecureStore from "expo-secure-store";
 import {
   createWorkoutApiClient,
@@ -35,13 +36,18 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
+  type StyleProp,
   Text,
   TextInput,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from "react-native";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 import { mobileWorkoutApiBaseUrl } from "../lib/config";
 import {
@@ -118,7 +124,10 @@ type AppScreen =
 type SetEditTarget = {
   exerciseIndex: number;
   setId: string;
+  field?: SetEditField;
 };
+
+type SetEditField = "weight" | "reps";
 
 type NoteEditTarget =
   | { kind: "workout" }
@@ -441,7 +450,9 @@ async function clearActiveWorkoutDraft() {
   }
 }
 
-function parseStoredWorkoutDraft(raw: string | null): StoredWorkoutDraft | null {
+function parseStoredWorkoutDraft(
+  raw: string | null,
+): StoredWorkoutDraft | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<StoredWorkoutDraft>;
@@ -671,7 +682,10 @@ function createLocalWorkoutApiClient(
       };
     },
     async listExercises() {
-      const byName = new Map<string, RecentWorkout["exerciseSummaries"][number]>();
+      const byName = new Map<
+        string,
+        RecentWorkout["exerciseSummaries"][number]
+      >();
       for (const workout of recent) {
         for (const summary of workout.exerciseSummaries) {
           const { exerciseName } = splitExerciseSummary(summary);
@@ -702,9 +716,11 @@ function createLocalWorkoutApiClient(
         bodyWeightLb: input.bodyWeightLb,
         exerciseSummaries: input.exercises.map(
           (exercise) =>
-            `${exercise.name} - ${summarizeCompletedExerciseSetGroup(
-              exercise.sets.filter((set) => set.modifier !== "warmup"),
-            ) ?? ""}`,
+            `${exercise.name} - ${
+              summarizeCompletedExerciseSetGroup(
+                exercise.sets.filter((set) => set.modifier !== "warmup"),
+              ) ?? ""
+            }`,
         ),
       });
       return { success: true, workoutId: nextId };
@@ -738,9 +754,11 @@ function createLocalWorkoutApiClient(
           bodyWeightLb: input.workout.bodyWeightLb,
           exerciseSummaries: input.workout.exercises.map(
             (exercise) =>
-              `${exercise.name} - ${summarizeCompletedExerciseSetGroup(
-                exercise.sets.filter((set) => set.modifier !== "warmup"),
-              ) ?? ""}`,
+              `${exercise.name} - ${
+                summarizeCompletedExerciseSetGroup(
+                  exercise.sets.filter((set) => set.modifier !== "warmup"),
+                ) ?? ""
+              }`,
           ),
         };
       }
@@ -912,6 +930,7 @@ function HomeScreen({
   onStartPrepared: (prepared: PreparedWorkout) => void;
   onEditWorkout: (workoutId: number, details: WorkoutDetails) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [workouts, setWorkouts] = useState<RecentWorkout[]>([]);
   const [limit, setLimit] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -1053,7 +1072,7 @@ function HomeScreen({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <View style={styles.topActions}>
         <Pressable
           accessibilityLabel="Start new workout"
@@ -1077,7 +1096,11 @@ function HomeScreen({
         ) : null}
       </View>
       <ScrollView
-        contentContainerStyle={styles.page}
+        contentContainerStyle={[
+          styles.page,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
+        contentInsetAdjustmentBehavior="automatic"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1143,15 +1166,21 @@ function ActiveWorkoutDraftSheet({
   onDismiss: () => void;
   onDiscard: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   if (!draft) return null;
 
   const exerciseCount = draft.workout.exercises.length;
   const savedAt = new Date(draft.savedAt);
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
-      <View style={styles.modalShade}>
-        <SafeAreaView style={styles.recoverySheetSafeArea}>
-          <View style={styles.recoverySheet}>
+      <DismissibleModalShade onDismiss={onDismiss}>
+        <View style={styles.recoverySheetSafeArea}>
+          <View
+            style={[
+              styles.recoverySheet,
+              { paddingBottom: Math.max(12, insets.bottom + 8) },
+            ]}
+          >
             <Text style={styles.subtleTitle}>workout in progress</Text>
             <Text style={styles.historyTitle}>{draft.workout.name}</Text>
             <Text style={styles.metaText}>
@@ -1192,9 +1221,30 @@ function ActiveWorkoutDraftSheet({
               </Pressable>
             </View>
           </View>
-        </SafeAreaView>
-      </View>
+        </View>
+      </DismissibleModalShade>
     </Modal>
+  );
+}
+
+function DismissibleModalShade({
+  children,
+  onDismiss,
+  style = styles.modalShade,
+}: {
+  children: React.ReactNode;
+  onDismiss: () => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable style={style} onPress={onDismiss}>
+      <Pressable
+        style={styles.dismissibleModalContent}
+        onPress={(event) => event.stopPropagation()}
+      >
+        {children}
+      </Pressable>
+    </Pressable>
   );
 }
 
@@ -1320,6 +1370,7 @@ function WorkoutScreen({
   contextLabel?: string;
   onBack: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const isEditingPastWorkout = workoutId != null;
   const [session, setSession] = useState(() =>
     createWorkoutSession(
@@ -1334,7 +1385,8 @@ function WorkoutScreen({
     ),
   );
   const workout = session.present;
-  const canUndo = session.past.length > 0 || Boolean(session.pendingHistoryBase);
+  const canUndo =
+    session.past.length > 0 || Boolean(session.pendingHistoryBase);
   const canRedo = session.future.length > 0;
   const [completedAt, setCompletedAt] = useState<Date | null>(
     initialCompletedAt ?? null,
@@ -1695,7 +1747,7 @@ function WorkoutScreen({
             saving: false,
             message: healthResult.saved
               ? "health workout saved"
-              : healthResult.message ?? "health workout was not saved",
+              : (healthResult.message ?? "health workout was not saved"),
           }));
         } catch (healthError) {
           setHealthWorkout((current) => ({
@@ -1780,12 +1832,17 @@ function WorkoutScreen({
     ]);
   };
 
-  const startRestTimer = async () => {
+  const stopRestTimer = () => {
     if (restTimerTimeoutRef.current) {
       clearTimeout(restTimerTimeoutRef.current);
       restTimerTimeoutRef.current = null;
     }
     setRestTimerEndsAt(null);
+    setTimerStatus(null);
+  };
+
+  const startRestTimer = async () => {
+    stopRestTimer();
 
     setTimerStatus("starting 3m timer");
     try {
@@ -1813,6 +1870,15 @@ function WorkoutScreen({
     }
   };
 
+  const toggleRestTimer = async () => {
+    if (restTimerEndsAt != null || restTimerTimeoutRef.current) {
+      stopRestTimer();
+      return;
+    }
+
+    await startRestTimer();
+  };
+
   const restTimerRemainingSeconds =
     restTimerEndsAt == null ? null : Math.ceil((restTimerEndsAt - now) / 1000);
   const restTimerCountdown =
@@ -1833,83 +1899,100 @@ function WorkoutScreen({
         : healthWorkout.message;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <ScrollView
-        contentContainerStyle={styles.workoutPage}
+        contentContainerStyle={[
+          styles.workoutPage,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
+        contentInsetAdjustmentBehavior="automatic"
         scrollEnabled={!planDragging}
       >
         <View style={styles.topActions}>
           <Pressable
-            accessibilityLabel="Close workout"
+            accessibilityLabel={
+              restTimerCountdown
+                ? "Stop rest timer"
+                : "Start three minute rest timer"
+            }
             accessibilityRole="button"
-            style={styles.iconButton}
-            testID="workout-close"
-            onPress={closeWorkout}
-          >
-            <Icon name="close-outline" size={20} />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Undo workout edit"
-            accessibilityRole="button"
-            disabled={!canUndo}
-            style={[styles.iconButton, !canUndo ? styles.iconButtonDisabled : null]}
-            testID="workout-undo"
-            onPress={() => setSession(undoWorkoutSession)}
-          >
-            <Icon
-              name="arrow-undo-outline"
-              size={20}
-              color={canUndo ? palette.muted : palette.disabled}
-            />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Redo workout edit"
-            accessibilityRole="button"
-            disabled={!canRedo}
-            style={[styles.iconButton, !canRedo ? styles.iconButtonDisabled : null]}
-            testID="workout-redo"
-            onPress={() => setSession(redoWorkoutSession)}
-          >
-            <Icon
-              name="arrow-redo-outline"
-              size={20}
-              color={canRedo ? palette.muted : palette.disabled}
-            />
-          </Pressable>
-          {isEditingPastWorkout ? (
-            <Pressable
-              accessibilityLabel="Delete workout"
-              accessibilityRole="button"
-              style={styles.iconButton}
-              testID="workout-delete"
-              onPress={deleteWorkout}
-            >
-              <Icon name="trash-outline" size={20} color={palette.muted} />
-            </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityLabel="Start three minute rest timer"
-            accessibilityRole="button"
-            style={[styles.timerButton, styles.timerButtonLeading]}
+            style={styles.timerButton}
             testID="workout-rest-timer"
-            onPress={() => void startRestTimer()}
+            onPress={() => void toggleRestTimer()}
           >
             <Text style={styles.timerButtonText}>
               {restTimerCountdown ?? "3m"}
             </Text>
           </Pressable>
-          <Pressable
-            accessibilityLabel={
-              isEditingPastWorkout ? "Save workout changes" : "Finish workout"
-            }
-            accessibilityRole="button"
-            style={styles.iconButton}
-            testID="workout-save"
-            onPress={handleFinishPress}
-            disabled={saving}
-          >
-            <Icon name="save-outline" size={20} color={palette.ink} />
-          </Pressable>
+
+          <View style={styles.topActionButtons}>
+            <Pressable
+              accessibilityLabel="Close workout"
+              accessibilityRole="button"
+              style={styles.iconButton}
+              testID="workout-close"
+              onPress={closeWorkout}
+            >
+              <Icon name="close-outline" size={20} />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Undo workout edit"
+              accessibilityRole="button"
+              disabled={!canUndo}
+              style={[
+                styles.iconButton,
+                !canUndo ? styles.iconButtonDisabled : null,
+              ]}
+              testID="workout-undo"
+              onPress={() => setSession(undoWorkoutSession)}
+            >
+              <Icon
+                name="arrow-undo-outline"
+                size={20}
+                color={canUndo ? palette.muted : palette.disabled}
+              />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Redo workout edit"
+              accessibilityRole="button"
+              disabled={!canRedo}
+              style={[
+                styles.iconButton,
+                !canRedo ? styles.iconButtonDisabled : null,
+              ]}
+              testID="workout-redo"
+              onPress={() => setSession(redoWorkoutSession)}
+            >
+              <Icon
+                name="arrow-redo-outline"
+                size={20}
+                color={canRedo ? palette.muted : palette.disabled}
+              />
+            </Pressable>
+            {isEditingPastWorkout ? (
+              <Pressable
+                accessibilityLabel="Delete workout"
+                accessibilityRole="button"
+                style={styles.iconButton}
+                testID="workout-delete"
+                onPress={deleteWorkout}
+              >
+                <Icon name="trash-outline" size={20} color={palette.muted} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              accessibilityLabel={
+                isEditingPastWorkout ? "Save workout changes" : "Finish workout"
+              }
+              accessibilityRole="button"
+              style={styles.iconButton}
+              testID="workout-save"
+              onPress={handleFinishPress}
+              disabled={saving}
+            >
+              <Icon name="save-outline" size={20} color={palette.ink} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.titleRow}>
@@ -1936,7 +2019,8 @@ function WorkoutScreen({
         ) : null}
         <View style={styles.timeInlineRow}>
           <Text style={styles.metaText}>
-            {formatRelativeDate(new Date(workout.startTime), new Date(now))} .{" "}
+            {formatRelativeDate(new Date(workout.startTime), new Date(now))}{" "}
+            .{" "}
           </Text>
           <Pressable
             accessibilityLabel="Edit start date"
@@ -2049,7 +2133,9 @@ function WorkoutScreen({
             exercise={exercise}
             exerciseIndex={exerciseIndex}
             onDispatch={dispatch}
-            onOpenSetEditor={(setId) => setSetEditor({ exerciseIndex, setId })}
+            onOpenSetEditor={(setId, field) =>
+              setSetEditor({ exerciseIndex, setId, field })
+            }
             onOpenNoteEditor={setNoteEditor}
             onDeleteExercise={deleteExercise}
           />
@@ -2430,7 +2516,7 @@ function ExerciseSection({
   exercise: WorkoutExercise;
   exerciseIndex: number;
   onDispatch: (action: Action) => void;
-  onOpenSetEditor: (setId: string) => void;
+  onOpenSetEditor: (setId: string, field?: SetEditField) => void;
   onOpenNoteEditor: (target: NoteEditTarget) => void;
   onDeleteExercise: (exerciseIndex: number) => void;
 }) {
@@ -2538,6 +2624,7 @@ function ExerciseSection({
           style={styles.iconButtonTiny}
           testID={`exercise-add-set-${exerciseIndex}`}
           onPress={() => {
+            const nextSetIndex = exercise.sets.length;
             const nextSet: WorkoutSet = {
               clientId: makeClientId(),
               weight: null,
@@ -2555,7 +2642,7 @@ function ExerciseSection({
               exerciseIndex,
               sets: [...exercise.sets, nextSet],
             });
-            onOpenSetEditor(nextSet.clientId!);
+            onOpenSetEditor(makeSetTargetId(nextSetIndex), "weight");
           }}
         >
           <Icon name="add-outline" size={24} color={palette.muted} />
@@ -2948,6 +3035,7 @@ function SetGroup({
   exercise,
   sets,
   selectedSetId,
+  selectedField = null,
   readonly = false,
   onOpenSet,
   onToggleRest,
@@ -2956,8 +3044,9 @@ function SetGroup({
   exercise: WorkoutExercise;
   sets: IndexedWorkoutSet[];
   selectedSetId: string | null;
+  selectedField?: SetEditField | null;
   readonly?: boolean;
-  onOpenSet?: (setId: string) => void;
+  onOpenSet?: (setId: string, field?: SetEditField) => void;
   onToggleRest?: (setIndex: number) => void;
 }) {
   const noteEntries = sets
@@ -2965,7 +3054,7 @@ function SetGroup({
     .map(({ set, index }, noteIndex) => ({
       letter: String.fromCharCode(97 + noteIndex),
       note: set.notes!.trim(),
-      setId: set.clientId ?? String(index),
+      setId: makeSetTargetId(index),
     }));
   const noteBySetId = new Map(
     noteEntries.map((entry) => [entry.setId, entry.letter]),
@@ -2977,14 +3066,11 @@ function SetGroup({
       <View style={styles.setLine}>
         {sets.length === 0 ? <Text style={styles.metaText}>none</Text> : null}
         {sets.map((indexedSet, index) => {
-          const setId = indexedSet.set.clientId ?? String(indexedSet.index);
-          const label = formatSetLineToken(
-            exercise,
-            indexedSet,
-            sets[index - 1],
-          );
+          const setId = makeSetTargetId(indexedSet.index);
+          const token = getSetLineToken(exercise, indexedSet, sets[index - 1]);
           const fullLabel = formatSetInline(exercise, indexedSet) || "set";
           const setAccessibilityName = setLabel(exercise, indexedSet.index);
+          const noteLetter = noteBySetId.get(setId);
           return (
             <React.Fragment key={setId}>
               {index > 0 ? (
@@ -2993,6 +3079,7 @@ function SetGroup({
                   accessibilityRole="button"
                   disabled={readonly || !onToggleRest}
                   hitSlop={10}
+                  style={styles.separatorChip}
                   onPress={() => onToggleRest?.(indexedSet.index)}
                 >
                   <Text style={styles.separatorText}>
@@ -3000,24 +3087,40 @@ function SetGroup({
                   </Text>
                 </Pressable>
               ) : null}
-              <Pressable
-                accessibilityLabel={`Edit ${setAccessibilityName} ${fullLabel}`}
-                accessibilityRole="button"
-                disabled={readonly || !onOpenSet}
-                hitSlop={10}
-                onPress={() => onOpenSet?.(setId)}
-                style={[
-                  styles.inlineSetChip,
-                  selectedSetId === setId ? styles.inlineSetChipActive : null,
-                ]}
-              >
-                <Text style={styles.inlineSetText}>
-                  {label || "set"}
-                  {noteBySetId.get(setId) ? (
-                    <Text style={styles.supText}>{noteBySetId.get(setId)}</Text>
-                  ) : null}
-                </Text>
-              </Pressable>
+              {indexedSet.set.modifier === "warmup" ? (
+                <Text style={styles.warmupInlinePrefix}>w</Text>
+              ) : null}
+              {token.kind === "reps-only" ? (
+                <SetValueChip
+                  accessibilityLabel={`Edit ${setAccessibilityName} reps ${fullLabel}`}
+                  active={selectedSetId === setId && selectedField === "reps"}
+                  disabled={readonly || !onOpenSet}
+                  label={token.repsLabel}
+                  noteLetter={noteLetter}
+                  onPress={() => onOpenSet?.(setId, "reps")}
+                />
+              ) : (
+                <>
+                  <SetValueChip
+                    accessibilityLabel={`Edit ${setAccessibilityName} weight ${fullLabel}`}
+                    active={
+                      selectedSetId === setId && selectedField === "weight"
+                    }
+                    disabled={readonly || !onOpenSet}
+                    label={token.weightLabel}
+                    onPress={() => onOpenSet?.(setId, "weight")}
+                  />
+                  <Text style={styles.inlineSetText}>x</Text>
+                  <SetValueChip
+                    accessibilityLabel={`Edit ${setAccessibilityName} reps ${fullLabel}`}
+                    active={selectedSetId === setId && selectedField === "reps"}
+                    disabled={readonly || !onOpenSet}
+                    label={token.repsLabel}
+                    noteLetter={noteLetter}
+                    onPress={() => onOpenSet?.(setId, "reps")}
+                  />
+                </>
+              )}
             </React.Fragment>
           );
         })}
@@ -3036,19 +3139,63 @@ function SetGroup({
   );
 }
 
-function formatSetLineToken(
+function SetValueChip({
+  accessibilityLabel,
+  active,
+  disabled,
+  label,
+  noteLetter,
+  onPress,
+}: {
+  accessibilityLabel: string;
+  active: boolean;
+  disabled: boolean;
+  label: string;
+  noteLetter?: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      disabled={disabled}
+      hitSlop={10}
+      onPress={onPress}
+      style={[styles.inlineSetChip, active ? styles.inlineSetChipActive : null]}
+    >
+      <Text style={styles.inlineSetText}>
+        {label}
+        {noteLetter ? <Text style={styles.supText}>{noteLetter}</Text> : null}
+      </Text>
+    </Pressable>
+  );
+}
+
+function getSetLineToken(
   exercise: WorkoutExercise,
   indexedSet: IndexedWorkoutSet,
   previousIndexedSet?: IndexedWorkoutSet,
-) {
+):
+  | { kind: "full"; weightLabel: string; repsLabel: string }
+  | {
+      kind: "reps-only";
+      repsLabel: string;
+    } {
   const current = getSetDisplayValues(
     exercise,
     indexedSet.set,
     indexedSet.index,
   );
   const repsLabel =
-    current.reps == null ? "" : formatNumber(Number(current.reps));
-  if (!previousIndexedSet) return formatSetInline(exercise, indexedSet);
+    current.reps == null ? "-" : formatNumber(Number(current.reps));
+  const currentWeightLabel = formatSetLineWeightLabel(
+    current.weight,
+    current.weightModifier,
+    indexedSet.set,
+  );
+  if (!previousIndexedSet) {
+    return { kind: "full", weightLabel: currentWeightLabel, repsLabel };
+  }
 
   const previous = getSetDisplayValues(
     exercise,
@@ -3059,8 +3206,24 @@ function formatSetLineToken(
     current.weight === previous.weight &&
     current.weightModifier === previous.weightModifier;
 
-  if (sameWeight && repsLabel) return repsLabel;
-  return formatSetInline(exercise, indexedSet);
+  if (sameWeight && repsLabel && !isExplicitNullWeight(indexedSet.set)) {
+    return { kind: "reps-only", repsLabel };
+  }
+  return { kind: "full", weightLabel: currentWeightLabel, repsLabel };
+}
+
+function formatSetLineWeightLabel(
+  weight: number | null,
+  weightModifier: "bodyweight" | undefined,
+  set: WorkoutSet,
+) {
+  const label = formatWeightLabel(weight, weightModifier);
+  if (label) return label;
+  return isExplicitNullWeight(set) ? "-lb" : "-lb";
+}
+
+function isExplicitNullWeight(set: WorkoutSet) {
+  return set.weight === null && set.weightExplicit;
 }
 
 function SetEditorModal({
@@ -3076,6 +3239,7 @@ function SetEditorModal({
   onRetarget: (target: SetEditTarget | null) => void;
   onDispatch: (action: Action, options?: WorkoutDispatchOptions) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [field, setField] = useState<"weight" | "reps">("weight");
   const [entry, setEntry] = useState("");
   const [firstPress, setFirstPress] = useState(true);
@@ -3088,6 +3252,11 @@ function SetEditorModal({
   const setIndex =
     exercise && target ? findSetIndex(exercise, target.setId) : null;
   const set = setIndex == null ? undefined : exercise?.sets[setIndex];
+
+  useEffect(() => {
+    if (!target?.field) return;
+    setField(target.field);
+  }, [target?.exerciseIndex, target?.setId, target?.field]);
 
   useEffect(() => {
     if (!exercise || setIndex == null || !set) return;
@@ -3204,7 +3373,8 @@ function SetEditorModal({
     });
     onRetarget({
       exerciseIndex: target.exerciseIndex,
-      setId: nextSet.clientId!,
+      setId: makeSetTargetId(setIndex + 1),
+      field: "reps",
     });
     setField("reps");
   };
@@ -3229,10 +3399,13 @@ function SetEditorModal({
               exerciseIndex: target.exerciseIndex,
               setIndex,
             });
-            if (nextSet?.clientId) {
+            if (nextSet) {
               onRetarget({
                 exerciseIndex: target.exerciseIndex,
-                setId: nextSet.clientId,
+                setId: makeSetTargetId(
+                  Math.min(setIndex, remainingSets.length - 1),
+                ),
+                field,
               });
             } else {
               onClose();
@@ -3326,275 +3499,317 @@ function SetEditorModal({
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalShade}>
-        <SafeAreaView style={styles.keyboardSafeArea}>
-          <View style={styles.keyboardSheet}>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <DismissibleModalShade onDismiss={onClose}>
+        <View style={styles.keyboardDock}>
+          <View
+            style={[
+              styles.keyboardSheet,
+              { paddingBottom: Math.max(6, insets.bottom + 6) },
+            ]}
+          >
             <View style={styles.keyboardHeader}>
-            <View style={styles.flexColumn}>
-              <Text style={styles.metaText}>{exercise.name}</Text>
-              {splitSets(exercise).warmups.length > 0 ? (
+              <View style={styles.flexColumn}>
+                <Text style={styles.metaText}>{exercise.name}</Text>
+                {splitSets(exercise).warmups.length > 0 ? (
+                  <SetGroup
+                    exercise={exercise}
+                    sets={splitSets(exercise).warmups}
+                    selectedSetId={target.setId}
+                    selectedField={field}
+                    onOpenSet={(setId, nextField) =>
+                      onRetarget({
+                        exerciseIndex: target.exerciseIndex,
+                        setId,
+                        field: nextField,
+                      })
+                    }
+                  />
+                ) : null}
                 <SetGroup
                   exercise={exercise}
-                  sets={splitSets(exercise).warmups}
+                  sets={splitSets(exercise).working}
                   selectedSetId={target.setId}
-                  onOpenSet={(setId) =>
-                    onRetarget({ exerciseIndex: target.exerciseIndex, setId })
+                  selectedField={field}
+                  onOpenSet={(setId, nextField) =>
+                    onRetarget({
+                      exerciseIndex: target.exerciseIndex,
+                      setId,
+                      field: nextField,
+                    })
                   }
                 />
-              ) : null}
-              <SetGroup
-                exercise={exercise}
-                sets={splitSets(exercise).working}
-                selectedSetId={target.setId}
-                onOpenSet={(setId) =>
-                  onRetarget({ exerciseIndex: target.exerciseIndex, setId })
-                }
-              />
-            </View>
-            <Pressable
-              accessibilityLabel="Close set keyboard"
-              accessibilityRole="button"
-              style={styles.iconButtonSmall}
-              testID="set-keyboard-close"
-              onPress={onClose}
-            >
-              <Icon name="close-outline" size={24} />
-            </Pressable>
+              </View>
+              <Pressable
+                accessibilityLabel="Close set keyboard"
+                accessibilityRole="button"
+                style={styles.iconButtonSmall}
+                testID="set-keyboard-close"
+                onPress={onClose}
+              >
+                <Icon name="close-outline" size={24} />
+              </Pressable>
             </View>
 
             {noteEditing ? (
               <>
-              <Text style={styles.subtleTitle}>
-                {setLabel(exercise, setIndex)} note
-              </Text>
-              <TextInput
-                accessibilityLabel={`${setLabel(exercise, setIndex)} note`}
-                autoFocus
-                multiline
-                style={styles.noteInput}
-                testID="set-note-input"
-                value={noteValue}
-                onChangeText={setNoteValue}
-              />
-              <View style={styles.noteActions}>
-                <Pressable
-                  accessibilityLabel={`Delete ${setLabel(exercise, setIndex)} note`}
-                  accessibilityRole="button"
-                  style={styles.iconButton}
-                  testID="set-note-delete"
-                  onPress={deleteSetNote}
-                >
-                  <Icon name="trash-outline" size={24} />
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Save ${setLabel(exercise, setIndex)} note`}
-                  accessibilityRole="button"
-                  style={[styles.textButton, styles.primaryWideButton]}
-                  testID="set-note-done"
-                  onPress={() => saveSetNote(noteValue)}
-                >
-                  <Text style={styles.primaryWideButtonText}>done</Text>
-                </Pressable>
-              </View>
+                <Text style={styles.subtleTitle}>
+                  {setLabel(exercise, setIndex)} note
+                </Text>
+                <TextInput
+                  accessibilityLabel={`${setLabel(exercise, setIndex)} note`}
+                  autoFocus
+                  multiline
+                  style={styles.noteInput}
+                  testID="set-note-input"
+                  value={noteValue}
+                  onChangeText={setNoteValue}
+                />
+                <View style={styles.noteActions}>
+                  <Pressable
+                    accessibilityLabel={`Delete ${setLabel(exercise, setIndex)} note`}
+                    accessibilityRole="button"
+                    style={styles.iconButton}
+                    testID="set-note-delete"
+                    onPress={deleteSetNote}
+                  >
+                    <Icon name="trash-outline" size={24} />
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Save ${setLabel(exercise, setIndex)} note`}
+                    accessibilityRole="button"
+                    style={[styles.textButton, styles.sheetActionFill]}
+                    testID="set-note-done"
+                    onPress={() => saveSetNote(noteValue)}
+                  >
+                    <Text style={styles.textButtonText}>done</Text>
+                  </Pressable>
+                </View>
               </>
             ) : (
               <>
-              <Text style={styles.subtleTitle}>
-                {setLabel(exercise, setIndex)}
-              </Text>
-              <View style={styles.editorValueRow}>
-                <Pressable
-                  accessibilityLabel={`Toggle ${setLabel(exercise, setIndex)} warm-up`}
-                  accessibilityRole="button"
-                  style={[
-                    styles.keySmall,
-                    set.modifier === "warmup" ? styles.keyActive : null,
-                  ]}
-                  testID="set-keyboard-warmup-toggle"
-                  onPress={() =>
-                    onDispatch({
-                      type: "TOGGLE_WARMUP",
-                      exerciseIndex: target.exerciseIndex,
-                      setIndex,
-                    })
-                  }
-                >
-                  <Text style={styles.keyText}>w</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} weight`}
-                  accessibilityRole="button"
-                  style={[
-                    styles.valueChip,
-                    field === "weight" ? styles.inlineSetChipActive : null,
-                  ]}
-                  testID="set-keyboard-weight"
-                  onPress={() => selectField("weight")}
-                >
-                  <Text style={styles.bigValueText}>
-                    {formatKeyboardWeightLabel(
-                      values.weight,
-                      values.weightModifier,
-                    )}
-                  </Text>
-                </Pressable>
-                <Text style={styles.bigValueText}>x</Text>
-                <Pressable
-                  accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} reps`}
-                  accessibilityRole="button"
-                  style={[
-                    styles.valueChip,
-                    field === "reps" ? styles.inlineSetChipActive : null,
-                  ]}
-                  testID="set-keyboard-reps"
-                  onPress={() => selectField("reps")}
-                >
-                  <Text style={styles.bigValueText}>
-                    {values.reps == null ? "-" : formatNumber(values.reps)}
-                  </Text>
-                </Pressable>
-                <View style={styles.flexSpacer} />
-                <Pressable
-                  accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} note`}
-                  accessibilityRole="button"
-                  style={styles.iconButtonSmall}
-                  testID="set-keyboard-note"
-                  onPress={openSetNote}
-                >
-                  <Icon name="pencil-outline" size={20} />
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Delete ${setLabel(exercise, setIndex)}`}
-                  accessibilityRole="button"
-                  style={styles.iconButtonSmall}
-                  testID="set-keyboard-delete"
-                  onPress={deleteSet}
-                >
-                  <Icon name="trash-outline" size={20} />
-                </Pressable>
-              </View>
-
-              <View style={styles.keypad}>
-                <View style={styles.keypadRow}>
-                  <KeypadButton onPress={() => handleKey("1")}>1</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("2")}>2</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("3")}>3</KeypadButton>
-                  {field === "weight" ? (
-                    <View style={styles.keypadSplitCell}>
-                      <KeypadButton
-                        accessibilityLabel="Open increase weight helper"
-                        icon="trending-up-outline"
-                        onPress={() => setHelperMode("increase")}
-                      />
-                      <KeypadButton
-                        accessibilityLabel="Open plate calculator"
-                        icon="barbell-outline"
-                        onPress={() => setHelperMode("plates")}
-                      />
-                    </View>
-                  ) : (
-                    <KeypadButton
-                      accessibilityLabel="Close set keyboard"
-                      onPress={onClose}
-                    >
-                      <View style={styles.keyIconPair}>
-                        <Icon
-                          name="keypad-outline"
-                          size={21}
-                          color={palette.ink}
-                        />
-                        <Icon
-                          name="chevron-down-circle-outline"
-                          size={16}
-                          color={palette.ink}
-                        />
-                      </View>
-                    </KeypadButton>
-                  )}
-                </View>
-                <View style={styles.keypadRow}>
-                  <KeypadButton onPress={() => handleKey("4")}>4</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("5")}>5</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("6")}>6</KeypadButton>
-                  <View style={styles.keypadSplitCell}>
-                    <KeypadButton onPress={() => stepValue(-1)}>-</KeypadButton>
-                    <KeypadButton onPress={() => stepValue(1)}>+</KeypadButton>
-                  </View>
-                </View>
-                <View style={styles.keypadRow}>
-                  <KeypadButton onPress={() => handleKey("7")}>7</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("8")}>8</KeypadButton>
-                  <KeypadButton onPress={() => handleKey("9")}>9</KeypadButton>
-                  {field === "weight" ? (
-                    <View style={styles.keypadSplitCell}>
-                      <KeypadButton
-                        accessibilityLabel="Toggle body weight"
-                        active={set.weightModifier === "bodyweight"}
-                        icon="person-outline"
-                        onPress={() => {
-                          onDispatch({
-                            type: "FOCUS_FIELD",
-                            exerciseIndex: target.exerciseIndex,
-                            setIndex,
-                            field: "weight",
-                          });
-                          onDispatch({ type: "TOGGLE_BODYWEIGHT" });
-                          setField("weight");
-                        }}
-                      />
-                      <KeypadButton
-                        accessibilityLabel="Toggle body weight sign"
-                        disabled={set.weightModifier !== "bodyweight"}
-                        onPress={toggleSign}
-                      >
-                        +/-
-                      </KeypadButton>
-                    </View>
-                  ) : (
-                    <KeypadButton
-                      accessibilityLabel="Add short-rest reps"
-                      onPress={addShortRestSet}
-                    >
-                      <View style={styles.keyIconPair}>
-                        <Icon
-                          name="timer-outline"
-                          size={20}
-                          color={palette.ink}
-                        />
-                        <Icon
-                          name="add-outline"
-                          size={15}
-                          color={palette.ink}
-                        />
-                      </View>
-                    </KeypadButton>
-                  )}
-                </View>
-                <View style={styles.keypadRow}>
-                  {field === "weight" ? (
-                    <KeypadButton onPress={() => handleKey(".")}>
-                      .
-                    </KeypadButton>
-                  ) : (
-                    <View style={styles.keyBlank} />
-                  )}
-                  <KeypadButton onPress={() => handleKey("0")}>0</KeypadButton>
-                  <KeypadButton icon="backspace-outline" onPress={backspace} />
-                  <KeypadButton
-                    primary
+                <Text style={styles.subtleTitle}>
+                  {setLabel(exercise, setIndex)}
+                </Text>
+                <View style={styles.editorValueRow}>
+                  <Pressable
+                    accessibilityLabel={`Toggle ${setLabel(exercise, setIndex)} warm-up`}
+                    accessibilityRole="button"
+                    style={[
+                      styles.keySmall,
+                      set.modifier === "warmup" ? styles.keyActive : null,
+                    ]}
+                    testID="set-keyboard-warmup-toggle"
                     onPress={() =>
-                      selectField(field === "weight" ? "reps" : "weight")
+                      onDispatch({
+                        type: "TOGGLE_WARMUP",
+                        exerciseIndex: target.exerciseIndex,
+                        setIndex,
+                      })
                     }
                   >
-                    Next
-                  </KeypadButton>
+                    <Text style={styles.keyText}>w</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} weight`}
+                    accessibilityRole="button"
+                    style={[
+                      styles.valueChip,
+                      field === "weight" ? styles.inlineSetChipActive : null,
+                    ]}
+                    testID="set-keyboard-weight"
+                    onPress={() => selectField("weight")}
+                  >
+                    <Text style={styles.bigValueText}>
+                      {formatKeyboardWeightLabel(
+                        values.weight,
+                        values.weightModifier,
+                      )}
+                    </Text>
+                  </Pressable>
+                  <Text style={styles.bigValueText}>x</Text>
+                  <Pressable
+                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} reps`}
+                    accessibilityRole="button"
+                    style={[
+                      styles.valueChip,
+                      field === "reps" ? styles.inlineSetChipActive : null,
+                    ]}
+                    testID="set-keyboard-reps"
+                    onPress={() => selectField("reps")}
+                  >
+                    <Text style={styles.bigValueText}>
+                      {values.reps == null ? "-" : formatNumber(values.reps)}
+                    </Text>
+                  </Pressable>
+                  <View style={styles.flexSpacer} />
+                  <Pressable
+                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} note`}
+                    accessibilityRole="button"
+                    style={styles.iconButtonSmall}
+                    testID="set-keyboard-note"
+                    onPress={openSetNote}
+                  >
+                    <Icon name="pencil-outline" size={20} />
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Delete ${setLabel(exercise, setIndex)}`}
+                    accessibilityRole="button"
+                    style={styles.iconButtonSmall}
+                    testID="set-keyboard-delete"
+                    onPress={deleteSet}
+                  >
+                    <Icon name="trash-outline" size={20} />
+                  </Pressable>
                 </View>
-              </View>
+
+                <View style={styles.keypad}>
+                  <View style={styles.keypadRow}>
+                    <KeypadButton onPress={() => handleKey("1")}>
+                      1
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("2")}>
+                      2
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("3")}>
+                      3
+                    </KeypadButton>
+                    {field === "weight" ? (
+                      <View style={styles.keypadSplitCell}>
+                        <KeypadButton
+                          accessibilityLabel="Open increase weight helper"
+                          icon="trending-up-outline"
+                          onPress={() => setHelperMode("increase")}
+                        />
+                        <KeypadButton
+                          accessibilityLabel="Open plate calculator"
+                          icon="barbell-outline"
+                          onPress={() => setHelperMode("plates")}
+                        />
+                      </View>
+                    ) : (
+                      <KeypadButton
+                        accessibilityLabel="Close set keyboard"
+                        onPress={onClose}
+                      >
+                        <View style={styles.keyIconPair}>
+                          <Icon
+                            name="keypad-outline"
+                            size={21}
+                            color={palette.ink}
+                          />
+                          <Icon
+                            name="chevron-down-circle-outline"
+                            size={16}
+                            color={palette.ink}
+                          />
+                        </View>
+                      </KeypadButton>
+                    )}
+                  </View>
+                  <View style={styles.keypadRow}>
+                    <KeypadButton onPress={() => handleKey("4")}>
+                      4
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("5")}>
+                      5
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("6")}>
+                      6
+                    </KeypadButton>
+                    <View style={styles.keypadSplitCell}>
+                      <KeypadButton onPress={() => stepValue(-1)}>
+                        -
+                      </KeypadButton>
+                      <KeypadButton onPress={() => stepValue(1)}>
+                        +
+                      </KeypadButton>
+                    </View>
+                  </View>
+                  <View style={styles.keypadRow}>
+                    <KeypadButton onPress={() => handleKey("7")}>
+                      7
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("8")}>
+                      8
+                    </KeypadButton>
+                    <KeypadButton onPress={() => handleKey("9")}>
+                      9
+                    </KeypadButton>
+                    {field === "weight" ? (
+                      <View style={styles.keypadSplitCell}>
+                        <KeypadButton
+                          accessibilityLabel="Toggle body weight"
+                          active={set.weightModifier === "bodyweight"}
+                          icon="person-outline"
+                          onPress={() => {
+                            onDispatch({
+                              type: "FOCUS_FIELD",
+                              exerciseIndex: target.exerciseIndex,
+                              setIndex,
+                              field: "weight",
+                            });
+                            onDispatch({ type: "TOGGLE_BODYWEIGHT" });
+                            setField("weight");
+                          }}
+                        />
+                        <KeypadButton
+                          accessibilityLabel="Toggle body weight sign"
+                          disabled={set.weightModifier !== "bodyweight"}
+                          onPress={toggleSign}
+                        >
+                          +/-
+                        </KeypadButton>
+                      </View>
+                    ) : (
+                      <KeypadButton
+                        accessibilityLabel="Add short-rest reps"
+                        onPress={addShortRestSet}
+                      >
+                        <View style={styles.keyIconPair}>
+                          <Icon
+                            name="timer-outline"
+                            size={20}
+                            color={palette.ink}
+                          />
+                          <Icon
+                            name="add-outline"
+                            size={15}
+                            color={palette.ink}
+                          />
+                        </View>
+                      </KeypadButton>
+                    )}
+                  </View>
+                  <View style={styles.keypadRow}>
+                    {field === "weight" ? (
+                      <KeypadButton onPress={() => handleKey(".")}>
+                        .
+                      </KeypadButton>
+                    ) : (
+                      <View style={styles.keyBlank} />
+                    )}
+                    <KeypadButton onPress={() => handleKey("0")}>
+                      0
+                    </KeypadButton>
+                    <KeypadButton
+                      icon="backspace-outline"
+                      onPress={backspace}
+                    />
+                    <KeypadButton
+                      primary
+                      onPress={() =>
+                        selectField(field === "weight" ? "reps" : "weight")
+                      }
+                    >
+                      Next
+                    </KeypadButton>
+                  </View>
+                </View>
               </>
             )}
           </View>
-        </SafeAreaView>
+        </View>
 
         <IncreaseWeightHelperModal
           visible={helperMode === "increase"}
@@ -3612,7 +3827,7 @@ function SetEditorModal({
           onClose={() => setHelperMode(null)}
           onSettingsChange={updatePlateSettings}
         />
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -3741,7 +3956,7 @@ function IncreaseWeightHelperModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.helperShade}>
+      <DismissibleModalShade onDismiss={onClose} style={styles.helperShade}>
         <View style={styles.helperDialog}>
           <View style={styles.helperHeader}>
             <Text style={styles.helperTitle}>increase weight</Text>
@@ -3873,7 +4088,7 @@ function IncreaseWeightHelperModal({
             <Text style={styles.helperDoneFooterText}>done</Text>
           </Pressable>
         </View>
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -3937,7 +4152,7 @@ function PlateCalculatorHelperModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.helperShade}>
+      <DismissibleModalShade onDismiss={onClose} style={styles.helperShade}>
         <View style={styles.helperDialog}>
           <View style={styles.helperHeader}>
             <Text style={styles.helperTitle}>plates</Text>
@@ -4045,7 +4260,7 @@ function PlateCalculatorHelperModal({
             <Text style={styles.helperDoneFooterText}>done</Text>
           </Pressable>
         </View>
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -4292,6 +4507,7 @@ function NoteEditorModal({
   onClose: () => void;
   onSave: (target: NoteEditTarget, text: string) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [value, setValue] = useState("");
 
   useEffect(() => {
@@ -4305,74 +4521,81 @@ function NoteEditorModal({
   const hasExisting = getNoteValue(workout, target).trim().length > 0;
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalShade}>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <DismissibleModalShade onDismiss={onClose}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.noteSheet}
+          style={styles.sheetDock}
         >
-          <View style={styles.keyboardHeader}>
-            <Text style={styles.metaText}>{title}</Text>
-            <Pressable
-              accessibilityLabel="Close note editor"
-              accessibilityRole="button"
-              style={styles.iconButtonSmall}
-              testID="note-editor-close"
-              onPress={onClose}
-            >
-              <Icon name="close-outline" size={24} />
-            </Pressable>
-          </View>
-          <TextInput
-            accessibilityLabel={title}
-            value={value}
-            onChangeText={setValue}
-            multiline
-            autoFocus
-            style={styles.noteInput}
-          />
-          <View style={styles.noteActions}>
-            <Pressable
-              accessibilityLabel="Delete note"
-              accessibilityRole="button"
-              style={styles.iconButton}
-              testID="note-editor-delete"
-              onPress={() => {
-                if (hasExisting) {
-                  Alert.alert("Delete note?", title, [
-                    { text: "cancel", style: "cancel" },
-                    {
-                      text: "delete",
-                      style: "destructive",
-                      onPress: () => {
-                        onSave(target, "");
-                        onClose();
+          <View
+            style={[
+              styles.noteSheet,
+              { paddingBottom: Math.max(12, insets.bottom + 8) },
+            ]}
+          >
+            <View style={styles.keyboardHeader}>
+              <Text style={styles.metaText}>{title}</Text>
+              <Pressable
+                accessibilityLabel="Close note editor"
+                accessibilityRole="button"
+                style={styles.iconButtonSmall}
+                testID="note-editor-close"
+                onPress={onClose}
+              >
+                <Icon name="close-outline" size={24} />
+              </Pressable>
+            </View>
+            <TextInput
+              accessibilityLabel={title}
+              value={value}
+              onChangeText={setValue}
+              multiline
+              autoFocus
+              style={styles.noteInput}
+            />
+            <View style={styles.noteActions}>
+              <Pressable
+                accessibilityLabel="Delete note"
+                accessibilityRole="button"
+                style={styles.iconButton}
+                testID="note-editor-delete"
+                onPress={() => {
+                  if (hasExisting) {
+                    Alert.alert("Delete note?", title, [
+                      { text: "cancel", style: "cancel" },
+                      {
+                        text: "delete",
+                        style: "destructive",
+                        onPress: () => {
+                          onSave(target, "");
+                          onClose();
+                        },
                       },
-                    },
-                  ]);
-                } else {
-                  onSave(target, "");
+                    ]);
+                  } else {
+                    onSave(target, "");
+                    onClose();
+                  }
+                }}
+              >
+                <Icon name="trash-outline" size={24} />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Save note"
+                accessibilityRole="button"
+                style={[styles.textButton, styles.sheetActionFill]}
+                testID="note-editor-save"
+                onPress={() => {
+                  onSave(target, value);
                   onClose();
-                }
-              }}
-            >
-              <Icon name="trash-outline" size={24} />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Save note"
-              accessibilityRole="button"
-              style={[styles.textButton, styles.primaryWideButton]}
-              testID="note-editor-save"
-              onPress={() => {
-                onSave(target, value);
-                onClose();
-              }}
-            >
-              <Text style={styles.primaryWideButtonText}>done</Text>
-            </Pressable>
+                }}
+              >
+                <Text style={styles.textButtonText}>done</Text>
+              </Pressable>
+            </View>
           </View>
         </KeyboardAvoidingView>
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -4388,86 +4611,80 @@ function WorkoutStartTimeEditor({
   onClose: () => void;
   onSave: (startTime: number) => void;
 }) {
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
+  const [value, setValue] = useState(() => new Date(startTime));
   const startDate = new Date(startTime);
 
   useEffect(() => {
     if (!part) return;
-    setValue(
-      part === "start-date"
-        ? formatDateInputValue(startDate)
-        : formatTimeInputValue(startDate),
-    );
-    setError(null);
+    setValue(startDate);
   }, [part, startTime]);
 
   if (!part) return null;
 
   const label = part === "start-date" ? "start date" : "start time";
-  const placeholder = part === "start-date" ? "yyyy-mm-dd" : "hh:mm";
 
   const save = () => {
-    const nextDate =
-      part === "start-date"
-        ? applyDateInput(startDate, value)
-        : applyTimeInput(startDate, value);
-    if (!nextDate) {
-      setError(part === "start-date" ? "use yyyy-mm-dd" : "use hh:mm");
-      return;
-    }
-    onSave(nextDate.getTime());
+    onSave(value.getTime());
     onClose();
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalShade}>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <DismissibleModalShade onDismiss={onClose}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.noteSheet}
+          style={styles.sheetDock}
         >
-          <View style={styles.keyboardHeader}>
-            <Text style={styles.metaText}>{label}</Text>
-            <Pressable
-              accessibilityLabel="Close time editor"
-              accessibilityRole="button"
-              style={styles.iconButtonSmall}
-              testID="time-editor-close"
-              onPress={onClose}
-            >
-              <Icon name="close-outline" size={24} />
-            </Pressable>
-          </View>
-          <TextInput
-            accessibilityLabel={label}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-            inputMode={part === "start-date" ? "numeric" : "numeric"}
-            keyboardType="numbers-and-punctuation"
-            placeholder={placeholder}
-            placeholderTextColor={palette.muted}
-            style={styles.timeEditorInput}
-            testID={`workout-${part}-input`}
-            value={value}
-            onChangeText={(text) => {
-              setValue(text);
-              if (error) setError(null);
-            }}
-          />
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-          <Pressable
-            accessibilityLabel={`Save ${label}`}
-            accessibilityRole="button"
-            style={[styles.textButton, styles.primaryWideButton]}
-            testID="time-editor-done"
-            onPress={save}
+          <View
+            style={[
+              styles.noteSheet,
+              { paddingBottom: Math.max(12, insets.bottom + 8) },
+            ]}
           >
-            <Text style={styles.primaryWideButtonText}>done</Text>
-          </Pressable>
+            <View style={styles.keyboardHeader}>
+              <Text style={styles.metaText}>{label}</Text>
+              <View style={styles.flexSpacer} />
+              <Pressable
+                accessibilityLabel="Close time editor"
+                accessibilityRole="button"
+                style={styles.iconButtonSmall}
+                testID="time-editor-close"
+                onPress={onClose}
+              >
+                <Icon name="close-outline" size={24} />
+              </Pressable>
+            </View>
+            <DateTimePicker
+              accessibilityLabel={label}
+              display={part === "start-date" ? "inline" : "spinner"}
+              mode={part === "start-date" ? "date" : "time"}
+              style={styles.dateTimePicker}
+              testID={`workout-${part}-picker`}
+              value={value}
+              onChange={(_event, selectedDate) => {
+                if (!selectedDate) return;
+                setValue(
+                  part === "start-date"
+                    ? mergeDatePart(startDate, selectedDate)
+                    : mergeTimePart(startDate, selectedDate),
+                );
+              }}
+            />
+            <View style={styles.sheetActionsEnd}>
+              <Pressable
+                accessibilityLabel={`Save ${label}`}
+                accessibilityRole="button"
+                style={styles.textButton}
+                testID="time-editor-done"
+                onPress={save}
+              >
+                <Text style={styles.textButtonText}>done</Text>
+              </Pressable>
+            </View>
+          </View>
         </KeyboardAvoidingView>
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -4494,7 +4711,7 @@ function FinishPreviewModal({
       animationType="fade"
       onRequestClose={onBack}
     >
-      <View style={styles.modalShade}>
+      <DismissibleModalShade onDismiss={onBack}>
         <View style={styles.previewBox}>
           <Text style={styles.exerciseTitle}>{workout.name}</Text>
           <Text style={styles.metaText}>
@@ -4553,7 +4770,7 @@ function FinishPreviewModal({
             </Pressable>
           </View>
         </View>
-      </View>
+      </DismissibleModalShade>
     </Modal>
   );
 }
@@ -4578,8 +4795,22 @@ function toggleRest(
 
 function findSetIndex(exercise: WorkoutExercise | undefined, setId: string) {
   if (!exercise) return null;
+  const indexTarget = parseSetTargetId(setId);
+  if (indexTarget != null) {
+    return exercise.sets[indexTarget] ? indexTarget : null;
+  }
   const index = exercise.sets.findIndex((set) => set.clientId === setId);
   return index >= 0 ? index : null;
+}
+
+function makeSetTargetId(setIndex: number) {
+  return `index:${setIndex}`;
+}
+
+function parseSetTargetId(setId: string) {
+  if (!setId.startsWith("index:")) return null;
+  const index = Number(setId.slice("index:".length));
+  return Number.isInteger(index) && index >= 0 ? index : null;
 }
 
 function formatWorkoutStartDate(date: Date) {
@@ -4592,54 +4823,19 @@ function formatWorkoutStartDate(date: Date) {
     .toLowerCase();
 }
 
-function formatDateInputValue(date: Date) {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-function formatTimeInputValue(date: Date) {
-  return [
-    String(date.getHours()).padStart(2, "0"),
-    String(date.getMinutes()).padStart(2, "0"),
-  ].join(":");
-}
-
-function applyDateInput(startDate: Date, value: string) {
-  const match = value.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (!match) return null;
-
-  const [, yearText, monthText, dayText] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
-
+function mergeDatePart(startDate: Date, selectedDate: Date) {
   const nextDate = new Date(startDate);
-  nextDate.setFullYear(year, month - 1, day);
-  if (
-    nextDate.getFullYear() !== year ||
-    nextDate.getMonth() !== month - 1 ||
-    nextDate.getDate() !== day
-  ) {
-    return null;
-  }
+  nextDate.setFullYear(
+    selectedDate.getFullYear(),
+    selectedDate.getMonth(),
+    selectedDate.getDate(),
+  );
   return nextDate;
 }
 
-function applyTimeInput(startDate: Date, value: string) {
-  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return null;
-
-  const [, hoursText, minutesText] = match;
-  const hours = Number(hoursText);
-  const minutes = Number(minutesText);
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
-
+function mergeTimePart(startDate: Date, selectedDate: Date) {
   const nextDate = new Date(startDate);
-  nextDate.setHours(hours, minutes, 0, 0);
+  nextDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
   return nextDate;
 }
 
