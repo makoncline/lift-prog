@@ -135,7 +135,13 @@ type NoteEditTarget =
   | { kind: "exercise"; exerciseIndex: number }
   | { kind: "workout-exercise"; exerciseIndex: number }
   | { kind: "set"; exerciseIndex: number; setId: string };
-type TimeEditPart = "start-date" | "start-time";
+type TimeEditTarget =
+  | "start-date"
+  | "start-time"
+  | "end-date"
+  | "end-time"
+  | "finish-end-date"
+  | "finish-end-time";
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
@@ -1445,7 +1451,7 @@ function WorkoutScreen({
     useState(false);
   const [setEditor, setSetEditor] = useState<SetEditTarget | null>(null);
   const [noteEditor, setNoteEditor] = useState<NoteEditTarget | null>(null);
-  const [timeEditor, setTimeEditor] = useState<TimeEditPart | null>(null);
+  const [timeEditor, setTimeEditor] = useState<TimeEditTarget | null>(null);
   const [finishPreviewOpen, setFinishPreviewOpen] = useState(false);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
     requested: false,
@@ -1714,6 +1720,13 @@ function WorkoutScreen({
     dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime });
   };
 
+  const updateCompletedAt = (completedTime: number) => {
+    if (!Number.isFinite(completedTime)) return;
+    setCompletedAt(
+      new Date(Math.max(workout.startTime + 60_000, completedTime)),
+    );
+  };
+
   const handleFinishPress = () => {
     if (workout.exercises.length === 0) {
       setError("Add at least one exercise before finishing.");
@@ -1723,7 +1736,7 @@ function WorkoutScreen({
       void saveEditedWorkout();
       return;
     }
-    setCompletedAt(new Date());
+    if (!completedAt) setCompletedAt(new Date());
     setFinishPreviewOpen(true);
   };
 
@@ -2088,12 +2101,29 @@ function WorkoutScreen({
               {formatTime(new Date(workout.startTime))}
             </Text>
           </Pressable>
-          {isEditingPastWorkout && completedAt ? (
-            <Text style={styles.metaText}>
-              {" "}
-              - {formatTime(completedAt)} (
-              {formatDuration(new Date(workout.startTime), completedAt)})
-            </Text>
+          {completedAt ? (
+            <>
+              <Text style={styles.metaText}> - </Text>
+              {isEditingPastWorkout ? (
+                <Pressable
+                  accessibilityLabel="Edit end time"
+                  accessibilityRole="button"
+                  style={styles.timeTextButton}
+                  testID="workout-end-time"
+                  onPress={() => setTimeEditor("end-time")}
+                >
+                  <Text style={styles.timeTextButtonText}>
+                    {formatTime(completedAt)}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={styles.metaText}>{formatTime(completedAt)}</Text>
+              )}
+              <Text style={styles.metaText}>
+                {" "}
+                ({formatDuration(new Date(workout.startTime), completedAt)})
+              </Text>
+            </>
           ) : (
             <Text style={styles.metaText}>
               {" "}
@@ -2231,15 +2261,19 @@ function WorkoutScreen({
         }}
       />
       <WorkoutStartTimeEditor
-        part={timeEditor}
+        target={timeEditor}
         startTime={workout.startTime}
+        completedAt={completedAt}
         onClose={() => setTimeEditor(null)}
-        onSave={updateStartTime}
+        onSaveStartTime={updateStartTime}
+        onSaveCompletedAt={updateCompletedAt}
       />
       <FinishPreviewModal
         workout={finishedWorkout}
         saving={saving}
         open={finishPreviewOpen}
+        onEditEndDate={() => setTimeEditor("finish-end-date")}
+        onEditEndTime={() => setTimeEditor("finish-end-time")}
         onBack={() => setFinishPreviewOpen(false)}
         onSave={() => void saveFinishedWorkout()}
       />
@@ -4695,31 +4729,46 @@ function NoteEditorModal({
 }
 
 function WorkoutStartTimeEditor({
-  part,
+  target,
   startTime,
+  completedAt,
   onClose,
-  onSave,
+  onSaveStartTime,
+  onSaveCompletedAt,
 }: {
-  part: TimeEditPart | null;
+  target: TimeEditTarget | null;
   startTime: number;
+  completedAt: Date | null;
   onClose: () => void;
-  onSave: (startTime: number) => void;
+  onSaveStartTime: (startTime: number) => void;
+  onSaveCompletedAt: (completedTime: number) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [value, setValue] = useState(() => new Date(startTime));
   const startDate = new Date(startTime);
+  const fallbackEndDate = completedAt ?? new Date(startTime + 60_000);
+  const baseDate =
+    target === "start-date" || target === "start-time"
+      ? startDate
+      : fallbackEndDate;
+  const [value, setValue] = useState(() => baseDate);
 
   useEffect(() => {
-    if (!part) return;
-    setValue(startDate);
-  }, [part, startTime]);
+    if (!target) return;
+    setValue(baseDate);
+  }, [baseDate.getTime(), target]);
 
-  if (!part) return null;
+  if (!target) return null;
 
-  const label = part === "start-date" ? "start date" : "start time";
+  const isDateTarget = target.endsWith("date");
+  const isStartTarget = target.startsWith("start");
+  const label = `${isStartTarget ? "start" : "end"} ${isDateTarget ? "date" : "time"}`;
 
   const save = () => {
-    onSave(value.getTime());
+    if (isStartTarget) {
+      onSaveStartTime(value.getTime());
+    } else {
+      onSaveCompletedAt(value.getTime());
+    }
     onClose();
   };
 
@@ -4748,17 +4797,17 @@ function WorkoutStartTimeEditor({
             </View>
             <DateTimePicker
               accessibilityLabel={label}
-              display={part === "start-date" ? "inline" : "spinner"}
-              mode={part === "start-date" ? "date" : "time"}
+              display={isDateTarget ? "inline" : "spinner"}
+              mode={isDateTarget ? "date" : "time"}
               style={styles.dateTimePicker}
-              testID={`workout-${part}-picker`}
+              testID={`workout-${target}-picker`}
               value={value}
               onChange={(_event, selectedDate) => {
                 if (!selectedDate) return;
                 setValue(
-                  part === "start-date"
-                    ? mergeDatePart(startDate, selectedDate)
-                    : mergeTimePart(startDate, selectedDate),
+                  isDateTarget
+                    ? mergeDatePart(baseDate, selectedDate)
+                    : mergeTimePart(baseDate, selectedDate),
                 );
               }}
             />
@@ -4784,12 +4833,16 @@ function FinishPreviewModal({
   workout,
   saving,
   open,
+  onEditEndDate,
+  onEditEndTime,
   onBack,
   onSave,
 }: {
   workout: CompletedWorkout | null;
   saving: boolean;
   open: boolean;
+  onEditEndDate: () => void;
+  onEditEndTime: () => void;
   onBack: () => void;
   onSave: () => void;
 }) {
@@ -4809,11 +4862,38 @@ function FinishPreviewModal({
             {workout.exercises.length} exercises .{" "}
             {countWorkoutWorkingSets(workout)} sets
           </Text>
-          <Text style={styles.metaText}>
-            {formatDateTime(workout.startedAt)} -{" "}
-            {formatDateTime(workout.completedAt)} (
-            {formatDuration(workout.startedAt, workout.completedAt)})
-          </Text>
+          <View style={styles.timeInlineRow}>
+            <Text style={styles.metaText}>
+              {formatDateTime(workout.startedAt)} -{" "}
+            </Text>
+            <Pressable
+              accessibilityLabel="Edit finish end date"
+              accessibilityRole="button"
+              style={styles.timeTextButton}
+              testID="finish-preview-end-date"
+              onPress={onEditEndDate}
+            >
+              <Text style={styles.timeTextButtonText}>
+                {formatWorkoutStartDate(workout.completedAt)}
+              </Text>
+            </Pressable>
+            <Text style={styles.metaText}> </Text>
+            <Pressable
+              accessibilityLabel="Edit finish end time"
+              accessibilityRole="button"
+              style={styles.timeTextButton}
+              testID="finish-preview-end-time"
+              onPress={onEditEndTime}
+            >
+              <Text style={styles.timeTextButtonText}>
+                {formatTime(workout.completedAt)}
+              </Text>
+            </Pressable>
+            <Text style={styles.metaText}>
+              {" "}
+              ({formatDuration(workout.startedAt, workout.completedAt)})
+            </Text>
+          </View>
           <ScrollView style={styles.previewScroll}>
             {workout.exercises.map((exercise) => (
               <View
