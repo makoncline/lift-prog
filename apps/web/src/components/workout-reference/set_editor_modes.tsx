@@ -58,15 +58,15 @@ export function SetNoteEditor({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="text-[11px] leading-4 text-[#716b5d]">
+    <div className="flex flex-col gap-3">
+      <div className="text-[18px] leading-6 text-[#7a7468]">
         {setLabel} note
       </div>
       <textarea
         aria-label="Set note"
         autoFocus
         value={draftNote}
-        className="min-h-20 w-full resize-none rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-2 py-1 font-mono text-[16px] leading-5 text-[#17150f] outline-none focus:ring-1 focus:ring-[#a79b83]"
+        className="min-h-[150px] w-full resize-none rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-[9px] py-[9px] font-mono text-[20px] leading-7 text-[#1f1c17] outline-none focus:ring-1 focus:ring-[#383225]"
         onChange={(event) => setDraftNote(event.target.value)}
       />
       <NoteEditorActions onDone={doneAfterBlur}>
@@ -101,12 +101,12 @@ export function SetRestKeyboard({
 
   return (
     <div
-      className="grid h-[180px] w-full min-w-0 grid-rows-[1fr_auto] gap-1"
+      className="grid h-[265px] w-full min-w-0 grid-rows-[1fr_auto] gap-[7px]"
       style={{ touchAction: "manipulation" }}
     >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="text-[11px] leading-4 text-[#716b5d]">break time</div>
-        <div className="grid min-w-0 grid-cols-2 gap-1">
+      <div className="flex min-w-0 flex-col gap-[7px]">
+        <div className="text-[18px] leading-6 text-[#7a7468]">break time</div>
+        <div className="grid min-w-0 grid-cols-2 gap-[7px]">
           {FIXED_REST_CHOICES.map((restChoice) => {
             const selected = restChoice.id === selectedRestTypeId;
 
@@ -117,8 +117,8 @@ export function SetRestKeyboard({
                 variant="outline"
                 aria-pressed={selected}
                 className={cn(
-                  "h-10 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-2 font-mono text-[13px] font-normal text-[#373226] shadow-none hover:bg-[#eee8da]",
-                  selected && "border-[#a79b83] bg-[#eee8da]",
+                  "h-[58px] rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-2 font-mono text-[22px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]",
+                  selected && "bg-[#eee9df] ring-1 ring-[#383225]",
                 )}
                 onClick={() =>
                   onUpdate({
@@ -135,7 +135,7 @@ export function SetRestKeyboard({
       </div>
       <Button
         type="button"
-        className="h-10 rounded-[4px] bg-[#373226] font-mono text-[12px] font-normal text-[#fdfcf8] shadow-none hover:bg-[#373226]/90"
+        className="h-[58px] rounded-[7px] bg-[#383225] font-mono text-[22px] font-normal text-[#fffefa] shadow-none hover:bg-[#383225]/90"
         onClick={onDone}
       >
         done

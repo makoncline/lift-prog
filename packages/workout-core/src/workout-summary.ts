@@ -38,14 +38,11 @@ const formatWeightLabel = (
 const weightKey = (weight: number, weightModifier?: "bodyweight"): string =>
   `${weightModifier ?? "std"}:${weight}`;
 
-export const summarizeWorkingSets = (
-  exerciseName: string,
+export const summarizeSetEntries = (
   sets: SummaryInputSet[],
 ): string | undefined => {
-  const workingSets = sets.filter((set) => set.modifier !== "warmup");
-
   const sanitized: SanitizedSet[] = [];
-  for (const set of workingSets) {
+  for (const set of sets) {
     if (set.weight == null || set.reps == null) continue;
     const label = formatWeightLabel(set.weight, set.weightModifier);
     if (!label) continue;
@@ -70,10 +67,10 @@ export const summarizeWorkingSets = (
       if (set.restBefore === "short" && repsParts.length > 0) {
         repsParts[repsParts.length - 1] += `+${set.reps}`;
       } else {
-        repsParts.push(`x${set.reps}`);
+        repsParts.push(`${set.reps}`);
       }
     }
-    return `${exerciseName} - ${first.label}:${repsParts.join(",")}`;
+    return `${first.label}x${repsParts.join(",")}`;
   }
 
   const parts: string[] = [];
@@ -83,12 +80,23 @@ export const summarizeWorkingSets = (
       parts[parts.length - 1] +=
         prevKey === set.key ? `+${set.reps}` : `+${set.label}x${set.reps}`;
     } else if (prevKey === set.key && parts.length > 0) {
-      parts.push(`x${set.reps}`);
+      parts.push(`${set.reps}`);
     } else {
       parts.push(`${set.label}x${set.reps}`);
     }
     prevKey = set.key;
   }
 
-  return `${exerciseName} - ${parts.join(",")}`;
+  return parts.join(",");
+};
+
+export const summarizeWorkingSets = (
+  exerciseName: string,
+  sets: SummaryInputSet[],
+): string | undefined => {
+  const summary = summarizeSetEntries(
+    sets.filter((set) => set.modifier !== "warmup"),
+  );
+
+  return summary ? `${exerciseName} - ${summary}` : undefined;
 };

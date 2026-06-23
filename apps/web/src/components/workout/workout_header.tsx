@@ -88,7 +88,9 @@ export function WorkoutHeader({
   }, [isInProgress]);
 
   function openBodyWeightEditor() {
-    setBodyWeightInput(bodyWeightLb == null ? "" : formatBodyWeight(bodyWeightLb));
+    setBodyWeightInput(
+      bodyWeightLb == null ? "" : formatBodyWeight(bodyWeightLb),
+    );
     setBodyWeightEditorOpen(true);
   }
 
@@ -100,44 +102,44 @@ export function WorkoutHeader({
 
   return (
     <>
-      <div className="mb-4">
-        <div className="mb-1 flex items-center justify-end gap-1">
+      <div className="mb-[22px]">
+        <div className="mb-2 flex items-center justify-end gap-2">
           {showDiscardAction ? (
             <button
               type="button"
               aria-label="Discard changes"
-              className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da]"
+              className="inline-flex h-10 min-w-12 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df]"
               onClick={onDiscardWorkout}
             >
-              <X className="size-3.5" aria-hidden="true" />
+              <X className="size-5" aria-hidden="true" />
             </button>
           ) : null}
           <button
             type="button"
             aria-label="Undo"
-            className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] disabled:opacity-35"
+            className="inline-flex h-10 min-w-12 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df] disabled:opacity-35"
             disabled={!canUndo}
             onClick={onUndo}
           >
-            <Undo2 className="size-3.5" aria-hidden="true" />
+            <Undo2 className="size-5" aria-hidden="true" />
           </button>
           <button
             type="button"
             aria-label="Redo"
-            className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] disabled:opacity-35"
+            className="inline-flex h-10 min-w-12 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df] disabled:opacity-35"
             disabled={!canRedo}
             onClick={onRedo}
           >
-            <Redo2 className="size-3.5" aria-hidden="true" />
+            <Redo2 className="size-5" aria-hidden="true" />
           </button>
           {showDeleteAction ? (
             <button
               type="button"
               aria-label="Delete workout"
-              className="inline-flex size-7 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da] hover:text-[#5f2018]"
+              className="inline-flex h-10 min-w-12 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df] hover:text-[#9f2f2f]"
               onClick={onDeleteWorkout}
             >
-              <Trash2 className="size-3.5" aria-hidden="true" />
+              <Trash2 className="size-5" aria-hidden="true" />
             </button>
           ) : null}
           {showFinishAction ? (
@@ -146,13 +148,13 @@ export function WorkoutHeader({
               size="sm"
               onClick={onFinishWorkout}
               aria-label="Finish workout"
-              className="size-7 shrink-0 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-0 font-mono text-[12px] font-normal text-[#373226] shadow-none"
+              className="h-10 min-w-12 shrink-0 rounded-[7px] border-[#d7cab8] bg-[#fffefa] p-0 font-mono text-[20px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]"
             >
-              <Save className="h-3.5 w-3.5" />
+              <Save className="h-5 w-5" />
             </Button>
           ) : null}
         </div>
-        <div className="flex w-full items-start gap-1">
+        <div className="flex w-full items-start gap-2">
           <div className="min-w-0 flex-1">
             <TitleEditor
               name={name}
@@ -167,18 +169,18 @@ export function WorkoutHeader({
           <button
             type="button"
             aria-label={workoutNote ? "Edit workout note" : "Add workout note"}
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] text-[#817a69] hover:bg-[#eee8da]"
+            className="inline-flex h-[34px] min-w-[44px] shrink-0 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-2 text-[#7a7468] hover:bg-[#eee9df]"
             onClick={onEditWorkoutNote}
           >
-            <Pencil className="size-3.5" aria-hidden="true" />
+            <Pencil className="size-4" aria-hidden="true" />
           </button>
         </div>
         {contextLabel ? (
-          <div className="mt-0.5 font-mono text-[10px] leading-3 text-[#8a8373]">
+          <div className="mt-1 font-mono text-[18px] leading-6 text-[#7a7468]">
             {contextLabel}
           </div>
         ) : null}
-        <div className="mt-0.5 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+        <div className="mt-1 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[18px] leading-6 text-[#7a7468]">
           <span>{relativeDate}</span>
           <span className="px-1">·</span>
           <TimeTextButton
@@ -226,19 +228,21 @@ export function WorkoutHeader({
           )}
         </div>
         {showBodyWeight ? (
-          <div className="mt-0.5 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[11px] leading-4 text-[#716b5d]">
+          <div className="mt-1 flex w-full min-w-0 flex-wrap items-baseline font-mono text-[18px] leading-6 text-[#7a7468]">
             <span>bw</span>
             <span className="px-1">·</span>
             <TimeTextButton
               ariaLabel="Edit body weight"
               onClick={openBodyWeightEditor}
             >
-              {bodyWeightLb == null ? "set" : `${formatBodyWeight(bodyWeightLb)}lb`}
+              {bodyWeightLb == null
+                ? "set"
+                : `${formatBodyWeight(bodyWeightLb)}lb`}
             </TimeTextButton>
           </div>
         ) : null}
         {workoutNote ? (
-          <div className="mt-1 inline-flex max-w-full rounded-[4px] bg-[#eee8da] px-1.5 py-0.5 text-[12px] leading-4 text-[#433e33]">
+          <div className="mt-2 inline-flex max-w-full rounded-[5px] bg-[#eee9df] px-[7px] py-[3px] text-[18px] leading-6 text-[#1f1c17]">
             {workoutNote}
           </div>
         ) : null}
@@ -290,7 +294,7 @@ function TimeTextButton({
     <button
       type="button"
       aria-label={ariaLabel}
-      className="rounded-[3px] border border-[#ebe4d6] bg-[#fdfcf8] px-0.5 text-left hover:bg-[#eee8da] hover:text-[#373226]"
+      className="rounded-[5px] border border-[#eee9df] bg-[#fffefa] px-1 text-left hover:bg-[#eee9df] hover:text-[#1f1c17]"
       onClick={onClick}
     >
       {children}
@@ -402,7 +406,7 @@ function WorkoutTimePartEditor({
               if (part === "end-time") updateEndTime(event.target.value);
               if (part === "duration") updateDuration(event.target.value);
             }}
-            className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[16px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
+            className="h-10 rounded-[5px] border-[#d7cab8] bg-[#fffefa] font-mono text-[20px] text-[#1f1c17] shadow-none focus-visible:ring-[#383225]"
           />
           <WorkoutEditorPrimaryAction onClick={() => onOpenChange(false)}>
             done
@@ -447,14 +451,14 @@ function BodyWeightEditor({
               inputMode="decimal"
               value={value}
               onChange={(event) => onValueChange(event.target.value)}
-              className="h-9 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[16px] text-[#17150f] shadow-none focus-visible:ring-[#a79b83]"
+              className="h-10 rounded-[5px] border-[#d7cab8] bg-[#fffefa] font-mono text-[20px] text-[#1f1c17] shadow-none focus-visible:ring-[#383225]"
             />
-            <span className="text-[12px] text-[#716b5d]">lb</span>
+            <span className="text-[18px] text-[#7a7468]">lb</span>
           </div>
           <div className="flex gap-1">
             <button
               type="button"
-              className="inline-flex h-9 items-center justify-center rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8] px-3 font-mono text-[12px] text-[#817a69] hover:bg-[#eee8da]"
+              className="inline-flex h-10 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] px-3 font-mono text-[18px] text-[#7a7468] hover:bg-[#eee9df]"
               onClick={onClear}
             >
               clear

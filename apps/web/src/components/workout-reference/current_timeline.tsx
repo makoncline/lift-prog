@@ -32,7 +32,7 @@ export function CurrentExerciseHeader({
   if (!note.trim()) return null;
 
   return (
-    <div className="mb-1 flex flex-col gap-0.5">
+    <div className="mb-[5px] flex flex-col gap-1">
       <button
         type="button"
         className="w-fit max-w-full text-left"
@@ -46,7 +46,7 @@ export function CurrentExerciseHeader({
 
 export function TimelineSetHeading({ children }: { children: ReactNode }) {
   return (
-    <div className="font-mono text-[10px] leading-3 text-[#8a8373]">
+    <div className="font-mono text-[18px] leading-6 text-[#7a7468]">
       {children}
     </div>
   );
@@ -77,7 +77,7 @@ export function TimelineSetLine({
         <div
           className={cn(
             "flex flex-wrap items-baseline gap-x-0 gap-y-0.5",
-            onAddSet && "pr-7",
+            onAddSet && "pr-12",
           )}
         >
           {sets.map((set, index) => {
@@ -109,18 +109,18 @@ export function TimelineSetLine({
                     <button
                       type="button"
                       aria-label={`Edit ${setName} weight`}
-                      className="rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]"
+                      className="rounded-[5px] border border-[#eee9df] px-0.5 text-[24px] leading-8 hover:bg-[#eee9df]"
                       onClick={() => onEdit(set.id, "weight")}
                     >
                       {weight}
                     </button>
-                    <span>×</span>
+                    <span className="text-[24px] leading-8">×</span>
                   </>
                 ) : null}
                 <button
                   type="button"
                   aria-label={`Edit ${setName} reps`}
-                  className="relative inline-flex items-baseline rounded-[3px] border border-[#ebe4d6] px-0.5 hover:bg-[#eee8da]"
+                  className="relative inline-flex items-baseline rounded-[5px] border border-[#eee9df] px-0.5 text-[24px] leading-8 hover:bg-[#eee9df]"
                   onClick={() => onEdit(set.id, "reps")}
                 >
                   {formatCurrentReps(set)}
@@ -138,10 +138,10 @@ export function TimelineSetLine({
           <button
             type="button"
             aria-label="Add set"
-            className="absolute top-0 right-0 inline-flex size-6 items-center justify-center rounded-[4px] border border-[#ebe4d6] text-[#817a69] hover:bg-[#eee8da]"
+            className="absolute top-0 right-0 inline-flex h-[34px] min-w-10 items-center justify-center rounded-[7px] border border-[#d7cab8] bg-[#fffefa] text-[#7a7468] hover:bg-[#eee9df]"
             onClick={onAddSet}
           >
-            <Plus className="size-3.5" aria-hidden="true" />
+            <Plus className="size-4" aria-hidden="true" />
           </button>
         ) : null}
         <TimelineSetNoteLane sets={sets} onEditNote={onEditNote} />
@@ -160,7 +160,7 @@ function TimelineSetNoteLane({
   if (!sets.some((set) => set.note)) return null;
 
   return (
-    <div className="relative z-10 mt-px flex w-full flex-col gap-0.5 text-[11px]">
+    <div className="relative z-10 mt-[3px] flex w-full flex-col gap-[3px] text-[18px]">
       {sets.map((set, index) =>
         set.note ? (
           <SetNote
@@ -202,8 +202,8 @@ function TimelineRestToken({
       aria-label={`Change rest before ${setName}`}
       title={label}
       className={cn(
-        "inline-flex min-w-3 justify-center rounded-[3px] border border-[#ebe4d6] text-[#716b5d] hover:bg-[#eee8da]",
-        compound && "font-semibold text-[#373226]",
+        "inline-flex min-w-[13px] justify-center rounded-[5px] border border-[#eee9df] text-[24px] leading-8 text-[#7a7468] hover:bg-[#eee9df]",
+        compound && "font-semibold text-[#383225]",
       )}
       onClick={onCycle}
     >

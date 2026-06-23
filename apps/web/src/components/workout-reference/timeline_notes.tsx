@@ -17,10 +17,10 @@ export function NoteBadge({
     <Badge
       variant="secondary"
       className={cn(
-        "inline-flex max-w-[31ch] shrink items-center justify-start rounded-[4px] border-0 px-1.5 py-0.5 font-mono text-[12px] leading-4 font-normal whitespace-normal",
+        "inline-flex max-w-full shrink items-center justify-start rounded-[5px] border-0 px-[7px] py-[3px] font-mono text-[18px] leading-6 font-normal whitespace-normal",
         tone === "muted"
-          ? "bg-[#f2eee4] text-[#6f6858]"
-          : "bg-[#eee8da] text-[#433e33]",
+          ? "bg-[#eee9df] text-[#7a7468]"
+          : "bg-[#eee9df] text-[#1f1c17]",
         className,
       )}
     >
@@ -54,7 +54,7 @@ export function SetNote({
   return (
     <div
       ref={refCallback}
-      className={cn("min-h-5 w-fit max-w-full pl-0", fullWidth && "max-w-full")}
+      className={cn("min-h-6 w-fit max-w-full pl-0", fullWidth && "max-w-full")}
     >
       {onClick ? (
         <button
@@ -92,7 +92,7 @@ export function TimelineFootnoteRef({
     <sup
       aria-hidden="true"
       className={cn(
-        "-ml-px font-mono text-[9px] leading-none font-semibold text-[#817a69]",
+        "-ml-px font-mono text-[13px] leading-none font-semibold text-[#7a7468]",
         className,
       )}
     >
@@ -105,7 +105,7 @@ export function TimelineFootnoteMarker({ children }: { children: ReactNode }) {
   return (
     <span
       aria-hidden="true"
-      className="inline-flex h-4 min-w-3 shrink-0 items-start justify-center font-mono text-[9px] leading-3 font-semibold text-[#817a69]"
+      className="inline-flex h-5 min-w-4 shrink-0 items-start justify-center font-mono text-[15px] leading-5 font-semibold text-[#7a7468]"
     >
       {children}
     </span>

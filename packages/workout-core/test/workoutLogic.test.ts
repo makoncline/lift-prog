@@ -4,6 +4,7 @@ import {
   estimateSet,
   initialiseExercises,
   parseQuickSetLine,
+  summarizeSetEntries,
   summarizeWorkingSets,
   workoutReducer,
 } from "../src/index";
@@ -40,15 +41,13 @@ describe("initialiseExercises previous summary", () => {
       },
     ])[0]!;
 
-    expect(exercise.previousSummary).toBe(
-      "Bench Press - 100lbx8,x6,90lbx6",
-    );
+    expect(exercise.previousSummary).toBe("Bench Press - 100lbx8,6,90lbx6");
     expect(exercise.previousNotes).toBe("Paused reps last set");
     expect(exercise.sets[0]!.notes).toBeUndefined();
     expect(exercise.previousSets[0]!.notes).toBe("do not copy");
   });
 
-  it("uses colon format when all weights match", () => {
+  it("compresses repeated weights without dropping rep meaning", () => {
     const exercise = initialiseExercises([
       {
         name: "Overhead Press",
@@ -60,9 +59,7 @@ describe("initialiseExercises previous summary", () => {
       },
     ])[0]!;
 
-    expect(exercise.previousSummary).toBe(
-      "Overhead Press - 100lb:x8,x8,x6",
-    );
+    expect(exercise.previousSummary).toBe("Overhead Press - 100lbx8,8,6");
   });
 
   it("handles weight changes that return to a previous load", () => {
@@ -186,6 +183,15 @@ describe("parseQuickSetLine", () => {
 });
 
 describe("summarizeWorkingSets", () => {
+  it("can summarize a set group without an exercise title", () => {
+    expect(
+      summarizeSetEntries([
+        { weight: 45, reps: 12, modifier: "warmup" },
+        { weight: 65, reps: 8, modifier: "warmup" },
+      ]),
+    ).toBe("45lbx12,65lbx8");
+  });
+
   it("groups short-rest fragments with plus notation", () => {
     expect(
       summarizeWorkingSets("Pull-ups", [
@@ -205,7 +211,7 @@ describe("summarizeWorkingSets", () => {
           restBefore: "short",
         },
       ]),
-    ).toBe("Pull-ups - BW:x10,x10,x9+1+4");
+    ).toBe("Pull-ups - BWx10,10,9+1+4");
   });
 
   it("includes the weight when a short-rest fragment changes load", () => {

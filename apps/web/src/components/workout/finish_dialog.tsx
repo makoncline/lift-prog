@@ -34,36 +34,36 @@ export function FinishDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[84dvh] w-[calc(100vw-20px)] max-w-[390px] gap-2 overflow-hidden rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-3 font-mono text-[#17150f] shadow-none sm:max-w-[390px]"
+        className="max-h-[88dvh] w-[calc(100vw-32px)] max-w-[390px] gap-3 overflow-hidden rounded-[7px] border-[#d7cab8] bg-[#fbfaf7] p-[14px] font-mono text-[#1f1c17] shadow-none sm:max-w-[390px]"
         onOpenAutoFocus={(e) => e.preventDefault()}
         data-testid="finish-workout-dialog"
       >
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-baseline gap-x-2 text-left text-[18px] leading-6">
+          <DialogTitle className="flex flex-wrap items-baseline gap-x-2 text-left text-[31px] leading-9 font-extrabold">
             <span>{workout?.name ?? "Workout"}</span>
             {summary ? (
-              <span className="text-[11px] font-normal leading-4 text-[#716b5d]">
+              <span className="text-[18px] leading-6 font-normal text-[#7a7468]">
                 {formatCount(summary.exerciseCount, "exercise")} ·{" "}
                 {formatCount(summary.workingSetCount, "set")}
               </span>
             ) : null}
           </DialogTitle>
-          <DialogDescription className="text-left font-mono text-[12px] leading-4 text-[#716b5d]">
+          <DialogDescription className="text-left font-mono text-[18px] leading-6 text-[#7a7468]">
             {workout ? formatWorkoutTimeRange(workout) : "Review workout"}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 overflow-y-auto py-1 text-[13px] leading-5">
+        <div className="min-h-0 overflow-y-auto py-1 text-[18px] leading-6">
           {workout ? <WorkoutPreview workout={workout} /> : null}
         </div>
 
-        <div className="grid grid-cols-[auto_1fr] gap-1 pt-1">
+        <div className="grid grid-cols-[auto_1fr] gap-2 pt-1">
           <Button
             type="button"
             variant="outline"
             onClick={onBack}
             disabled={isSaving}
-            className="h-8 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-3 font-mono text-[12px] font-normal text-[#373226] shadow-none"
+            className="h-10 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-3 font-mono text-[20px] font-normal text-[#1f1c17] shadow-none hover:bg-[#eee9df]"
             data-testid="back-from-finish-workout"
           >
             go back
@@ -72,7 +72,7 @@ export function FinishDialog({
             type="button"
             onClick={onSave}
             disabled={isSaving || !workout}
-            className="h-8 rounded-[4px] bg-[#373226] font-mono text-[12px] font-normal text-[#fdfcf8] shadow-none hover:bg-[#373226]/90"
+            className="h-10 rounded-[7px] bg-[#383225] font-mono text-[20px] font-normal text-[#fffefa] shadow-none hover:bg-[#383225]/90"
             data-testid="save-finished-workout"
           >
             {isSaving ? (
@@ -90,11 +90,11 @@ function WorkoutPreview({ workout }: { workout: CompletedWorkout }) {
   const exercises = getPreviewExercises(workout);
 
   if (exercises.length === 0) {
-    return <p className="text-[#716b5d]">No exercises logged.</p>;
+    return <p className="text-[#7a7468]">No exercises logged.</p>;
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {exercises.map((exercise) => (
         <ExercisePreview
           key={`${exercise.order}-${exercise.name}`}
@@ -119,16 +119,15 @@ function ExercisePreview({ exercise }: { exercise: CompletedExercise }) {
 
   return (
     <div>
-      <div className="flex flex-wrap items-baseline gap-x-2 font-semibold text-[#17150f]">
+      <div className="flex flex-wrap items-baseline gap-x-2 font-extrabold text-[#1f1c17]">
         <span>{exercise.name}</span>
-        <span className="text-[11px] font-normal leading-4 text-[#716b5d]">
+        <span className="text-[18px] leading-6 font-normal text-[#7a7468]">
           {formatCount(workingSetCount, "set")}
         </span>
       </div>
       {warmupLine ? (
-        <div className="text-[#716b5d]">
-          <span className="text-[11px]">warm-up</span>{" "}
-          <span>{warmupLine}</span>
+        <div className="text-[#7a7468]">
+          <span className="text-[18px]">warm-up</span> <span>{warmupLine}</span>
         </div>
       ) : null}
       {workingLine ? <div>{workingLine}</div> : null}

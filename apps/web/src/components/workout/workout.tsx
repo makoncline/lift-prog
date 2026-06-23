@@ -721,7 +721,7 @@ function WorkoutComponentInner({
 
   return (
     <div
-      className="container mx-auto max-w-md p-3 pb-[200px] font-mono"
+      className="mx-auto w-full max-w-[390px] bg-[#fbfaf7] p-[14px] pb-[220px] font-mono text-[#1f1c17]"
       style={{ touchAction: "pan-x pan-y" }}
     >
       {showRestore && !autoRestore && (
@@ -893,6 +893,8 @@ function shouldShowBodyWeight(workout: Workout, isSavedWorkout: boolean) {
       entry.sets.some((set) => set.weightModifier === "bodyweight"),
     );
 
-    return hasCurrentBodyweight || hasPreviousBodyweight || hasHistoryBodyweight;
+    return (
+      hasCurrentBodyweight || hasPreviousBodyweight || hasHistoryBodyweight
+    );
   });
 }

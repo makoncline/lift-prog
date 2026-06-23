@@ -166,11 +166,11 @@ function WeightHelperDialogContent({
       ) : null}
       <DialogContent
         className={cn(
-          "max-h-[82dvh] w-[calc(100vw-16px)] max-w-[390px] overflow-y-auto rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-3 font-mono text-[#17150f] shadow-none [&_[data-slot=dialog-close]]:!top-2 [&_[data-slot=dialog-close]]:!right-2 [&_[data-slot=dialog-close]]:!h-6 [&_[data-slot=dialog-close]]:!w-6 [&_[data-slot=dialog-close]]:!p-0 [&_[data-slot=dialog-close]_svg]:!size-3",
+          "max-h-[82dvh] w-[calc(100vw-16px)] max-w-[390px] overflow-y-auto rounded-[7px] border-[#d7cab8] bg-[#fbfaf7] p-3 font-mono text-[#1f1c17] shadow-none [&_[data-slot=dialog-close]]:!top-2 [&_[data-slot=dialog-close]]:!right-2 [&_[data-slot=dialog-close]]:!h-10 [&_[data-slot=dialog-close]]:!w-10 [&_[data-slot=dialog-close]]:!p-0 [&_[data-slot=dialog-close]_svg]:!size-5",
           stacked && "!z-[70]",
         )}
       >
-        <DialogTitle className="text-[13px] leading-4 font-normal text-[#716b5d]">
+        <DialogTitle className="text-[18px] leading-6 font-normal text-[#7a7468]">
           {title}
         </DialogTitle>
         <DialogDescription className="sr-only">
@@ -257,8 +257,8 @@ function WeightHelperSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[4px] border border-[#d7cfbc] p-2">
-      <div className="mb-2 text-[12px] leading-4 text-[#716b5d]">{title}</div>
+    <section className="rounded-[7px] border border-[#d7cab8] p-3">
+      <div className="mb-2 text-[18px] leading-6 text-[#7a7468]">{title}</div>
       {children}
     </section>
   );
@@ -315,7 +315,7 @@ function AddedWeightRepsHelper({
   }
 
   return (
-    <div className="space-y-2 text-[12px] leading-5">
+    <div className="space-y-3 text-[18px] leading-6">
       <CurrentOneRepMaxLine
         weight={defaultWeight}
         reps={defaultReps}
@@ -338,8 +338,8 @@ function AddedWeightRepsHelper({
             total load
           </SegmentedButton>
         </div>
-        <div className="grid min-w-0 grid-cols-[5.25rem_1.25rem_1fr] items-center gap-0.5 overflow-x-auto pb-0.5 text-[12px] leading-5 whitespace-nowrap">
-          <span className="inline-flex h-6 w-[5.25rem] items-center rounded-[4px] border border-[#ebe4d6] bg-[#fdfcf8] px-1 text-[16px] leading-none text-[#17150f]">
+        <div className="grid min-w-0 grid-cols-[8rem_2rem_1fr] items-center gap-1 overflow-x-auto pb-0.5 text-[18px] leading-6 whitespace-nowrap">
+          <span className="inline-flex h-10 w-[8rem] items-center rounded-[5px] border border-[#eee9df] bg-[#fffefa] px-2 text-[24px] leading-none text-[#1f1c17]">
             +{formatNumber(addedWeight)}lb
           </span>
           <StackedStepper
@@ -349,7 +349,7 @@ function AddedWeightRepsHelper({
             onIncrease={() => adjustAddedWeight("up")}
             decreaseDisabled={addedWeight <= getAddedWeightControlStep()}
           />
-          <span className="text-[#716b5d]">
+          <span className="text-[#7a7468]">
             {mode === "equal-sides" ? (
               <>
                 per side ·{" "}
@@ -394,11 +394,11 @@ function AddedWeightRepRow({
       <FieldLabel>{row.label}</FieldLabel>
       <div
         className={cn(
-          "grid grid-cols-[minmax(0,1fr)_1.5rem] items-center gap-1 rounded-[4px] border border-transparent px-0 py-0.5",
-          selected && "border-[#a79b83] bg-[#eee8da]",
+          "grid grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-[7px] border border-transparent py-1",
+          selected && "border-[#383225] bg-[#eee9df] px-2",
         )}
       >
-        <div className="min-w-0 truncate text-[14px] leading-5">
+        <div className="min-w-0 truncate text-[18px] leading-6">
           {formatSetSummary(row.targetWeight, row.targetReps)} ·{" "}
           {formatOneRepMax(row.targetOneRepMax)} ·{" "}
           {formatPercentChangeNarrative(row.percentChange)}
@@ -408,8 +408,8 @@ function AddedWeightRepRow({
           variant="outline"
           aria-label={`Use ${row.label} suggestion`}
           className={cn(
-            "flex size-6 shrink-0 items-center justify-center rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] p-0 text-[#817a69] shadow-none hover:bg-[#eee8da]",
-            selected && "bg-[#eee8da] text-[#373226]",
+            "flex h-[34px] min-w-[44px] shrink-0 items-center justify-center rounded-[7px] border-[#d7cab8] bg-[#fffefa] p-0 text-[#7a7468] shadow-none hover:bg-[#eee9df]",
+            selected && "bg-[#eee9df] text-[#1f1c17]",
           )}
           onClick={onSelect}
         >
@@ -432,7 +432,7 @@ function CurrentOneRepMaxLine({
   return (
     <div className="space-y-0.5">
       <FieldLabel>current</FieldLabel>
-      <div className="text-[14px] leading-5">
+      <div className="text-[24px] leading-8">
         {formatSetSummary(weight, reps)} · {formatOneRepMax(oneRepMax)}
       </div>
     </div>
@@ -464,15 +464,15 @@ function PlateHelper({
   }
 
   return (
-    <div className="space-y-2 text-[12px] leading-5">
+    <div className="space-y-3 text-[18px] leading-6">
       <div className="flex min-w-0 flex-wrap items-end gap-2">
         <div className="space-y-1">
           <FieldLabel>total weight</FieldLabel>
           <div className="inline-flex h-5 items-baseline">
-            <span className="font-mono text-[16px] leading-none">
+            <span className="font-mono text-[30px] leading-none">
               {formatNumber(defaultWeight)}
             </span>
-            <span className="text-[11px] leading-none text-[#716b5d]">lb</span>
+            <span className="text-[18px] leading-none text-[#7a7468]">lb</span>
           </div>
         </div>
 
@@ -558,7 +558,7 @@ export function PlateSettingsControls({
   }
 
   return (
-    <div className="space-y-2 text-[12px] leading-5">
+    <div className="space-y-2 text-[18px] leading-6">
       <div className="min-w-0 space-y-1">
         <FieldLabel>starting weight</FieldLabel>
         <div className="flex flex-wrap items-center gap-1">
@@ -570,18 +570,18 @@ export function PlateSettingsControls({
           >
             <SelectTrigger
               aria-label="starting weight"
-              className="!h-5 min-w-[5.25rem] !gap-1 rounded-[3px] border-[#d7cfbc] bg-[#fdfcf8] !px-1 !py-0 font-mono text-[11px] leading-none text-[#17150f] shadow-none focus:ring-[#a79b83] [&_svg]:!size-3"
+              className="!h-10 min-w-[8rem] !gap-1 rounded-[5px] border-[#d7cab8] bg-[#fffefa] !px-2 !py-0 font-mono text-[20px] leading-none text-[#1f1c17] shadow-none focus:ring-[#383225] [&_svg]:!size-4"
             >
               <span className="min-w-0 truncate">
                 {getStartingWeightLabel(startingWeightValue)}
               </span>
             </SelectTrigger>
-            <SelectContent className="!z-[80] rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] font-mono text-[#17150f] shadow-none">
+            <SelectContent className="!z-[80] rounded-[7px] border-[#d7cab8] bg-[#fffefa] font-mono text-[#1f1c17] shadow-none">
               {BARS.map((bar) => (
                 <SelectItem
                   key={bar.value}
                   value={bar.value}
-                  className="font-mono text-[12px] focus:bg-[#eee8da]"
+                  className="font-mono text-[20px] focus:bg-[#eee9df]"
                 >
                   {bar.label}
                 </SelectItem>
@@ -619,7 +619,7 @@ export function PlateSettingsControls({
 }
 
 function FieldLabel({ children }: { children: ReactNode }) {
-  return <div className="text-[11px] leading-3 text-[#716b5d]">{children}</div>;
+  return <div className="text-[18px] leading-6 text-[#7a7468]">{children}</div>;
 }
 
 function PlatePlanDisplay({ plan }: { plan: PlatePlan }) {
@@ -640,14 +640,14 @@ function PlatePlanDisplay({ plan }: { plan: PlatePlan }) {
               <PlateBlock key={plate.key} weight={plate.weight} />
             ))
           ) : (
-            <span className="text-[12px] text-[#716b5d]">no plates</span>
+            <span className="text-[18px] text-[#7a7468]">no plates</span>
           )}
         </div>
       </div>
 
-      <div className="grid gap-2 text-[12px] leading-5">
+      <div className="grid gap-2 text-[18px] leading-6">
         <div>
-          <div className="text-[#716b5d]">{formatPlateSummary(plan)}</div>
+          <div className="text-[#7a7468]">{formatPlateSummary(plan)}</div>
           <PlateCountLegend plates={plan.plates} />
         </div>
       </div>
@@ -657,7 +657,7 @@ function PlatePlanDisplay({ plan }: { plan: PlatePlan }) {
 
 function BarVisual({ weight }: { weight: number }) {
   return (
-    <div className="flex h-3.5 min-w-28 items-center justify-center rounded-[4px] border border-[#7f8793] bg-[#b9c0cc] text-[9px] leading-none font-semibold text-[#373226]">
+    <div className="flex h-4 min-w-32 items-center justify-center rounded-[4px] border border-[#7f8793] bg-[#b9c0cc] text-[12px] leading-none font-semibold text-[#383225]">
       {weight > 0 ? `${formatNumber(weight)}lb` : null}
     </div>
   );
@@ -706,7 +706,7 @@ function PlateCountLegend({
           >
             <PlateChip weight={plate} active={active} />
             {active ? (
-              <div className="text-[10px] leading-none text-[#17150f]">
+              <div className="text-[14px] leading-none text-[#1f1c17]">
                 x{count}
               </div>
             ) : (
@@ -732,9 +732,9 @@ function PlateChip({
     <div
       className="flex size-6 items-center justify-center rounded-full border text-[9px] leading-none"
       style={{
-        backgroundColor: active ? color.background : "#fdfcf8",
-        borderColor: active ? color.border : "#d7cfbc",
-        color: active ? color.text : "#716b5d",
+        backgroundColor: active ? color.background : "#fffefa",
+        borderColor: active ? color.border : "#d7cab8",
+        color: active ? color.text : "#7a7468",
       }}
     >
       {formatNumber(weight)}
@@ -784,7 +784,7 @@ function NumericInput({
   return (
     <label
       className={cn(
-        "inline-flex h-6 min-w-0 items-center rounded-[4px] border border-[#ebe4d6] bg-[#fdfcf8] px-1",
+        "inline-flex h-10 min-w-0 items-center rounded-[5px] border border-[#eee9df] bg-[#fffefa] px-2",
         className,
       )}
     >
@@ -792,12 +792,12 @@ function NumericInput({
         value={value}
         aria-label={ariaLabel}
         inputMode="decimal"
-        className="max-w-full min-w-[1ch] flex-none bg-transparent font-mono text-[16px] leading-none outline-none"
+        className="max-w-full min-w-[1ch] flex-none bg-transparent font-mono text-[24px] leading-none outline-none"
         style={{ width: `${Math.max(value.length, 1)}ch` }}
         onChange={(event) => onChange(event.target.value)}
       />
       {suffix ? (
-        <span className="text-[11px] text-[#716b5d]">{suffix}</span>
+        <span className="text-[18px] text-[#7a7468]">{suffix}</span>
       ) : null}
     </label>
   );
@@ -817,23 +817,23 @@ function StackedStepper({
   onDecrease: () => void;
 }) {
   return (
-    <div className="grid h-6 w-5 overflow-hidden rounded-[4px] border border-[#d7cfbc] bg-[#fdfcf8]">
+    <div className="grid h-10 w-8 overflow-hidden rounded-[5px] border border-[#d7cab8] bg-[#fffefa]">
       <button
         type="button"
         aria-label={increaseLabel}
-        className="flex items-center justify-center border-b border-[#d7cfbc] text-[#373226]"
+        className="flex items-center justify-center border-b border-[#d7cab8] text-[#1f1c17]"
         onClick={onIncrease}
       >
-        <Plus className="size-2.5" aria-hidden="true" />
+        <Plus className="size-4" aria-hidden="true" />
       </button>
       <button
         type="button"
         aria-label={decreaseLabel}
         disabled={decreaseDisabled}
-        className="flex items-center justify-center text-[#373226] disabled:text-[#c7beab]"
+        className="flex items-center justify-center text-[#1f1c17] disabled:text-[#d7cab8]"
         onClick={onDecrease}
       >
-        <Minus className="size-2.5" aria-hidden="true" />
+        <Minus className="size-4" aria-hidden="true" />
       </button>
     </div>
   );
@@ -856,8 +856,8 @@ function SegmentedButton({
       variant="outline"
       disabled={disabled}
       className={cn(
-        "h-6 rounded-[4px] border-[#d7cfbc] bg-[#fdfcf8] px-1.5 font-mono text-[11px] font-normal text-[#716b5d] shadow-none hover:bg-[#eee8da]",
-        active && "bg-[#eee8da] text-[#17150f] ring-1 ring-[#a79b83]",
+        "h-10 rounded-[7px] border-[#d7cab8] bg-[#fffefa] px-3 font-mono text-[20px] font-normal text-[#7a7468] shadow-none hover:bg-[#eee9df]",
+        active && "bg-[#eee9df] text-[#1f1c17] ring-1 ring-[#383225]",
       )}
       onClick={onClick}
     >
@@ -869,7 +869,7 @@ function SegmentedButton({
 function HelperLine({ left, right }: { left: string; right: string }) {
   return (
     <div className="grid grid-cols-[3.5rem_1fr] gap-2">
-      <span className="text-[#716b5d]">{left}</span>
+      <span className="text-[#7a7468]">{left}</span>
       <span className="min-w-0">{right}</span>
     </div>
   );

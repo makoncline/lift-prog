@@ -43,7 +43,7 @@ export default function RootLayout({
 
 function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
   const pathname = usePathname();
-  const showHeader = !pathname.startsWith("/workout");
+  const showHeader = pathname !== "/" && !pathname.startsWith("/workout");
 
   return (
     <html lang="en" className={`${geist.variable}`} suppressHydrationWarning>
@@ -56,7 +56,7 @@ function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
       </head>
       <body
         className={cn(
-          "bg-background flex min-h-screen flex-col font-sans antialiased",
+          "flex min-h-screen flex-col bg-[#fbfaf7] font-sans antialiased",
           geist.variable,
         )}
       >
@@ -66,7 +66,7 @@ function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
             defaultTheme="light"
             disableTransitionOnChange
           >
-            <main className="mx-auto flex w-full max-w-md flex-grow flex-col">
+            <main className="mx-auto flex w-full max-w-[390px] flex-grow flex-col">
               {showHeader ? (
                 <header className="flex h-16 items-center justify-between gap-4 p-4">
                   <div className="flex gap-4">
