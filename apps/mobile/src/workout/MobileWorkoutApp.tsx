@@ -274,7 +274,6 @@ type WorkoutDispatchOptions = {
 };
 
 type HealthWorkoutState = {
-  requested: boolean;
   live: boolean;
   starting: boolean;
   saving: boolean;
@@ -1790,7 +1789,6 @@ function WorkoutScreen({
     useState(0);
   const [bodyWeightEntry, setBodyWeightEntry] = useState<string | null>(null);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
-    requested: false,
     live: false,
     starting: false,
     saving: false,
@@ -1810,7 +1808,6 @@ function WorkoutScreen({
   const draftWritePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const draftWritesSuppressedRef = useRef(false);
   const bodyWeightEditedRef = useRef(false);
-  const healthPromptShownRef = useRef(false);
   const restTimerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -1967,85 +1964,6 @@ function WorkoutScreen({
 
     return () => subscription.remove();
   }, [healthWorkout.live]);
-
-  const startHealthWorkoutFlow = useCallback(async () => {
-    if (Platform.OS !== "ios" || !isHealthAvailable()) {
-      setHealthWorkout((current) => ({
-        ...current,
-        message: "Apple Health is not available on this device.",
-      }));
-      return;
-    }
-
-    setHealthWorkout((current) => ({
-      ...current,
-      starting: true,
-      message: "preparing health save",
-    }));
-
-    try {
-      const authorization = await requestHealthAuthorization();
-      await applyLatestHealthBodyWeight().catch(() => undefined);
-
-      if (!authorization.canWriteWorkouts) {
-        setHealthWorkout({
-          requested: false,
-          live: false,
-          starting: false,
-          saving: false,
-          message: "Health workout permission is off.",
-        });
-        return;
-      }
-
-      // The iPhone app can reliably save the completed workout to Health.
-      // Continuous Apple Watch heart-rate capture needs a watch-owned workout
-      // session, so do not start an iPhone live session here.
-      setHealthWorkout({
-        requested: true,
-        live: false,
-        starting: false,
-        saving: false,
-        message: "health workout will save on finish",
-      });
-    } catch (healthError) {
-      setHealthWorkout({
-        requested: false,
-        live: false,
-        starting: false,
-        saving: false,
-        message: getUnknownErrorMessage(healthError),
-      });
-    }
-  }, [applyLatestHealthBodyWeight, workout.startTime]);
-
-  useEffect(() => {
-    if (isEditingPastWorkout || draftWorkout || healthPromptShownRef.current) {
-      return;
-    }
-    if (Platform.OS !== "ios" || !isHealthAvailable()) {
-      return;
-    }
-
-    healthPromptShownRef.current = true;
-    presentDialog({
-      title: "Save to Apple Health?",
-      message: "Save this as strength training when the workout is finished.",
-      actions: [
-        { label: "not now", variant: "cancel" },
-        {
-          label: "save on finish",
-          variant: "primary",
-          onPress: () => void startHealthWorkoutFlow(),
-        },
-      ],
-    });
-  }, [
-    draftWorkout,
-    isEditingPastWorkout,
-    presentDialog,
-    startHealthWorkoutFlow,
-  ]);
 
   const moveExerciseTo = useCallback(
     (exerciseIndex: number, targetIndex: number) => {
@@ -2511,9 +2429,8 @@ function WorkoutScreen({
       const shouldSaveHealthWorkout =
         Platform.OS === "ios" &&
         isHealthAvailable() &&
-        (healthWorkout.requested ||
-          (await getHealthAuthorizationStatus().catch(() => null))
-            ?.canWriteWorkouts);
+        (await getHealthAuthorizationStatus().catch(() => null))
+          ?.canWriteWorkouts;
 
       if (shouldSaveHealthWorkout) {
         setHealthWorkout((current) => ({
@@ -2707,10 +2624,8 @@ function WorkoutScreen({
     ? "health starting"
     : healthWorkout.saving
       ? "health saving"
-      : healthWorkout.requested
-        ? healthWorkout.live
-          ? "health running"
-          : "health save on finish"
+      : healthWorkout.live
+        ? "health running"
         : healthWorkout.message;
   const bodyWeightText =
     workout.bodyWeightLb == null ? "" : formatNumber(workout.bodyWeightLb);
