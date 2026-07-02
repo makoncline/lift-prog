@@ -1788,6 +1788,11 @@ function WorkoutScreen({
   const [watchSnapshotRequestNonce, setWatchSnapshotRequestNonce] =
     useState(0);
   const [bodyWeightEntry, setBodyWeightEntry] = useState<string | null>(null);
+  const [bodyWeightDialogOpen, setBodyWeightDialogOpen] = useState(false);
+  const [bodyWeightDialogError, setBodyWeightDialogError] = useState<
+    string | null
+  >(null);
+  const [bodyWeightHealthLoading, setBodyWeightHealthLoading] = useState(false);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
     live: false,
     starting: false,
@@ -2357,6 +2362,61 @@ function WorkoutScreen({
     }
 
     showFinishPreview();
+  };
+
+  const saveBodyWeightDialog = () => {
+    const nextEntry = bodyWeightEntry?.trim() ?? "";
+    if (!nextEntry) {
+      bodyWeightEditedRef.current = true;
+      dispatch({ type: "UPDATE_BODY_WEIGHT", bodyWeightLb: null });
+      setBodyWeightDialogOpen(false);
+      setBodyWeightDialogError(null);
+      setBodyWeightEntry(null);
+      return;
+    }
+
+    const nextBodyWeight = parsePositiveDecimalInput(nextEntry);
+    if (nextBodyWeight === "pending") {
+      setBodyWeightDialogError("Enter a valid body weight.");
+      return;
+    }
+
+    bodyWeightEditedRef.current = true;
+    dispatch({ type: "UPDATE_BODY_WEIGHT", bodyWeightLb: nextBodyWeight });
+    setBodyWeightDialogOpen(false);
+    setBodyWeightDialogError(null);
+    setBodyWeightEntry(null);
+  };
+
+  const resetBodyWeightFromHealth = async () => {
+    if (Platform.OS !== "ios" || !isHealthAvailable()) {
+      setBodyWeightDialogError("Apple Health is not available on this device.");
+      return;
+    }
+
+    setBodyWeightHealthLoading(true);
+    setBodyWeightDialogError(null);
+    try {
+      await requestHealthAuthorization();
+      const latest = await getLatestBodyWeight();
+      const latestBodyWeight = normalizeBodyWeightLb(latest?.valueLb);
+      if (latestBodyWeight == null) {
+        setBodyWeightDialogError("No Apple Health body weight found.");
+        return;
+      }
+
+      bodyWeightEditedRef.current = false;
+      dispatch({
+        type: "UPDATE_BODY_WEIGHT",
+        bodyWeightLb: latestBodyWeight,
+      });
+      setBodyWeightEntry(null);
+      setBodyWeightDialogOpen(false);
+    } catch (healthError) {
+      setBodyWeightDialogError(getUnknownErrorMessage(healthError));
+    } finally {
+      setBodyWeightHealthLoading(false);
+    }
   };
 
   const closeActiveWorkoutToHome = () => {
@@ -3047,58 +3107,6 @@ function WorkoutScreen({
           </Text>
         ) : null}
 
-        {canEditWorkout ? (
-          <View style={styles.inlineEditRow}>
-            <Text style={styles.subtleTitle}>body weight</Text>
-            <View style={styles.bodyWeightInputBox}>
-              <TextInput
-                value={bodyWeightInputText}
-                placeholder="add"
-                placeholderTextColor={palette.muted}
-                onFocus={beginTextEditing}
-                onChangeText={(value) => {
-                  bodyWeightEditedRef.current = true;
-                  setBodyWeightEntry(value);
-                  const trimmed = value.trim();
-                  if (!trimmed) {
-                    dispatch({
-                      type: "UPDATE_BODY_WEIGHT",
-                      bodyWeightLb: null,
-                    });
-                    return;
-                  }
-
-                  const nextBodyWeight = parsePositiveDecimalInput(trimmed);
-                  if (nextBodyWeight === "pending") return;
-                  if (nextBodyWeight != null) {
-                    dispatch({
-                      type: "UPDATE_BODY_WEIGHT",
-                      bodyWeightLb: nextBodyWeight,
-                    });
-                  }
-                }}
-                onBlur={() => setBodyWeightEntry(null)}
-                keyboardType="decimal-pad"
-                style={[
-                  styles.bodyWeightInput,
-                  {
-                    width: getInlineTextInputWidth(
-                      bodyWeightInputText || "add",
-                    ),
-                  },
-                ]}
-              />
-              {workout.bodyWeightLb == null ? null : (
-                <Text style={styles.bodyWeightUnit}>lb</Text>
-              )}
-            </View>
-          </View>
-        ) : workout.bodyWeightLb != null ? (
-          <Text style={styles.metaText}>
-            {formatNumber(workout.bodyWeightLb)}lb body weight
-          </Text>
-        ) : null}
-
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         {showExerciseTabs ? (
@@ -3184,6 +3192,12 @@ function WorkoutScreen({
           setWorkoutMenuOpen(false);
           setWorkoutTimeAdjustOpen(true);
         }}
+        onEditBodyWeight={() => {
+          setWorkoutMenuOpen(false);
+          setBodyWeightDialogError(null);
+          setBodyWeightEntry(bodyWeightText);
+          setBodyWeightDialogOpen(true);
+        }}
         onClose={() => {
           setWorkoutMenuOpen(false);
           setWorkoutMenuAnchor(null);
@@ -3198,6 +3212,23 @@ function WorkoutScreen({
           setWorkoutNoteDraft(null);
           updateWorkoutNote("");
         }}
+      />
+      <BodyWeightEditorModal
+        visible={canEditWorkout && bodyWeightDialogOpen}
+        bodyWeightEntry={bodyWeightInputText}
+        error={bodyWeightDialogError}
+        loadingHealth={bodyWeightHealthLoading}
+        onChangeBodyWeightEntry={(entry) => {
+          setBodyWeightDialogError(null);
+          setBodyWeightEntry(entry);
+        }}
+        onClose={() => {
+          setBodyWeightDialogOpen(false);
+          setBodyWeightDialogError(null);
+          setBodyWeightEntry(null);
+        }}
+        onResetToHealth={() => void resetBodyWeightFromHealth()}
+        onSave={saveBodyWeightDialog}
       />
       {isActiveWorkout && restTimerDurationOpen ? (
         <RestTimerDurationSheet
@@ -3869,6 +3900,7 @@ function WorkoutTitleCommandMenu({
   onAddNote,
   onAdjustTime,
   onClose,
+  onEditBodyWeight,
   onEditName,
   onRemoveNote,
 }: {
@@ -3878,6 +3910,7 @@ function WorkoutTitleCommandMenu({
   onAddNote: () => void;
   onAdjustTime: () => void;
   onClose: () => void;
+  onEditBodyWeight: () => void;
   onEditName: () => void;
   onRemoveNote: () => void;
 }) {
@@ -3904,6 +3937,12 @@ function WorkoutTitleCommandMenu({
             onPress={onAdjustTime}
             testID="workout-menu-adjust-time"
           />
+          <CommandMenuItem
+            icon="body-outline"
+            label="Body Weight"
+            onPress={onEditBodyWeight}
+            testID="workout-menu-body-weight"
+          />
           {hasWorkoutNote ? (
             <CommandMenuItem
               danger
@@ -3920,6 +3959,112 @@ function WorkoutTitleCommandMenu({
               testID="workout-menu-add-note"
             />
           )}
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function BodyWeightEditorModal({
+  visible,
+  bodyWeightEntry,
+  error,
+  loadingHealth,
+  onChangeBodyWeightEntry,
+  onClose,
+  onResetToHealth,
+  onSave,
+}: {
+  visible: boolean;
+  bodyWeightEntry: string;
+  error: string | null;
+  loadingHealth: boolean;
+  onChangeBodyWeightEntry: (entry: string) => void;
+  onClose: () => void;
+  onResetToHealth: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade onDismiss={onClose} style={styles.confirmDialogShade}>
+        <View style={styles.bodyWeightDialog}>
+          <View style={styles.confirmDialogCopy}>
+            <Text style={styles.confirmDialogTitle}>Body Weight</Text>
+            <Text style={styles.confirmDialogMessage}>
+              Used for bodyweight workout calculations.
+            </Text>
+          </View>
+          <View style={styles.bodyWeightDialogInputRow}>
+            <TextInput
+              accessibilityLabel="Workout body weight"
+              autoFocus
+              keyboardType="decimal-pad"
+              placeholder="add"
+              placeholderTextColor={palette.muted}
+              returnKeyType="done"
+              selectTextOnFocus
+              style={styles.bodyWeightDialogInput}
+              testID="body-weight-dialog-input"
+              value={bodyWeightEntry}
+              onChangeText={onChangeBodyWeightEntry}
+              onSubmitEditing={onSave}
+            />
+            <Text style={styles.bodyWeightDialogUnit}>lb</Text>
+          </View>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          <View style={styles.confirmDialogActions}>
+            <Pressable
+              accessibilityLabel="Reset body weight to Apple Health"
+              accessibilityRole="button"
+              disabled={loadingHealth}
+              style={styles.confirmDialogAction}
+              testID="body-weight-dialog-reset-health"
+              onPress={onResetToHealth}
+            >
+              <Text style={styles.confirmDialogActionText}>
+                {loadingHealth ? "checking health" : "reset to apple health"}
+              </Text>
+            </Pressable>
+            <View style={styles.bodyWeightDialogActionRow}>
+              <Pressable
+                accessibilityLabel="Cancel body weight edit"
+                accessibilityRole="button"
+                style={[
+                  styles.confirmDialogAction,
+                  styles.bodyWeightDialogAction,
+                ]}
+                testID="body-weight-dialog-cancel"
+                onPress={onClose}
+              >
+                <Text
+                  style={[
+                    styles.confirmDialogActionText,
+                    styles.confirmDialogActionTextMuted,
+                  ]}
+                >
+                  cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Save body weight"
+                accessibilityRole="button"
+                style={[
+                  styles.confirmDialogAction,
+                  styles.confirmDialogActionPrimary,
+                  styles.bodyWeightDialogAction,
+                ]}
+                testID="body-weight-dialog-save"
+                onPress={onSave}
+              >
+                <Text style={styles.confirmDialogActionText}>save</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       </DismissibleModalShade>
     </AppModal>

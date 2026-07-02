@@ -1905,6 +1905,46 @@ export const styles = StyleSheet.create({
   confirmDialogActionTextMuted: {
     color: palette.muted,
   },
+  bodyWeightDialog: {
+    backgroundColor: palette.raised,
+    borderColor: palette.line,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+    maxWidth: 430,
+    padding: 12,
+    width: "100%",
+  },
+  bodyWeightDialogInputRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  bodyWeightDialogInput: {
+    ...controlChrome,
+    color: palette.ink,
+    flex: 1,
+    fontFamily: monoFont,
+    fontSize: 24,
+    fontWeight: "800",
+    minHeight: 42,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  bodyWeightDialogUnit: {
+    color: palette.muted,
+    fontFamily: monoFont,
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 25,
+  },
+  bodyWeightDialogActionRow: {
+    flexDirection: "row",
+    gap: 5,
+  },
+  bodyWeightDialogAction: {
+    flex: 1,
+  },
   commandMenuShade: {
     backgroundColor: "rgba(31, 28, 23, 0.42)",
     flex: 1,
