@@ -79,18 +79,14 @@ describe("initialiseExercises previous summary", () => {
       },
     ])[0]!;
 
-    expect(exercise.previousSummary).toBe(
-      "Row - 100lbx8,90lbx6,100lbx6",
-    );
+    expect(exercise.previousSummary).toBe("Row - 100lbx8,90lbx6,100lbx6");
   });
 
   it("omits summary when only warmups are present", () => {
     const exercise = initialiseExercises([
       {
         name: "Bike",
-        sets: [
-          { weight: null, reps: 20, isWarmup: true },
-        ],
+        sets: [{ weight: null, reps: 20, isWarmup: true }],
       },
     ])[0]!;
 
@@ -137,25 +133,24 @@ describe("parseQuickSetLine", () => {
   });
 
   it("parses bodyweight pull-up notation and neg notes", () => {
-    expect(parseQuickSetLine("BW 10,10,9+1+4(neg)"))
-      .toMatchObject([
-        { weight: 0, reps: 10, weightModifier: "bodyweight" },
-        { weight: 0, reps: 10, weightModifier: "bodyweight" },
-        { weight: 0, reps: 9, weightModifier: "bodyweight" },
-        {
-          weight: 0,
-          reps: 1,
-          weightModifier: "bodyweight",
-          restBefore: "short",
-        },
-        {
-          weight: 0,
-          reps: 4,
-          weightModifier: "bodyweight",
-          restBefore: "short",
-          notes: "neg",
-        },
-      ]);
+    expect(parseQuickSetLine("BW 10,10,9+1+4(neg)")).toMatchObject([
+      { weight: 0, reps: 10, weightModifier: "bodyweight" },
+      { weight: 0, reps: 10, weightModifier: "bodyweight" },
+      { weight: 0, reps: 9, weightModifier: "bodyweight" },
+      {
+        weight: 0,
+        reps: 1,
+        weightModifier: "bodyweight",
+        restBefore: "short",
+      },
+      {
+        weight: 0,
+        reps: 4,
+        weightModifier: "bodyweight",
+        restBefore: "short",
+        notes: "neg",
+      },
+    ]);
   });
 
   it("parses weighted bodyweight notation", () => {
@@ -177,8 +172,12 @@ describe("parseQuickSetLine", () => {
   });
 
   it("keeps bare weighted notation standard even with bodyweight history", () => {
-    expect(parseQuickSetLine("10lbx13,10", { bodyweight: true }))
-      .toMatchObject([{ weight: 10, reps: 13 }, { weight: 10, reps: 10 }]);
+    expect(parseQuickSetLine("10lbx13,10", { bodyweight: true })).toMatchObject(
+      [
+        { weight: 10, reps: 13 },
+        { weight: 10, reps: 10 },
+      ],
+    );
     expect(
       parseQuickSetLine("10lbx13,10", { bodyweight: true }).map(
         (set) => set.weightModifier,
@@ -266,6 +265,118 @@ describe("PLUS_MINUS reducer", () => {
     const dec = workoutReducer(state, { type: "PLUS_MINUS", sign: -1 });
     expect(dec.inputValue).toBe("0");
     expect(dec.exercises[0]!.sets[0]!.reps).toBe(0);
+  });
+});
+
+describe("current exercise reducer state", () => {
+  const baseState = (): Workout => ({
+    currentExerciseIndex: 0,
+    exercises: initialiseExercises([
+      { name: "Pull-ups", sets: [{ weight: null, reps: 5 }] },
+      { name: "Rows", sets: [{ weight: 75, reps: 10 }] },
+      { name: "Curl", sets: [{ weight: 30, reps: 12 }] },
+    ]),
+    activeField: { exerciseIndex: null, setIndex: null, field: null },
+    inputValue: "",
+    isFirstInteraction: false,
+    notes: [],
+    startTime: 0,
+    name: "Workout",
+    isInProgress: true,
+  });
+
+  it("selects a current exercise without changing the active input", () => {
+    const state: Workout = {
+      ...baseState(),
+      activeField: { exerciseIndex: 0, setIndex: 0, field: "reps" },
+      inputValue: "5",
+    };
+
+    const selected = workoutReducer(state, {
+      type: "SELECT_EXERCISE",
+      exerciseIndex: 2,
+    });
+
+    expect(selected.currentExerciseIndex).toBe(2);
+    expect(selected.activeField).toEqual(state.activeField);
+    expect(selected.inputValue).toBe("5");
+  });
+
+  it("keeps the same current exercise when reordered", () => {
+    const state: Workout = {
+      ...baseState(),
+      currentExerciseIndex: 1,
+    };
+
+    const moved = workoutReducer(state, {
+      type: "MOVE_EXERCISE_TO",
+      exerciseIndex: 1,
+      targetIndex: 0,
+    });
+
+    expect(moved.currentExerciseIndex).toBe(0);
+    expect(moved.exercises[moved.currentExerciseIndex]!.name).toBe("Rows");
+  });
+});
+
+describe("set completion reducer state", () => {
+  it("toggles completion without filling missing values from estimates", () => {
+    const state: Workout = {
+      currentExerciseIndex: 0,
+      exercises: initialiseExercises([
+        {
+          name: "Rows",
+          sets: [{ weight: 75, reps: 10 }],
+        },
+      ]),
+      activeField: { exerciseIndex: null, setIndex: null, field: null },
+      inputValue: "",
+      isFirstInteraction: false,
+      notes: [],
+      startTime: 0,
+      name: "Workout",
+      isInProgress: true,
+    };
+    const nextState = {
+      ...state,
+      exercises: [
+        {
+          ...state.exercises[0]!,
+          sets: [
+            {
+              ...state.exercises[0]!.sets[0]!,
+              weight: null,
+              reps: 8,
+              completed: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    const completed = workoutReducer(nextState, {
+      type: "TOGGLE_SET_COMPLETED",
+      exerciseIndex: 0,
+      setIndex: 0,
+    });
+
+    expect(completed.exercises[0]!.sets[0]).toMatchObject({
+      weight: null,
+      reps: 8,
+      completed: true,
+    });
+
+    const uncompleted = workoutReducer(completed, {
+      type: "TOGGLE_SET_COMPLETED",
+      exerciseIndex: 0,
+      setIndex: 0,
+    });
+
+    expect(uncompleted.exercises[0]!.sets[0]).toMatchObject({
+      weight: null,
+      reps: 8,
+      completed: false,
+    });
   });
 });
 

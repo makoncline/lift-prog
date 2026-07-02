@@ -8,7 +8,42 @@ type MobileExpoExtra = {
 
 const extra = (Constants.expoConfig?.extra ?? {}) as MobileExpoExtra;
 
-export const mobileLocalDevUserId = extra.localDevUserId ?? "";
+const cleanBaseUrl = (rawUrl: string | undefined): string | undefined => {
+  if (!rawUrl) {
+    return undefined;
+  }
+
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    const isLocalHost =
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname.startsWith("192.168.") ||
+      parsed.hostname.startsWith("10.");
+
+    if (isLocalHost) {
+      return undefined;
+    }
+
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return undefined;
+  }
+};
+
 export const mobileWorkoutApiBaseUrl =
-  extra.workoutApiBaseUrl ?? "https://lift.makon.dev";
-export const mobileAuthBaseUrl = extra.authBaseUrl ?? mobileWorkoutApiBaseUrl;
+  cleanBaseUrl(extra.workoutApiBaseUrl) ??
+  "https://lift.makon.dev";
+export const mobileAuthBaseUrl =
+  cleanBaseUrl(extra.authBaseUrl) ?? mobileWorkoutApiBaseUrl;
+
+export const mobileLocalDevUserId = extra.localDevUserId ?? "";

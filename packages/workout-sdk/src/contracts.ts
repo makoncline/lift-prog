@@ -86,6 +86,40 @@ export const ExerciseListItemSchema = z.object({
 
 export const ListExercisesResultSchema = z.array(ExerciseListItemSchema);
 
+const exerciseUpdateTargetShape = {
+  id: z.number().optional(),
+  name: z.string().min(1).optional(),
+};
+
+const requireExerciseUpdateTarget = <
+  T extends { id?: number; name?: string },
+>(
+  input: T,
+) => input.id !== undefined || input.name !== undefined;
+
+export const UpdateExerciseNoteInputSchema = z
+  .object({
+    ...exerciseUpdateTargetShape,
+    note: z.string(),
+  })
+  .refine(requireExerciseUpdateTarget, {
+    message: "Exercise id or name is required.",
+  });
+
+export const UpdateExercisePlateDefaultsInputSchema = z
+  .object({
+    ...exerciseUpdateTargetShape,
+    plateStartingWeight: z.number().min(0).nullable(),
+    plateLoadMode: plateLoadModeSchema,
+  })
+  .refine(requireExerciseUpdateTarget, {
+    message: "Exercise id or name is required.",
+  });
+
+export const ExerciseUpdateResultSchema = z.object({
+  count: z.number(),
+});
+
 export const SaveWorkoutInputSchema = CompletedWorkoutSchema;
 
 export const SaveWorkoutResultSchema = z.object({
@@ -130,6 +164,13 @@ export type ListRecentWorkoutsInput = z.infer<
 >;
 export type RecentWorkoutSummary = z.infer<typeof RecentWorkoutSummarySchema>;
 export type ExerciseListItem = z.infer<typeof ExerciseListItemSchema>;
+export type UpdateExerciseNoteInput = z.infer<
+  typeof UpdateExerciseNoteInputSchema
+>;
+export type UpdateExercisePlateDefaultsInput = z.infer<
+  typeof UpdateExercisePlateDefaultsInputSchema
+>;
+export type ExerciseUpdateResult = z.infer<typeof ExerciseUpdateResultSchema>;
 export type SaveWorkoutInput = z.infer<typeof SaveWorkoutInputSchema>;
 export type SaveWorkoutResult = z.infer<typeof SaveWorkoutResultSchema>;
 export type GetWorkoutDetailsInput = z.infer<

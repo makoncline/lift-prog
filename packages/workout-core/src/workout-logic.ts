@@ -698,6 +698,7 @@ export type Action =
   | { type: "TOGGLE_SIGN" }
   | { type: "NEXT" }
   | { type: "TOGGLE_COMPLETE"; exerciseIndex: number; setIndex: number }
+  | { type: "TOGGLE_SET_COMPLETED"; exerciseIndex: number; setIndex: number }
   | { type: "TOGGLE_WARMUP"; exerciseIndex: number; setIndex: number }
   | { type: "TOGGLE_BODYWEIGHT" }
   | { type: "DELETE_SET"; exerciseIndex: number; setIndex: number }
@@ -755,6 +756,7 @@ export type Action =
       exerciseIndex: number;
       targetIndex: number;
     }
+  | { type: "SELECT_EXERCISE"; exerciseIndex: number }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
   | { type: "UPDATE_USER_EXERCISE_NOTE"; exerciseIndex: number; note: string }
@@ -968,6 +970,20 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return { ...state, exercises: newExercises };
     }
 
+    case "TOGGLE_SET_COMPLETED": {
+      const { exerciseIndex, setIndex } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      return {
+        ...state,
+        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, {
+          ...set,
+          completed: !set.completed,
+        }),
+      };
+    }
+
     case "TOGGLE_WARMUP": {
       const { exerciseIndex, setIndex } = action;
       const ex = state.exercises[exerciseIndex];
@@ -997,6 +1013,9 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
       // Combine the sorted lists
       const newSets = [...warmups, ...working];
+      const newSetIndex = newSets.findIndex(
+        (candidate) => candidate === updatedSet,
+      );
 
       const newEx: WorkoutExercise = { ...ex, sets: newSets };
       const newExercises = replaceExercise(
@@ -1005,7 +1024,18 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         newEx,
       );
 
-      return { ...state, exercises: newExercises };
+      const shouldMoveActiveField =
+        state.activeField.exerciseIndex === exerciseIndex &&
+        state.activeField.setIndex === setIndex &&
+        newSetIndex >= 0;
+
+      return {
+        ...state,
+        exercises: newExercises,
+        activeField: shouldMoveActiveField
+          ? { ...state.activeField, setIndex: newSetIndex }
+          : state.activeField,
+      };
     }
 
     case "TOGGLE_BODYWEIGHT": {
@@ -1403,6 +1433,17 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         exercises: nextExercises,
         currentExerciseIndex: remapIndex(state.currentExerciseIndex),
         activeField,
+      };
+    }
+
+    case "SELECT_EXERCISE": {
+      const { exerciseIndex } = action;
+      if (exerciseIndex < 0 || exerciseIndex >= state.exercises.length) {
+        return state;
+      }
+      return {
+        ...state,
+        currentExerciseIndex: exerciseIndex,
       };
     }
 

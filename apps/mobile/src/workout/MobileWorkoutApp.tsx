@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { Picker } from "@react-native-picker/picker";
+import * as Haptics from "expo-haptics";
 import * as SecureStore from "expo-secure-store";
 import {
   createWorkoutApiClient,
@@ -28,16 +30,19 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Animated,
+  ActionSheetIOS,
+  findNodeHandle,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
+  type ModalProps,
   PanResponder,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  type GestureResponderEvent,
   type StyleProp,
   Text,
   TextInput,
@@ -52,14 +57,25 @@ import {
 
 import { mobileWorkoutApiBaseUrl } from "../lib/config";
 import {
+  addWatchWorkoutCommandListener,
+  addUnfinishedWorkoutReminderListener,
+  addHeartRateSampleListener,
+  cancelUnfinishedWorkoutNotification,
+  cancelWorkoutTimerNotification,
   cancelStrengthWorkout,
+  endRestTimerLiveActivity,
   finishStrengthWorkout,
+  getHealthAuthorizationStatus,
   getLatestBodyWeight,
   isHealthAvailable,
   requestHealthAuthorization,
+  scheduleUnfinishedWorkoutNotification,
   scheduleWorkoutTimerNotification,
-  startStrengthWorkout,
+  startOrUpdateRestTimerLiveActivity,
+  updateWatchWorkoutSnapshot,
+  clearWatchWorkoutSnapshot,
 } from "../../modules/lift-health/src";
+import type { WatchWorkoutCommand } from "../../modules/lift-health/src";
 import { MobileErrorBoundary } from "./MobileErrorBoundary";
 import {
   countCompletedExerciseWorkingSets,
@@ -113,6 +129,7 @@ type AppScreen =
   | {
       name: "workout";
       key: number;
+      viewMode?: WorkoutViewMode;
       prepared: PreparedWorkout;
       draftWorkout?: Workout;
       workoutId?: number;
@@ -129,12 +146,50 @@ type SetEditTarget = {
 };
 
 type SetEditField = "weight" | "reps";
+type WorkoutViewMode = "active" | "past-review" | "past-edit";
+type ExerciseHistoryEntry = NonNullable<WorkoutExercise["history"]>[number];
+type ExerciseDetailsTab = "about" | "history" | "charts" | "records";
+type UserExerciseSettings = {
+  note: string;
+  plateStartingWeight: number | null;
+  plateLoadMode: PlateLoadMode;
+};
+type MenuAnchor = { x: number; y: number; width: number; height: number };
+type SwipeActionSetRowHelpers = {
+  isPressSuppressed: () => boolean;
+  swipeTouchHandlers: {
+    onTouchCancel: (event: GestureResponderEvent) => void;
+    onTouchEnd: (event: GestureResponderEvent) => void;
+    onTouchMove: (event: GestureResponderEvent) => void;
+    onTouchStart: (event: GestureResponderEvent) => void;
+  };
+};
+type AppDialogAction = {
+  label: string;
+  onPress?: () => void | Promise<void>;
+  testID?: string;
+  variant?: "default" | "primary" | "danger" | "cancel";
+};
+type AppDialogState = {
+  actions: AppDialogAction[];
+  message?: string;
+  title: string;
+};
+type AppDialogPresenter = (dialog: AppDialogState) => void;
+
+const USE_SWIPEABLE_EXERCISE_SET_CARDS = false;
+const AppDialogContext = React.createContext<AppDialogPresenter | null>(null);
+const AppModalLayerOpenContext = React.createContext(false);
+const AppModalLayerRegisterContext = React.createContext<
+  (() => () => void) | null
+>(null);
 
 type NoteEditTarget =
   | { kind: "workout" }
   | { kind: "exercise"; exerciseIndex: number }
   | { kind: "workout-exercise"; exerciseIndex: number }
   | { kind: "set"; exerciseIndex: number; setId: string };
+type InlineNoteEditTarget = Exclude<NoteEditTarget, { kind: "workout" }>;
 type TimeEditTarget =
   | "start-date"
   | "start-time"
@@ -156,6 +211,16 @@ type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
 const REST_TIMER_SECONDS = 180;
+const UNFINISHED_WORKOUT_REMINDER_SECONDS = 15 * 60;
+const REST_TIMER_PRESET_SECONDS = [30, 60, 90, 120, 150, 180, 240, 300];
+const REST_TIMER_STEP_SECONDS = 10;
+const MIN_REST_TIMER_SECONDS = 10;
+const MAX_REST_TIMER_SECONDS = 20 * 60;
+const REST_TIMER_HOLD_DELAY_MS = 300;
+const REST_TIMER_CUSTOM_SECONDS = Array.from(
+  { length: MAX_REST_TIMER_SECONDS / 10 },
+  (_, index) => (index + 1) * 10,
+);
 
 function formatCountdown(seconds: number) {
   const safeSeconds = Math.max(0, Math.ceil(seconds));
@@ -164,15 +229,37 @@ function formatCountdown(seconds: number) {
   return `${minutes}:${remainingSeconds}`;
 }
 
+function normalizeRestTimerSeconds(seconds: number) {
+  if (!Number.isFinite(seconds)) return REST_TIMER_SECONDS;
+  return Math.max(
+    MIN_REST_TIMER_SECONDS,
+    Math.min(MAX_REST_TIMER_SECONDS, Math.round(seconds)),
+  );
+}
+
+function formatRestTimerDurationLabel(seconds: number) {
+  const safeSeconds = normalizeRestTimerSeconds(seconds);
+  if (safeSeconds < 60) return `${safeSeconds}s`;
+  if (safeSeconds % 60 === 0) return `${safeSeconds / 60}m`;
+  return formatCountdown(safeSeconds);
+}
+
+function closestRestTimerOption(seconds: number, options: number[]) {
+  const normalized = normalizeRestTimerSeconds(seconds);
+  return options.reduce((closest, option) =>
+    Math.abs(option - normalized) < Math.abs(closest - normalized)
+      ? option
+      : closest,
+  );
+}
+
 type StoredWorkoutDraft = {
   workout: Workout;
   completedAt: string | null;
   savedAt: number;
 };
 
-type PendingWorkoutDraft = StoredWorkoutDraft & {
-  dismissed?: boolean;
-};
+type PendingWorkoutDraft = StoredWorkoutDraft;
 
 type WorkoutSession = {
   past: Workout[];
@@ -199,12 +286,13 @@ const EPHEMERAL_WORKOUT_ACTIONS = new Set<Action["type"]>([
   "FOCUS_FIELD",
   "COLLAPSE_KEYBOARD",
   "NAV_EXERCISE",
+  "SELECT_EXERCISE",
 ]);
 
 let nextClientId = 1;
 
 function makeClientId() {
-  const id = `mobile-set-${nextClientId}`;
+  const id = `mobile-set-${Date.now()}-${nextClientId}`;
   nextClientId += 1;
   return id;
 }
@@ -253,6 +341,11 @@ function Icon({
   return <Ionicons name={name} size={size} color={color} />;
 }
 
+function triggerSelectionHaptic() {
+  if (Platform.OS !== "ios") return;
+  void Haptics.selectionAsync().catch(() => undefined);
+}
+
 function ensureWorkoutSetIds(workout: Workout): Workout {
   return {
     ...workout,
@@ -262,6 +355,16 @@ function ensureWorkoutSetIds(workout: Workout): Workout {
         ...set,
         clientId: set.clientId ?? makeClientId(),
       })),
+    })),
+  };
+}
+
+function resetExerciseCompletion(exercise: WorkoutExercise): WorkoutExercise {
+  return {
+    ...exercise,
+    sets: exercise.sets.map((set) => ({
+      ...set,
+      completed: false,
     })),
   };
 }
@@ -313,7 +416,7 @@ function createWorkoutState(
           }),
         };
       })
-    : exercises;
+    : exercises.map(resetExerciseCompletion);
 
   return ensureWorkoutSetIds({
     currentExerciseIndex: 0,
@@ -723,6 +826,12 @@ function createLocalWorkoutApiClient(
           plateLoadMode: null,
         }));
     },
+    async updateExerciseNote() {
+      return { count: 1 };
+    },
+    async updateExercisePlateDefaults() {
+      return { count: 1 };
+    },
     async saveWorkout(input) {
       const nextId = recent.length + 1;
       recent.unshift({
@@ -793,6 +902,139 @@ function createLocalWorkoutApiClient(
   };
 }
 
+function useAppDialog() {
+  const presentDialog = React.use(AppDialogContext);
+  if (!presentDialog) {
+    throw new Error("useAppDialog must be used inside AppDialogProvider");
+  }
+  return presentDialog;
+}
+
+function useAppModalLayerOpen() {
+  return React.use(AppModalLayerOpenContext);
+}
+
+function useRegisterAppModalLayer(open: boolean) {
+  const registerModal = React.use(AppModalLayerRegisterContext);
+
+  useEffect(() => {
+    if (!open || !registerModal) return undefined;
+    return registerModal();
+  }, [open, registerModal]);
+}
+
+function AppModalLayerProvider({ children }: { children: React.ReactNode }) {
+  const [openCount, setOpenCount] = useState(0);
+  const registerModal = useCallback(() => {
+    let released = false;
+    setOpenCount((count) => count + 1);
+
+    return () => {
+      if (released) return;
+      released = true;
+      setOpenCount((count) => Math.max(0, count - 1));
+    };
+  }, []);
+
+  return (
+    <AppModalLayerRegisterContext.Provider value={registerModal}>
+      <AppModalLayerOpenContext.Provider value={openCount > 0}>
+        {children}
+      </AppModalLayerOpenContext.Provider>
+    </AppModalLayerRegisterContext.Provider>
+  );
+}
+
+function AppModal({ visible, children, ...props }: ModalProps) {
+  useRegisterAppModalLayer(Boolean(visible));
+  return (
+    <Modal visible={visible} {...props}>
+      {children}
+    </Modal>
+  );
+}
+
+function AppDialogProvider({ children }: { children: React.ReactNode }) {
+  const [dialog, setDialog] = useState<AppDialogState | null>(null);
+  const presentDialog = useCallback((nextDialog: AppDialogState) => {
+    setDialog(nextDialog);
+  }, []);
+  const dismissDialog = useCallback(() => setDialog(null), []);
+
+  return (
+    <AppDialogContext.Provider value={presentDialog}>
+      {children}
+      <AppDialogModal dialog={dialog} onDismiss={dismissDialog} />
+    </AppDialogContext.Provider>
+  );
+}
+
+function AppDialogModal({
+  dialog,
+  onDismiss,
+}: {
+  dialog: AppDialogState | null;
+  onDismiss: () => void;
+}) {
+  if (!dialog) return null;
+
+  return (
+    <AppModal visible transparent animationType="fade" onRequestClose={onDismiss}>
+      <DismissibleModalShade onDismiss={onDismiss} style={styles.confirmDialogShade}>
+        <View
+          accessibilityRole="alert"
+          accessible
+          style={styles.confirmDialog}
+        >
+          <View style={styles.confirmDialogCopy}>
+            <Text style={styles.confirmDialogTitle}>{dialog.title}</Text>
+            {dialog.message ? (
+              <Text style={styles.confirmDialogMessage}>{dialog.message}</Text>
+            ) : null}
+          </View>
+          <View style={styles.confirmDialogActions}>
+            {dialog.actions.map((action, index) => {
+              const variant = action.variant ?? "default";
+              return (
+                <Pressable
+                  key={`${action.label}-${index}`}
+                  accessibilityLabel={action.label}
+                  accessibilityRole="button"
+                  style={[
+                    styles.confirmDialogAction,
+                    variant === "primary"
+                      ? styles.confirmDialogActionPrimary
+                      : null,
+                  ]}
+                  testID={action.testID}
+                  onPress={() => {
+                    onDismiss();
+                    void action.onPress?.();
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.confirmDialogActionText,
+                      variant === "danger"
+                        ? styles.confirmDialogActionTextDanger
+                        : null,
+                      variant === "cancel"
+                        ? styles.confirmDialogActionTextMuted
+                        : null,
+                    ]}
+                  >
+                    {action.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
 export function LiftMobileApp({
   getHeaders,
   localDevUserId,
@@ -831,6 +1073,19 @@ export function LiftMobileApp({
     }));
   }, []);
 
+  const restoreDraft = useCallback((draft: StoredWorkoutDraft) => {
+    setPendingDraft(null);
+    setScreen({
+      name: "workout",
+      key: Date.now(),
+      viewMode: "active",
+      prepared: blankPreparedWorkout(draft.workout.bodyWeightLb ?? null),
+      draftWorkout: draft.workout,
+      completedAt: draft.completedAt ? new Date(draft.completedAt) : null,
+      contextLabel: "continued active workout",
+    });
+  }, []);
+
   useEffect(() => {
     if (checkedDraftRef.current) return;
     checkedDraftRef.current = true;
@@ -846,8 +1101,21 @@ export function LiftMobileApp({
     };
   }, []);
 
-  if (screen.name === "workout") {
-    return (
+  useEffect(() => {
+    if (Platform.OS !== "ios") return undefined;
+
+    const subscription = addUnfinishedWorkoutReminderListener(() => {
+      void readActiveWorkoutDraft().then((draft) => {
+        if (!draft || draft.workout.exercises.length === 0) return;
+        restoreDraft(draft);
+      });
+    });
+
+    return () => subscription.remove();
+  }, [restoreDraft]);
+
+  const content =
+    screen.name === "workout" ? (
       <MobileErrorBoundary
         key={`workout-boundary-${screen.key}`}
         scope="mobile-workout"
@@ -860,6 +1128,7 @@ export function LiftMobileApp({
         <WorkoutScreen
           api={api}
           prepared={screen.prepared}
+          initialViewMode={screen.viewMode}
           draftWorkout={screen.draftWorkout}
           workoutId={screen.workoutId}
           startedAt={screen.startedAt}
@@ -867,60 +1136,52 @@ export function LiftMobileApp({
           workoutNote={screen.notes ?? null}
           contextLabel={screen.contextLabel}
           onBack={returnHome}
+          onActiveDraftSaved={setPendingDraft}
         />
       </MobileErrorBoundary>
+    ) : (
+      <HomeScreen
+        api={api}
+        refreshKey={screen.refreshKey}
+        pendingDraft={pendingDraft}
+        onSignOut={onSignOut}
+        onContinueDraft={restoreDraft}
+        onStartBlank={(bodyWeightLb) =>
+          setScreen({
+            name: "workout",
+            key: Date.now(),
+            viewMode: "active",
+            prepared: blankPreparedWorkout(bodyWeightLb),
+          })
+        }
+        onStartPrepared={(prepared) =>
+          setScreen({
+            name: "workout",
+            key: Date.now(),
+            viewMode: "active",
+            prepared,
+          })
+        }
+        onEditWorkout={(workoutId, details) =>
+          setScreen({
+            name: "workout",
+            key: Date.now(),
+            viewMode: "past-review",
+            workoutId,
+            prepared: details,
+            startedAt: details.startedAt,
+            completedAt: details.completedAt,
+            notes: details.notes ?? null,
+            contextLabel: `editing past workout #${workoutId}`,
+          })
+        }
+      />
     );
-  }
 
   return (
-    <HomeScreen
-      api={api}
-      refreshKey={screen.refreshKey}
-      pendingDraft={pendingDraft}
-      onSignOut={onSignOut}
-      onContinueDraft={(draft) => {
-        setPendingDraft(null);
-        setScreen({
-          name: "workout",
-          key: Date.now(),
-          prepared: blankPreparedWorkout(draft.workout.bodyWeightLb ?? null),
-          draftWorkout: draft.workout,
-          completedAt: draft.completedAt ? new Date(draft.completedAt) : null,
-          contextLabel: "continued active workout",
-        });
-      }}
-      onDismissDraft={() =>
-        setPendingDraft((current) =>
-          current ? { ...current, dismissed: true } : current,
-        )
-      }
-      onDiscardDraft={() => {
-        setPendingDraft(null);
-        void clearActiveWorkoutDraft();
-      }}
-      onStartBlank={(bodyWeightLb) =>
-        setScreen({
-          name: "workout",
-          key: Date.now(),
-          prepared: blankPreparedWorkout(bodyWeightLb),
-        })
-      }
-      onStartPrepared={(prepared) =>
-        setScreen({ name: "workout", key: Date.now(), prepared })
-      }
-      onEditWorkout={(workoutId, details) =>
-        setScreen({
-          name: "workout",
-          key: Date.now(),
-          workoutId,
-          prepared: details,
-          startedAt: details.startedAt,
-          completedAt: details.completedAt,
-          notes: details.notes ?? null,
-          contextLabel: `editing past workout #${workoutId}`,
-        })
-      }
-    />
+    <AppModalLayerProvider>
+      <AppDialogProvider>{content}</AppDialogProvider>
+    </AppModalLayerProvider>
   );
 }
 
@@ -930,8 +1191,6 @@ function HomeScreen({
   pendingDraft,
   onSignOut,
   onContinueDraft,
-  onDismissDraft,
-  onDiscardDraft,
   onStartBlank,
   onStartPrepared,
   onEditWorkout,
@@ -941,13 +1200,12 @@ function HomeScreen({
   pendingDraft: PendingWorkoutDraft | null;
   onSignOut?: () => void;
   onContinueDraft: (draft: StoredWorkoutDraft) => void;
-  onDismissDraft: () => void;
-  onDiscardDraft: () => void;
   onStartBlank: (bodyWeightLb: number | null) => void;
   onStartPrepared: (prepared: PreparedWorkout) => void;
   onEditWorkout: (workoutId: number, details: WorkoutDetails) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const presentDialog = useAppDialog();
   const [workouts, setWorkouts] = useState<RecentWorkout[]>([]);
   const [limit, setLimit] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -958,8 +1216,10 @@ function HomeScreen({
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(
     null,
   );
+  const [now, setNow] = useState(() => Date.now());
   const loadRequestIdRef = useRef(0);
   const navigationRequestIdRef = useRef(0);
+  const bottomDockInset = Math.max(insets.bottom, 12);
   const latestBodyWeightLb = useMemo(
     () =>
       workouts.find((workout) => workout.bodyWeightLb != null)?.bodyWeightLb ??
@@ -1009,6 +1269,12 @@ function HomeScreen({
   useEffect(() => {
     void loadWorkouts(limit);
   }, [limit, loadWorkouts, refreshKey]);
+
+  useEffect(() => {
+    if (!pendingDraft || pendingDraft.completedAt) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [pendingDraft]);
 
   const copyWorkout = async (workout: RecentWorkout) => {
     const requestId = navigationRequestIdRef.current + 1;
@@ -1078,14 +1344,18 @@ function HomeScreen({
   };
 
   const confirmDeleteWorkout = (workout: RecentWorkout) => {
-    Alert.alert("Delete workout?", workout.name, [
-      { text: "cancel", style: "cancel" },
-      {
-        text: "delete",
-        style: "destructive",
-        onPress: () => void deleteWorkout(workout),
-      },
-    ]);
+    presentDialog({
+      title: "Delete workout?",
+      message: workout.name,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => void deleteWorkout(workout),
+        },
+      ],
+    });
   };
 
   return (
@@ -1115,7 +1385,11 @@ function HomeScreen({
       <ScrollView
         contentContainerStyle={[
           styles.page,
-          { paddingBottom: insets.bottom + 24 },
+          {
+            paddingBottom: pendingDraft
+              ? bottomDockInset + 118
+              : insets.bottom + 24,
+          },
         ]}
         contentInsetAdjustmentBehavior="automatic"
         refreshControl={
@@ -1162,85 +1436,104 @@ function HomeScreen({
           </Pressable>
         ) : null}
       </ScrollView>
-      <ActiveWorkoutDraftSheet
-        draft={pendingDraft?.dismissed ? null : pendingDraft}
-        onContinue={onContinueDraft}
-        onDismiss={onDismissDraft}
-        onDiscard={onDiscardDraft}
-      />
+      {pendingDraft ? (
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.activeWorkoutBannerDock,
+            { paddingBottom: bottomDockInset },
+          ]}
+        >
+          <ActiveWorkoutDraftBanner
+            draft={pendingDraft}
+            now={now}
+            onContinue={onContinueDraft}
+          />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
-function ActiveWorkoutDraftSheet({
+function ActiveWorkoutDraftBanner({
   draft,
+  now,
   onContinue,
-  onDismiss,
-  onDiscard,
 }: {
   draft: PendingWorkoutDraft | null;
+  now: number;
   onContinue: (draft: StoredWorkoutDraft) => void;
-  onDismiss: () => void;
-  onDiscard: () => void;
 }) {
-  const insets = useSafeAreaInsets();
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressNextPressRef = useRef(false);
+  const restoringRef = useRef(false);
+
   if (!draft) return null;
 
-  const exerciseCount = draft.workout.exercises.length;
-  const savedAt = new Date(draft.savedAt);
+  const startedAt = new Date(draft.workout.startTime);
+  const endedAt = draft.completedAt ? new Date(draft.completedAt) : new Date(now);
+  const restoreDraftFromBanner = () => {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    onContinue(draft);
+  };
+  const getTouchPoint = (event: GestureResponderEvent) => {
+    const [touch] = event.nativeEvent.changedTouches;
+    return {
+      x: touch?.pageX ?? event.nativeEvent.pageX,
+      y: touch?.pageY ?? event.nativeEvent.pageY,
+    };
+  };
+  const handleTouchStart = (event: GestureResponderEvent) => {
+    swipeStartRef.current = getTouchPoint(event);
+    suppressNextPressRef.current = false;
+  };
+  const handleTouchEnd = (event: GestureResponderEvent) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start) return;
+
+    const end = getTouchPoint(event);
+    const dy = end.y - start.y;
+    const dx = Math.abs(end.x - start.x);
+    const didSwipeUp = dy <= -32 && dx <= 80;
+    if (!didSwipeUp) return;
+
+    suppressNextPressRef.current = true;
+    triggerSelectionHaptic();
+    restoreDraftFromBanner();
+  };
+
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
-      <DismissibleModalShade onDismiss={onDismiss}>
-        <View style={styles.recoverySheetSafeArea}>
-          <View
-            style={[
-              styles.recoverySheet,
-              { paddingBottom: Math.max(12, insets.bottom + 8) },
-            ]}
-          >
-            <Text style={styles.subtleTitle}>workout in progress</Text>
-            <Text style={styles.historyTitle}>{draft.workout.name}</Text>
-            <Text style={styles.metaText}>
-              {exerciseCount} {exerciseCount === 1 ? "exercise" : "exercises"} .
-              saved {formatRelativeDate(savedAt)} . {formatTime(savedAt)}
-            </Text>
-            <Text style={styles.mutedText}>
-              Continue where you left off, leave it saved for later, or discard
-              the saved draft from this phone.
-            </Text>
-            <View style={styles.recoveryActions}>
-              <Pressable
-                accessibilityLabel="Discard saved workout draft"
-                accessibilityRole="button"
-                style={styles.textButton}
-                testID="active-draft-discard"
-                onPress={onDiscard}
-              >
-                <Text style={styles.textButtonText}>discard</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Keep saved workout draft for later"
-                accessibilityRole="button"
-                style={styles.textButton}
-                testID="active-draft-not-now"
-                onPress={onDismiss}
-              >
-                <Text style={styles.textButtonText}>not now</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Continue workout in progress"
-                accessibilityRole="button"
-                style={[styles.textButton, styles.primaryWideButton]}
-                testID="active-draft-continue"
-                onPress={() => onContinue(draft)}
-              >
-                <Text style={styles.primaryWideButtonText}>continue</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </DismissibleModalShade>
-    </Modal>
+    <Pressable
+      accessibilityLabel={`Continue ${draft.workout.name}, active for ${formatElapsedClock(
+        startedAt,
+        endedAt,
+      )}`}
+      accessibilityRole="button"
+      style={styles.activeWorkoutBanner}
+      testID="active-workout-banner"
+      onPress={() => {
+        if (suppressNextPressRef.current) {
+          suppressNextPressRef.current = false;
+          return;
+        }
+
+        restoreDraftFromBanner();
+      }}
+      onTouchCancel={() => {
+        swipeStartRef.current = null;
+        suppressNextPressRef.current = false;
+      }}
+      onTouchEnd={handleTouchEnd}
+      onTouchStart={handleTouchStart}
+    >
+      <View style={styles.activeWorkoutBannerGrip} />
+      <Text style={styles.activeWorkoutBannerTitle}>{draft.workout.name}</Text>
+      <Text style={styles.activeWorkoutBannerTime}>
+        {formatElapsedClock(startedAt, endedAt)}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -1257,6 +1550,7 @@ function DismissibleModalShade({
 }) {
   const content = (
     <Pressable
+      accessible={false}
       style={styles.dismissibleModalContent}
       onPress={(event) => event.stopPropagation()}
     >
@@ -1265,7 +1559,12 @@ function DismissibleModalShade({
   );
 
   return (
-    <Pressable style={style} onPress={onDismiss}>
+    <Pressable
+      accessibilityViewIsModal
+      accessible={false}
+      style={style}
+      onPress={onDismiss}
+    >
       {keyboardAvoiding ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -1411,6 +1710,7 @@ function splitExerciseSummary(summary: string) {
 function WorkoutScreen({
   api,
   prepared,
+  initialViewMode,
   draftWorkout,
   workoutId,
   startedAt,
@@ -1418,9 +1718,11 @@ function WorkoutScreen({
   workoutNote,
   contextLabel,
   onBack,
+  onActiveDraftSaved,
 }: {
   api: WorkoutApiClient;
   prepared: PreparedWorkout;
+  initialViewMode?: WorkoutViewMode;
   draftWorkout?: Workout;
   workoutId?: number;
   startedAt?: Date;
@@ -1428,9 +1730,20 @@ function WorkoutScreen({
   workoutNote?: string | null;
   contextLabel?: string;
   onBack: () => void;
+  onActiveDraftSaved?: (draft: StoredWorkoutDraft) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const presentDialog = useAppDialog();
+  const appModalLayerOpen = useAppModalLayerOpen();
+  const { height: windowHeight } = useWindowDimensions();
   const isEditingPastWorkout = workoutId != null;
+  const [viewMode, setViewMode] = useState<WorkoutViewMode>(
+    initialViewMode ?? (isEditingPastWorkout ? "past-review" : "active"),
+  );
+  const isActiveWorkout = viewMode === "active";
+  const isPastReview = viewMode === "past-review";
+  const isPastEdit = viewMode === "past-edit";
+  const canEditWorkout = isActiveWorkout || isPastEdit;
   const [session, setSession] = useState(() =>
     createWorkoutSession(
       draftWorkout
@@ -1461,8 +1774,21 @@ function WorkoutScreen({
     useState(false);
   const [setEditor, setSetEditor] = useState<SetEditTarget | null>(null);
   const [noteEditor, setNoteEditor] = useState<NoteEditTarget | null>(null);
+  const [inlineNoteDraft, setInlineNoteDraft] = useState<string | null>(null);
+  const [exercisePlanOpen, setExercisePlanOpen] = useState(false);
+  const [workoutMenuOpen, setWorkoutMenuOpen] = useState(false);
+  const [workoutMenuAnchor, setWorkoutMenuAnchor] =
+    useState<MenuAnchor | null>(null);
+  const [workoutNameEditing, setWorkoutNameEditing] = useState(false);
+  const [workoutNameDraft, setWorkoutNameDraft] = useState<string | null>(null);
+  const [workoutNoteEditing, setWorkoutNoteEditing] = useState(false);
+  const [workoutNoteDraft, setWorkoutNoteDraft] = useState<string | null>(null);
+  const [workoutTimeAdjustOpen, setWorkoutTimeAdjustOpen] = useState(false);
   const [timeEditor, setTimeEditor] = useState<TimeEditTarget | null>(null);
   const [finishPreviewOpen, setFinishPreviewOpen] = useState(false);
+  const [watchSnapshotRequestNonce, setWatchSnapshotRequestNonce] =
+    useState(0);
+  const [bodyWeightEntry, setBodyWeightEntry] = useState<string | null>(null);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
     requested: false,
     live: false,
@@ -1470,8 +1796,14 @@ function WorkoutScreen({
     saving: false,
     message: null,
   });
+  const [heartRateBpm, setHeartRateBpm] = useState<number | null>(null);
   const [timerStatus, setTimerStatus] = useState<string | null>(null);
+  const [restTimerDurationSeconds, setRestTimerDurationSeconds] =
+    useState(REST_TIMER_SECONDS);
   const [restTimerEndsAt, setRestTimerEndsAt] = useState<number | null>(null);
+  const [restTimerDurationOpen, setRestTimerDurationOpen] = useState(false);
+  const [restTimerDurationAnchor, setRestTimerDurationAnchor] =
+    useState<MenuAnchor | null>(null);
   const [planDragging, setPlanDragging] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const draftWriteGenerationRef = useRef(0);
@@ -1482,12 +1814,27 @@ function WorkoutScreen({
   const restTimerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const restTimerNotificationIdRef = useRef<string | null>(null);
+  const workoutNameInputRef =
+    useRef<React.ComponentRef<typeof TextInput> | null>(null);
+  const workoutNoteInputRef =
+    useRef<React.ComponentRef<typeof TextInput> | null>(null);
+  const inlineNoteInputRef =
+    useRef<React.ComponentRef<typeof TextInput> | null>(null);
+  const workoutNameDraftRef = useRef<string | null>(null);
+  const workoutNoteDraftRef = useRef<string | null>(null);
+  const inlineNoteDraftRef = useRef<string | null>(null);
+  const exercisePagerRef =
+    useRef<React.ComponentRef<typeof ScrollView> | null>(null);
+  const [exercisePagerContentTop, setExercisePagerContentTop] = useState<
+    number | null
+  >(null);
 
   useEffect(() => {
-    const tickMs = restTimerEndsAt == null ? 30_000 : 1_000;
+    const tickMs = restTimerEndsAt == null && completedAt ? 30_000 : 1_000;
     const timer = setInterval(() => setNow(Date.now()), tickMs);
     return () => clearInterval(timer);
-  }, [restTimerEndsAt]);
+  }, [completedAt, restTimerEndsAt]);
 
   useEffect(
     () => () => {
@@ -1515,9 +1862,21 @@ function WorkoutScreen({
         workout,
         completedAt: completedAt?.toISOString() ?? null,
         savedAt: Date.now(),
-      }).catch(() => {
-        // A failed draft write should not block the active workout.
-      });
+      })
+        .then(async () => {
+          if (completedAt) {
+            await cancelUnfinishedWorkoutNotification().catch(() => undefined);
+            return;
+          }
+
+          await scheduleUnfinishedWorkoutNotification(
+            workout.name,
+            UNFINISHED_WORKOUT_REMINDER_SECONDS,
+          ).catch(() => undefined);
+        })
+        .catch(() => {
+          // A failed draft write or reminder update should not block the active workout.
+        });
       draftWritePromiseRef.current = writePromise;
       void writePromise;
     }, 300);
@@ -1556,23 +1915,58 @@ function WorkoutScreen({
   const commitPendingHistory = useCallback(() => {
     setSession(commitPendingWorkoutHistory);
   }, []);
+  const beginTextEditing = useCallback(() => {
+    commitPendingHistory();
+    setSetEditor(null);
+  }, [commitPendingHistory]);
   const clearPersistedActiveWorkout = useCallback(async () => {
     draftWriteGenerationRef.current += 1;
     draftWritesSuppressedRef.current = true;
     await draftWritePromiseRef.current;
     await clearActiveWorkoutDraft();
+    await cancelUnfinishedWorkoutNotification().catch(() => undefined);
   }, []);
 
-  const applyLatestHealthBodyWeight = useCallback(async () => {
-    if (Platform.OS !== "ios") return;
-    const latest = await getLatestBodyWeight();
-    const latestBodyWeight = normalizeBodyWeightLb(latest?.valueLb);
-    if (latestBodyWeight == null || bodyWeightEditedRef.current) return;
-    dispatch({
-      type: "UPDATE_BODY_WEIGHT",
-      bodyWeightLb: latestBodyWeight,
+  const applyLatestHealthBodyWeight = useCallback(
+    async (options: { requestAuthorization?: boolean } = {}) => {
+      if (Platform.OS !== "ios") return;
+      if (options.requestAuthorization) {
+        await requestHealthAuthorization();
+      }
+      const latest = await getLatestBodyWeight();
+      const latestBodyWeight = normalizeBodyWeightLb(latest?.valueLb);
+      if (latestBodyWeight == null || bodyWeightEditedRef.current) return;
+      dispatch({
+        type: "UPDATE_BODY_WEIGHT",
+        bodyWeightLb: latestBodyWeight,
+      });
+    },
+    [dispatch],
+  );
+
+  useEffect(() => {
+    if (isEditingPastWorkout) return;
+    if (Platform.OS !== "ios" || !isHealthAvailable()) return;
+
+    void applyLatestHealthBodyWeight({ requestAuthorization: true }).catch(
+      () => undefined,
+    );
+  }, [applyLatestHealthBodyWeight, isEditingPastWorkout]);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios" || !healthWorkout.live) {
+      setHeartRateBpm(null);
+      return;
+    }
+
+    const subscription = addHeartRateSampleListener((sample) => {
+      if (Number.isFinite(sample.bpm)) {
+        setHeartRateBpm(Math.round(sample.bpm));
+      }
     });
-  }, [dispatch]);
+
+    return () => subscription.remove();
+  }, [healthWorkout.live]);
 
   const startHealthWorkoutFlow = useCallback(async () => {
     if (Platform.OS !== "ios" || !isHealthAvailable()) {
@@ -1586,7 +1980,7 @@ function WorkoutScreen({
     setHealthWorkout((current) => ({
       ...current,
       starting: true,
-      message: "starting health workout",
+      message: "preparing health save",
     }));
 
     try {
@@ -1604,21 +1998,15 @@ function WorkoutScreen({
         return;
       }
 
-      const result = await withTimeout(
-        startStrengthWorkout(workout.startTime),
-        15_000,
-        "Apple Health workout did not start.",
-      );
+      // The iPhone app can reliably save the completed workout to Health.
+      // Continuous Apple Watch heart-rate capture needs a watch-owned workout
+      // session, so do not start an iPhone live session here.
       setHealthWorkout({
-        requested: result.started,
-        live: result.live,
+        requested: true,
+        live: false,
         starting: false,
         saving: false,
-        message:
-          result.message ??
-          (result.live
-            ? "health workout running"
-            : "health workout will save on finish"),
+        message: "health workout will save on finish",
       });
     } catch (healthError) {
       setHealthWorkout({
@@ -1640,15 +2028,24 @@ function WorkoutScreen({
     }
 
     healthPromptShownRef.current = true;
-    Alert.alert(
-      "Start Apple Health workout?",
-      "Save this as strength training and collect available Health metrics.",
-      [
-        { text: "not now", style: "cancel" },
-        { text: "start", onPress: () => void startHealthWorkoutFlow() },
+    presentDialog({
+      title: "Save to Apple Health?",
+      message: "Save this as strength training when the workout is finished.",
+      actions: [
+        { label: "not now", variant: "cancel" },
+        {
+          label: "save on finish",
+          variant: "primary",
+          onPress: () => void startHealthWorkoutFlow(),
+        },
       ],
-    );
-  }, [draftWorkout, isEditingPastWorkout, startHealthWorkoutFlow]);
+    });
+  }, [
+    draftWorkout,
+    isEditingPastWorkout,
+    presentDialog,
+    startHealthWorkoutFlow,
+  ]);
 
   const moveExerciseTo = useCallback(
     (exerciseIndex: number, targetIndex: number) => {
@@ -1672,7 +2069,10 @@ function WorkoutScreen({
         preparedExercise.exercises as PreviousExerciseData[],
       );
       if (!exercise) return;
-      dispatch({ type: "ADD_EXERCISE", exercise });
+      dispatch({
+        type: "ADD_EXERCISE",
+        exercise: resetExerciseCompletion(exercise),
+      });
       setNewExerciseName("");
     } catch (addError) {
       setError(getWorkoutApiErrorMessage(addError));
@@ -1696,6 +2096,111 @@ function WorkoutScreen({
     }
   };
 
+  const finishWorkoutNameEdit = () => {
+    const nextName = (workoutNameDraftRef.current ?? workoutNameDraft ?? "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (nextName && nextName !== workout.name) {
+      dispatch({ type: "UPDATE_WORKOUT_NAME", name: nextName });
+    }
+    setWorkoutNameEditing(false);
+    setWorkoutNameDraft(null);
+    workoutNameDraftRef.current = null;
+  };
+
+  const startWorkoutNameEdit = () => {
+    beginTextEditing();
+    if (workoutNoteEditing) finishWorkoutNoteEdit();
+    setWorkoutNameDraft(workout.name);
+    workoutNameDraftRef.current = workout.name;
+    setWorkoutNameEditing(true);
+  };
+
+  const changeWorkoutNameDraft = (name: string) => {
+    workoutNameDraftRef.current = name;
+  };
+
+  const finishWorkoutNoteEdit = () => {
+    updateWorkoutNote(workoutNoteDraftRef.current ?? workoutNoteDraft ?? "");
+    setWorkoutNoteEditing(false);
+    setWorkoutNoteDraft(null);
+    workoutNoteDraftRef.current = null;
+  };
+
+  const startWorkoutNoteEdit = () => {
+    beginTextEditing();
+    const draft = workout.notes[0]?.text ?? "";
+    if (workoutNameEditing) finishWorkoutNameEdit();
+    setWorkoutNoteDraft(draft);
+    workoutNoteDraftRef.current = draft;
+    setWorkoutNoteEditing(true);
+  };
+
+  const changeWorkoutNoteDraft = (note: string) => {
+    workoutNoteDraftRef.current = note;
+    setWorkoutNoteDraft(note);
+  };
+
+  const openNoteEditor = (target: NoteEditTarget) => {
+    if (target.kind === "workout") {
+      startWorkoutNoteEdit();
+      return;
+    }
+
+    startInlineNoteEdit(target);
+  };
+
+  const finishInlineWorkoutTextEdit = () => {
+    const wasEditingName = workoutNameEditing;
+    const wasEditingNote = workoutNoteEditing;
+    const wasEditingInlineNote = Boolean(
+      noteEditor && noteEditor.kind !== "workout",
+    );
+    if (!wasEditingName && !wasEditingNote && !wasEditingInlineNote) return;
+
+    if (wasEditingName) finishWorkoutNameEdit();
+    if (wasEditingNote) finishWorkoutNoteEdit();
+    if (wasEditingInlineNote) finishInlineNoteEdit();
+    Keyboard.dismiss();
+  };
+
+  const handleInlineTextEditTouchCapture = (target: unknown) => {
+    if (
+      !workoutNameEditing &&
+      !workoutNoteEditing &&
+      !(noteEditor && noteEditor.kind !== "workout")
+    ) {
+      return false;
+    }
+
+    const focusedInput = TextInput.State.currentlyFocusedInput?.();
+    const focusedInputHandle = findNodeHandle(
+      focusedInput as unknown as Parameters<typeof findNodeHandle>[0],
+    );
+    const titleInputHandle = findNodeHandle(workoutNameInputRef.current);
+    const noteInputHandle = findNodeHandle(workoutNoteInputRef.current);
+    const inlineNoteInputHandle = findNodeHandle(inlineNoteInputRef.current);
+    const nativeTarget =
+      typeof target === "number"
+        ? target
+        : typeof target === "string" && Number.isFinite(Number(target))
+          ? Number(target)
+          : null;
+    const inlineInputHandles = [
+      focusedInputHandle,
+      titleInputHandle,
+      noteInputHandle,
+      inlineNoteInputHandle,
+    ].filter((handle): handle is number => handle != null);
+
+    if (nativeTarget != null && inlineInputHandles.includes(nativeTarget)) {
+      return false;
+    }
+
+    finishInlineWorkoutTextEdit();
+    return false;
+  };
+
   const updateWorkoutExerciseNote = (exerciseIndex: number, text: string) => {
     const exercise = workout.exercises[exerciseIndex];
     if (!exercise) return;
@@ -1715,6 +2220,105 @@ function WorkoutScreen({
       });
     } else {
       dispatch({ type: "ADD_EXERCISE_NOTE", exerciseIndex, text: nextText });
+    }
+  };
+
+  const saveInlineNoteTarget = (
+    target: InlineNoteEditTarget,
+    text: string,
+  ) => {
+    if (target.kind === "exercise") {
+      dispatch({
+        type: "UPDATE_USER_EXERCISE_NOTE",
+        exerciseIndex: target.exerciseIndex,
+        note: text,
+      });
+      return;
+    }
+
+    if (target.kind === "workout-exercise") {
+      updateWorkoutExerciseNote(target.exerciseIndex, text);
+      return;
+    }
+
+    const exercise = workout.exercises[target.exerciseIndex];
+    if (!exercise) return;
+    const setIndex = findSetIndex(exercise, target.setId);
+    if (setIndex == null) return;
+
+    dispatch({
+      type: "UPDATE_SET_NOTE",
+      exerciseIndex: target.exerciseIndex,
+      setIndex,
+      notes: text,
+    });
+  };
+
+  const finishInlineNoteEdit = () => {
+    if (!noteEditor || noteEditor.kind === "workout") return;
+    saveInlineNoteTarget(
+      noteEditor,
+      inlineNoteDraftRef.current ?? inlineNoteDraft ?? "",
+    );
+    setNoteEditor(null);
+    setInlineNoteDraft(null);
+    inlineNoteDraftRef.current = null;
+  };
+
+  const startInlineNoteEdit = (target: InlineNoteEditTarget) => {
+    beginTextEditing();
+    if (workoutNameEditing) finishWorkoutNameEdit();
+    if (workoutNoteEditing) finishWorkoutNoteEdit();
+    if (noteEditor && noteEditor.kind !== "workout") finishInlineNoteEdit();
+
+    const draft = getNoteValue(workout, target);
+    setNoteEditor(target);
+    setInlineNoteDraft(draft);
+    inlineNoteDraftRef.current = draft;
+  };
+
+  const changeInlineNoteDraft = (note: string) => {
+    inlineNoteDraftRef.current = note;
+  };
+
+  const saveUserExerciseSettings = async (
+    exerciseIndex: number,
+    settings: UserExerciseSettings,
+  ) => {
+    const exercise = workout.exercises[exerciseIndex];
+    if (!exercise) return;
+
+    dispatch({
+      type: "UPDATE_USER_EXERCISE_NOTE",
+      exerciseIndex,
+      note: settings.note,
+    });
+    dispatch({
+      type: "UPDATE_USER_EXERCISE_PLATE_DEFAULTS",
+      exerciseIndex,
+      plateStartingWeight: settings.plateStartingWeight,
+      plateLoadMode: settings.plateLoadMode,
+    });
+
+    const target =
+      exercise.userExerciseId != null
+        ? { id: exercise.userExerciseId }
+        : { name: exercise.name };
+
+    try {
+      await Promise.all([
+        api.updateExerciseNote({
+          ...target,
+          note: settings.note,
+        }),
+        api.updateExercisePlateDefaults({
+          ...target,
+          plateStartingWeight: settings.plateStartingWeight,
+          plateLoadMode: settings.plateLoadMode,
+        }),
+      ]);
+    } catch (settingsError) {
+      setError(getWorkoutApiErrorMessage(settingsError));
     }
   };
 
@@ -1742,19 +2346,113 @@ function WorkoutScreen({
     setCompletedAt(completedAtForDuration(workout.startTime, durationMinutes));
   };
 
-  const handleFinishPress = () => {
-    if (workout.exercises.length === 0) {
-      setError("Add at least one exercise before finishing.");
-      return;
+  const updateWorkoutTiming = (
+    nextStartTime: number,
+    nextCompletedTime: number | null,
+  ) => {
+    if (Number.isFinite(nextStartTime) && nextStartTime !== workout.startTime) {
+      dispatch({ type: "UPDATE_WORKOUT_START_TIME", startTime: nextStartTime });
     }
-    if (isEditingPastWorkout) {
-      void saveEditedWorkout();
-      return;
-    }
+
+    setCompletedAt(
+      nextCompletedTime == null
+        ? null
+        : new Date(Math.max(nextStartTime + 60_000, nextCompletedTime)),
+    );
+  };
+
+  const showFinishPreview = () => {
     if (!completedAt) {
       setCompletedAt(defaultCompletedAtForStartTime(workout.startTime));
     }
     setFinishPreviewOpen(true);
+  };
+
+  const getIncompleteSetSummary = () =>
+    workout.exercises
+      .map((exercise) => {
+        const { warmups, working } = splitSets(exercise);
+        const groups = [
+          ...groupLedgerSets(warmups),
+          ...groupLedgerSets(working),
+        ];
+        const incompleteLabels = groups
+          .filter((group) => !group[0]?.set.completed)
+          .map((group) => {
+            const leadingSet = group[0];
+            return leadingSet ? getLedgerSetIndexLabel(exercise, leadingSet) : "";
+          })
+          .filter(Boolean);
+
+        return incompleteLabels.length
+          ? `${exercise.name}: ${incompleteLabels.join(", ")}`
+          : null;
+      })
+      .filter((summary): summary is string => Boolean(summary));
+
+  const completeAllSets = () => {
+    workout.exercises.forEach((exercise, exerciseIndex) => {
+      if (exercise.sets.every((set) => set.completed)) return;
+      dispatch({
+        type: "REPLACE_EXERCISE_SETS",
+        exerciseIndex,
+        sets: exercise.sets.map((set) => ({ ...set, completed: true })),
+      });
+    });
+  };
+
+  const handleFinishPress = () => {
+    if (!canEditWorkout) return;
+    if (workout.exercises.length === 0) {
+      setError("Add at least one exercise before finishing.");
+      return;
+    }
+
+    const incomplete = getIncompleteSetSummary();
+    if (incomplete.length > 0) {
+      const visibleRows = incomplete.slice(0, 8);
+      const remainingCount = incomplete.length - visibleRows.length;
+      const message = [
+        ...visibleRows,
+        remainingCount > 0 ? `+ ${remainingCount} more` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      presentDialog({
+        title: "Incomplete sets",
+        message,
+        actions: [
+          { label: "return", variant: "cancel" },
+          { label: "continue", onPress: showFinishPreview },
+          {
+            label: "complete all",
+            variant: "primary",
+            onPress: () => {
+              completeAllSets();
+              showFinishPreview();
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    showFinishPreview();
+  };
+
+  const closeActiveWorkoutToHome = () => {
+    const draft: StoredWorkoutDraft = {
+      workout,
+      completedAt: completedAt?.toISOString() ?? null,
+      savedAt: Date.now(),
+    };
+
+    void draftWritePromiseRef.current
+      .catch(() => undefined)
+      .then(() => writeActiveWorkoutDraft(draft))
+      .then(() => onActiveDraftSaved?.(draft))
+      .finally(onBack);
   };
 
   const closeWorkout = () => {
@@ -1763,15 +2461,15 @@ function WorkoutScreen({
       return;
     }
 
-    Alert.alert(
-      "Close workout?",
-      "This workout draft will stay saved on this device.",
-      [
-        { text: "keep editing", style: "cancel" },
-        { text: "close", onPress: onBack },
+    presentDialog({
+      title: "Close workout?",
+      message: "This workout draft will stay saved on this device.",
+      actions: [
+        { label: "keep editing", variant: "cancel" },
+        { label: "close", variant: "primary", onPress: closeActiveWorkoutToHome },
         {
-          text: "discard",
-          style: "destructive",
+          label: "discard",
+          variant: "danger",
           onPress: () => {
             void Promise.allSettled([
               clearPersistedActiveWorkout(),
@@ -1780,7 +2478,7 @@ function WorkoutScreen({
           },
         },
       ],
-    );
+    });
   };
 
   const finishedWorkout = useMemo(() => {
@@ -1800,7 +2498,24 @@ function WorkoutScreen({
     setSaving(true);
     setError(null);
     try {
-      if (healthWorkout.requested) {
+      if (isEditingPastWorkout && workoutId) {
+        await api.updateWorkout({
+          workoutId,
+          workout: finishedWorkout,
+        });
+        setFinishPreviewOpen(false);
+        onBack();
+        return;
+      }
+
+      const shouldSaveHealthWorkout =
+        Platform.OS === "ios" &&
+        isHealthAvailable() &&
+        (healthWorkout.requested ||
+          (await getHealthAuthorizationStatus().catch(() => null))
+            ?.canWriteWorkouts);
+
+      if (shouldSaveHealthWorkout) {
         setHealthWorkout((current) => ({
           ...current,
           saving: true,
@@ -1843,68 +2558,48 @@ function WorkoutScreen({
     }
   };
 
-  const buildUpdatedWorkout = () => {
-    const workoutNoteText = workout.notes[0]?.text;
-    const payload = finalizeWorkout(workout, workoutNoteText);
-    return {
-      ...payload,
-      completedAt:
-        completedAt ?? defaultCompletedAtForStartTime(workout.startTime),
-      startedAt: new Date(workout.startTime),
-    };
-  };
-
-  const saveEditedWorkout = async () => {
-    if (!workoutId) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await api.updateWorkout({
-        workoutId,
-        workout: buildUpdatedWorkout(),
-      });
-      onBack();
-    } catch (saveError) {
-      setError(getWorkoutApiErrorMessage(saveError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const deleteWorkout = () => {
-    if (!workoutId) return;
-    Alert.alert("Delete workout?", workout.name, [
-      { text: "cancel", style: "cancel" },
-      {
-        text: "delete",
-        style: "destructive",
-        onPress: async () => {
-          setSaving(true);
-          setError(null);
-          try {
-            await api.deleteWorkout({ workoutId });
-            onBack();
-          } catch (deleteError) {
-            setError(getWorkoutApiErrorMessage(deleteError));
-          } finally {
-            setSaving(false);
-          }
+    if (!workoutId || isPastReview) return;
+    presentDialog({
+      title: "Delete workout?",
+      message: workout.name,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: async () => {
+            setSaving(true);
+            setError(null);
+            try {
+              await api.deleteWorkout({ workoutId });
+              onBack();
+            } catch (deleteError) {
+              setError(getWorkoutApiErrorMessage(deleteError));
+            } finally {
+              setSaving(false);
+            }
+          },
         },
-      },
-    ]);
+      ],
+    });
   };
 
   const deleteExercise = (exerciseIndex: number) => {
     const exercise = workout.exercises[exerciseIndex];
     if (!exercise) return;
-    Alert.alert("Delete exercise?", exercise.name, [
-      { text: "cancel", style: "cancel" },
-      {
-        text: "delete",
-        style: "destructive",
-        onPress: () => dispatch({ type: "DELETE_EXERCISE", exerciseIndex }),
-      },
-    ]);
+    presentDialog({
+      title: "Delete exercise?",
+      message: exercise.name,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => dispatch({ type: "DELETE_EXERCISE", exerciseIndex }),
+        },
+      ],
+    });
   };
 
   const stopRestTimer = () => {
@@ -1912,30 +2607,46 @@ function WorkoutScreen({
       clearTimeout(restTimerTimeoutRef.current);
       restTimerTimeoutRef.current = null;
     }
+    const notificationId = restTimerNotificationIdRef.current;
+    restTimerNotificationIdRef.current = null;
+    void cancelWorkoutTimerNotification(notificationId).catch(() => undefined);
+    void endRestTimerLiveActivity().catch(() => undefined);
     setRestTimerEndsAt(null);
     setTimerStatus(null);
   };
 
-  const startRestTimer = async () => {
+  const startRestTimer = async (durationSeconds?: number) => {
+    const timerSeconds = normalizeRestTimerSeconds(
+      durationSeconds ?? restTimerDurationSeconds,
+    );
     stopRestTimer();
 
-    setTimerStatus("starting 3m timer");
+    setRestTimerDurationSeconds(timerSeconds);
+    setTimerStatus(`starting ${formatRestTimerDurationLabel(timerSeconds)} timer`);
     try {
       const result = await withTimeout(
-        scheduleWorkoutTimerNotification(REST_TIMER_SECONDS),
+        scheduleWorkoutTimerNotification(timerSeconds),
         60_000,
         "Notification permission did not respond.",
       );
       if (result.scheduled) {
-        const endsAt = Date.now() + REST_TIMER_SECONDS * 1000;
+        const endsAt = Date.now() + timerSeconds * 1000;
+        restTimerNotificationIdRef.current = result.identifier ?? null;
+        void startOrUpdateRestTimerLiveActivity(
+          timerSeconds,
+          endsAt,
+          `${formatRestTimerDurationLabel(timerSeconds)} rest`,
+        ).catch(() => undefined);
         setNow(Date.now());
         setRestTimerEndsAt(endsAt);
         setTimerStatus(null);
         restTimerTimeoutRef.current = setTimeout(() => {
           setRestTimerEndsAt(null);
-          setTimerStatus("3m timer done");
+          setTimerStatus(`${formatRestTimerDurationLabel(timerSeconds)} timer done`);
           restTimerTimeoutRef.current = null;
-        }, REST_TIMER_SECONDS * 1000);
+          restTimerNotificationIdRef.current = null;
+          void endRestTimerLiveActivity().catch(() => undefined);
+        }, timerSeconds * 1000);
         return;
       }
 
@@ -1943,6 +2654,20 @@ function WorkoutScreen({
     } catch (timerError) {
       setTimerStatus(getUnknownErrorMessage(timerError));
     }
+  };
+
+  const chooseRestTimerDuration = (durationSeconds: number) => {
+    const timerSeconds = normalizeRestTimerSeconds(durationSeconds);
+    setRestTimerDurationSeconds(timerSeconds);
+    triggerSelectionHaptic();
+  };
+
+  const startChosenRestTimerDuration = (durationSeconds: number) => {
+    const timerSeconds = normalizeRestTimerSeconds(durationSeconds);
+    setRestTimerDurationSeconds(timerSeconds);
+    setRestTimerDurationOpen(false);
+    setRestTimerDurationAnchor(null);
+    void startRestTimer(timerSeconds);
   };
 
   const toggleRestTimer = async () => {
@@ -1953,6 +2678,11 @@ function WorkoutScreen({
 
     await startRestTimer();
   };
+  const startRestTimerRef = useRef(startRestTimer);
+
+  useEffect(() => {
+    startRestTimerRef.current = startRestTimer;
+  }, [startRestTimer]);
 
   const restTimerRemainingSeconds =
     restTimerEndsAt == null ? null : Math.ceil((restTimerEndsAt - now) / 1000);
@@ -1960,9 +2690,19 @@ function WorkoutScreen({
     restTimerRemainingSeconds == null || restTimerRemainingSeconds <= 0
       ? null
       : formatCountdown(restTimerRemainingSeconds);
+  const restTimerProgress =
+    restTimerRemainingSeconds == null || restTimerRemainingSeconds <= 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, restTimerRemainingSeconds / restTimerDurationSeconds),
+        );
   const timerStatusText = restTimerCountdown
     ? `rest ${restTimerCountdown}`
     : timerStatus;
+  const restTimerIdleLabel = formatRestTimerDurationLabel(
+    restTimerDurationSeconds,
+  );
   const healthStatusText = healthWorkout.starting
     ? "health starting"
     : healthWorkout.saving
@@ -1974,6 +2714,336 @@ function WorkoutScreen({
         : healthWorkout.message;
   const bodyWeightText =
     workout.bodyWeightLb == null ? "" : formatNumber(workout.bodyWeightLb);
+  const bodyWeightInputText = bodyWeightEntry ?? bodyWeightText;
+  const finishPreviewBlockedByEditor =
+    timeEditor === "finish-end-date" ||
+    timeEditor === "finish-end-time" ||
+    timeEditor === "finish-duration";
+  const currentExerciseIndex = clampIndex(
+    workout.currentExerciseIndex,
+    workout.exercises.length,
+  );
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+
+    const subscription = addWatchWorkoutCommandListener(
+      (command: WatchWorkoutCommand) => {
+        if (!isActiveWorkout || completedAt) return;
+
+        if (command.type === "requestSnapshot") {
+          setWatchSnapshotRequestNonce((value) => value + 1);
+          return;
+        }
+
+        if (command.type === "navigateExercise") {
+          const nextExerciseIndex = getAdjacentIndex(
+            currentExerciseIndex,
+            workout.exercises.length,
+            command.direction,
+          );
+          if (nextExerciseIndex == null || nextExerciseIndex === currentExerciseIndex) {
+            setWatchSnapshotRequestNonce((value) => value + 1);
+            return;
+          }
+          setSetEditor(null);
+          dispatch({
+            type: "SELECT_EXERCISE",
+            exerciseIndex: nextExerciseIndex,
+          });
+          return;
+        }
+
+        if (command.type === "navigateSet") {
+          const exercise = workout.exercises[currentExerciseIndex];
+          const nextSet = getAdjacentWatchSetGroupTarget(
+            exercise,
+            command.setId ?? null,
+            command.direction,
+          );
+          if (!nextSet) {
+            setWatchSnapshotRequestNonce((value) => value + 1);
+            return;
+          }
+          setSetEditor({
+            exerciseIndex: currentExerciseIndex,
+            setId: getSetTargetId(nextSet.set, nextSet.index),
+            field: "reps",
+          });
+          return;
+        }
+
+        if (command.type === "startRestTimer") {
+          if (restTimerEndsAt == null && !restTimerTimeoutRef.current) {
+            void startRestTimerRef.current();
+          } else {
+            setWatchSnapshotRequestNonce((value) => value + 1);
+          }
+          return;
+        }
+
+        if (command.type === "resetRestTimer") {
+          void startRestTimerRef.current(restTimerDurationSeconds);
+          return;
+        }
+
+        if (command.type === "stopRestTimer") {
+          stopRestTimer();
+          return;
+        }
+
+        const target =
+          command.setId == null
+            ? null
+            : findWatchCommandSetTarget(
+                workout.exercises,
+                currentExerciseIndex,
+                command.setId,
+              );
+        if (!target) return;
+
+        const exercise = workout.exercises[target.exerciseIndex];
+        if (!exercise) return;
+        const { setIndex } = target;
+        const set = exercise.sets[setIndex];
+        if (!set) return;
+
+        if (command.type === "setSetValue") {
+          const value = normalizeWatchSetValue(command, set);
+          setSetEditor({
+            exerciseIndex: target.exerciseIndex,
+            setId: getSetTargetId(set, setIndex),
+            field: command.field,
+          });
+          if (command.field === "weight") {
+            dispatch({
+              type: "UPDATE_SET_WEIGHT",
+              exerciseIndex: target.exerciseIndex,
+              setIndex,
+              weight: value,
+            });
+          } else {
+            dispatch({
+              type: "UPDATE_SET_REPS",
+              exerciseIndex: target.exerciseIndex,
+              setIndex,
+              reps: value,
+            });
+          }
+          return;
+        }
+
+        const wasCompleted = Boolean(set.completed);
+        triggerSelectionHaptic();
+        dispatch({
+          type: "TOGGLE_SET_COMPLETED",
+          exerciseIndex: target.exerciseIndex,
+          setIndex,
+        });
+        if (!wasCompleted) {
+          void startRestTimerRef.current();
+        }
+      },
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [
+    completedAt,
+    currentExerciseIndex,
+    dispatch,
+    isActiveWorkout,
+    restTimerDurationSeconds,
+    restTimerEndsAt,
+    workout.exercises,
+  ]);
+  const watchWorkoutSnapshot = useMemo(() => {
+    if (
+      isEditingPastWorkout ||
+      completedAt ||
+      workout.exercises.length === 0
+    ) {
+      return null;
+    }
+
+    const currentExercise = workout.exercises[currentExerciseIndex];
+    if (!currentExercise) return null;
+    const selectedSetId =
+      setEditor?.exerciseIndex === currentExerciseIndex
+        ? setEditor.setId
+        : null;
+    const currentSet = buildWatchCurrentSetSnapshot(
+      currentExercise,
+      selectedSetId,
+    );
+
+    return {
+      workoutName: workout.name,
+      exerciseName: currentExercise.name,
+      setId: currentSet.setId,
+      setLabel: currentSet.label,
+      setText: currentSet.text,
+      setWeight: currentSet.weight,
+      setReps: currentSet.reps,
+      setWeightModifier: currentSet.weightModifier,
+      setCompleted: currentSet.completed,
+      restText: restTimerCountdown
+        ? `rest ${restTimerCountdown}`
+        : `rest ${restTimerIdleLabel}`,
+      restTimerRunning: restTimerRemainingSeconds != null,
+      restTimerRemainingSeconds,
+      restTimerDurationSeconds,
+      isActive: true,
+      updatedAt: new Date(now).toISOString(),
+    };
+  }, [
+    completedAt,
+    currentExerciseIndex,
+    isEditingPastWorkout,
+    now,
+    restTimerCountdown,
+    restTimerDurationSeconds,
+    restTimerIdleLabel,
+    restTimerRemainingSeconds,
+    setEditor?.exerciseIndex,
+    setEditor?.setId,
+    workout,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+
+    if (!watchWorkoutSnapshot) {
+      void clearWatchWorkoutSnapshot().catch(() => undefined);
+      return;
+    }
+
+    void updateWatchWorkoutSnapshot(watchWorkoutSnapshot).catch(
+      () => undefined,
+    );
+  }, [watchSnapshotRequestNonce, watchWorkoutSnapshot]);
+
+  const showExerciseTabs = workout.exercises.length > 0;
+  const exercisePagerHeight = Math.max(
+    360,
+    windowHeight -
+      insets.top -
+      insets.bottom -
+      (exercisePagerContentTop ?? 250) -
+      12,
+  );
+  const exerciseNavigationLocked = appModalLayerOpen;
+  const selectExerciseFromPagerOffset = useCallback(
+    (offsetY: number) => {
+      if (exerciseNavigationLocked) return;
+      if (!workout.exercises.length) return;
+      const nextIndex = clampIndex(
+        Math.round(offsetY / exercisePagerHeight),
+        workout.exercises.length,
+      );
+      if (nextIndex === workout.currentExerciseIndex) return;
+      setSetEditor(null);
+      dispatch({ type: "SELECT_EXERCISE", exerciseIndex: nextIndex });
+    },
+    [
+      dispatch,
+      exerciseNavigationLocked,
+      exercisePagerHeight,
+      workout.currentExerciseIndex,
+      workout.exercises.length,
+    ],
+  );
+  const selectExercise = useCallback(
+    (exerciseIndex: number) => {
+      if (exerciseNavigationLocked) return;
+      setSetEditor(null);
+      dispatch({ type: "SELECT_EXERCISE", exerciseIndex });
+    },
+    [dispatch, exerciseNavigationLocked],
+  );
+
+  useEffect(() => {
+    if (!showExerciseTabs || exerciseNavigationLocked) return;
+    exercisePagerRef.current?.scrollTo({
+      y: currentExerciseIndex * exercisePagerHeight,
+      animated: true,
+    });
+  }, [
+    currentExerciseIndex,
+    exerciseNavigationLocked,
+    exercisePagerHeight,
+    showExerciseTabs,
+  ]);
+
+  const renderExercisePage = (
+    exercise: WorkoutExercise,
+    exerciseIndex: number,
+  ) => {
+    const nextExercise = workout.exercises[exerciseIndex + 1] ?? null;
+
+    return (
+      <View
+        key={`${exercise.userExerciseId ?? exercise.name}-${exerciseIndex}`}
+        style={[styles.exercisePagerPage, { height: exercisePagerHeight }]}
+      >
+        <View style={styles.exercisePagerPageBody}>
+          <ExerciseSection
+            exercise={exercise}
+            exerciseIndex={exerciseIndex}
+            inlineNoteDraft={inlineNoteDraft}
+            inlineNoteInputRef={inlineNoteInputRef}
+            inlineNoteTarget={
+              canEditWorkout &&
+              noteEditor?.kind !== "workout" &&
+              noteEditor?.exerciseIndex === exerciseIndex
+                ? noteEditor
+                : null
+            }
+            selectedField={
+              setEditor?.exerciseIndex === exerciseIndex
+                ? (setEditor.field ?? null)
+                : null
+            }
+            selectedSetId={
+              setEditor?.exerciseIndex === exerciseIndex
+                ? setEditor.setId
+                : null
+            }
+            viewMode={viewMode}
+            onDispatch={dispatch}
+            onChangeInlineNote={changeInlineNoteDraft}
+            onEndInlineNoteEdit={finishInlineNoteEdit}
+            onSelectExercise={() => selectExercise(exerciseIndex)}
+            onOpenSetEditor={(setId, field) => {
+              if (!canEditWorkout) return;
+              selectExercise(exerciseIndex);
+              setSetEditor({
+                exerciseIndex,
+                setId,
+                field,
+              });
+            }}
+            onOpenNoteEditor={openNoteEditor}
+            onStartInlineNoteEdit={startInlineNoteEdit}
+            onStartTextEdit={beginTextEditing}
+            onStartRestTimer={() => {
+              void startRestTimer();
+            }}
+            onDeleteExercise={deleteExercise}
+            onSaveUserExerciseSettings={(targetExerciseIndex, settings) => {
+              void saveUserExerciseSettings(targetExerciseIndex, settings);
+            }}
+          />
+        </View>
+        {nextExercise ? (
+          <ExerciseNextHint
+            exerciseName={nextExercise.name}
+            onPress={() => selectExercise(exerciseIndex + 1)}
+          />
+        ) : null}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
@@ -1983,319 +3053,293 @@ function WorkoutScreen({
           { paddingBottom: insets.bottom + 24 },
         ]}
         contentInsetAdjustmentBehavior="automatic"
-        scrollEnabled={!planDragging}
+        keyboardShouldPersistTaps="always"
+        onStartShouldSetResponderCapture={(event) =>
+          handleInlineTextEditTouchCapture(event.nativeEvent.target)
+        }
+        onTouchStart={(event) => {
+          handleInlineTextEditTouchCapture(event.nativeEvent.target);
+        }}
+        scrollEnabled={!planDragging && !showExerciseTabs}
       >
-        <View style={styles.topActions}>
-          <Pressable
-            accessibilityLabel={
-              restTimerCountdown
-                ? "Stop rest timer"
-                : "Start three minute rest timer"
-            }
-            accessibilityRole="button"
-            style={styles.timerButton}
-            testID="workout-rest-timer"
-            onPress={() => void toggleRestTimer()}
-          >
-            <Text style={styles.timerButtonText}>
-              {restTimerCountdown ?? "3m"}
-            </Text>
-          </Pressable>
-
-          <View style={styles.topActionButtons}>
-            <Pressable
-              accessibilityLabel="Close workout"
-              accessibilityRole="button"
-              style={styles.iconButton}
-              testID="workout-close"
-              onPress={closeWorkout}
-            >
-              <Icon name="close-outline" size={20} />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Undo workout edit"
-              accessibilityRole="button"
-              disabled={!canUndo}
-              style={[
-                styles.iconButton,
-                !canUndo ? styles.iconButtonDisabled : null,
-              ]}
-              testID="workout-undo"
-              onPress={() => setSession(undoWorkoutSession)}
-            >
-              <Icon
-                name="arrow-undo-outline"
-                size={20}
-                color={canUndo ? palette.muted : palette.disabled}
-              />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Redo workout edit"
-              accessibilityRole="button"
-              disabled={!canRedo}
-              style={[
-                styles.iconButton,
-                !canRedo ? styles.iconButtonDisabled : null,
-              ]}
-              testID="workout-redo"
-              onPress={() => setSession(redoWorkoutSession)}
-            >
-              <Icon
-                name="arrow-redo-outline"
-                size={20}
-                color={canRedo ? palette.muted : palette.disabled}
-              />
-            </Pressable>
-            {isEditingPastWorkout ? (
-              <Pressable
-                accessibilityLabel="Delete workout"
-                accessibilityRole="button"
-                style={styles.iconButton}
-                testID="workout-delete"
-                onPress={deleteWorkout}
-              >
-                <Icon name="trash-outline" size={20} color={palette.muted} />
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityLabel={
-                isEditingPastWorkout ? "Save workout changes" : "Finish workout"
-              }
-              accessibilityRole="button"
-              style={styles.iconButton}
-              testID="workout-save"
-              onPress={handleFinishPress}
-              disabled={saving}
-            >
-              <Icon name="save-outline" size={20} color={palette.ink} />
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.titleRow}>
-          <TextInput
-            value={workout.name}
-            onChangeText={(name) =>
-              dispatch({ type: "UPDATE_WORKOUT_NAME", name })
-            }
-            style={styles.workoutTitleInput}
+        {isPastReview ? (
+          <PastReviewWorkoutHeader
+            onBack={closeWorkout}
+            onEdit={() => setViewMode("past-edit")}
           />
-          <Pressable
-            accessibilityLabel="Edit workout note"
-            accessibilityRole="button"
-            style={styles.iconButtonSmall}
-            testID="workout-note"
-            onPress={() => setNoteEditor({ kind: "workout" })}
-          >
-            <Icon name="pencil-outline" size={20} />
-          </Pressable>
-        </View>
+        ) : isPastEdit ? (
+          <PastEditWorkoutHeader
+            canRedo={canRedo}
+            canUndo={canUndo}
+            saving={saving}
+            showDelete={Boolean(workoutId)}
+            onBack={closeWorkout}
+            onDelete={deleteWorkout}
+            onRedo={() => setSession(redoWorkoutSession)}
+            onSave={handleFinishPress}
+            onUndo={() => setSession(undoWorkoutSession)}
+          />
+        ) : (
+          <ActiveWorkoutHeader
+            canRedo={canRedo}
+            canUndo={canUndo}
+            heartRateBpm={healthWorkout.live ? heartRateBpm : null}
+            showHeartRate={healthWorkout.live}
+            restTimerCountdown={restTimerCountdown}
+            restTimerIdleLabel={restTimerIdleLabel}
+            restTimerProgress={restTimerProgress}
+            saving={saving}
+            onBack={closeWorkout}
+            onOpenRestTimerDuration={(anchor) => {
+              if (restTimerEndsAt != null || restTimerTimeoutRef.current) return;
+              setRestTimerDurationAnchor(anchor);
+              setRestTimerDurationOpen(true);
+            }}
+            onRedo={() => setSession(redoWorkoutSession)}
+            onSave={handleFinishPress}
+            onToggleRestTimer={() => void toggleRestTimer()}
+            onUndo={() => setSession(undoWorkoutSession)}
+          />
+        )}
 
-        {contextLabel ? (
-          <Text style={styles.metaText}>{contextLabel}</Text>
-        ) : null}
-        <View style={styles.timeInlineRow}>
-          <Text style={styles.metaText}>
-            {formatRelativeDate(new Date(workout.startTime), new Date(now))}{" "}
-            .{" "}
-          </Text>
-          <Pressable
-            accessibilityLabel="Edit start date"
-            accessibilityRole="button"
-            style={styles.timeTextButton}
-            testID="workout-start-date"
-            onPress={() => setTimeEditor("start-date")}
-          >
-            <Text style={styles.timeTextButtonText}>
-              {formatWorkoutStartDate(new Date(workout.startTime))}
-            </Text>
-          </Pressable>
-          <Text style={styles.metaText}> </Text>
-          <Pressable
-            accessibilityLabel="Edit start time"
-            accessibilityRole="button"
-            style={styles.timeTextButton}
-            testID="workout-start-time"
-            onPress={() => setTimeEditor("start-time")}
-          >
-            <Text style={styles.timeTextButtonText}>
-              {formatTime(new Date(workout.startTime))}
-            </Text>
-          </Pressable>
-          {completedAt ? (
-            <>
-              <Text style={styles.metaText}> - </Text>
-              <Pressable
-                accessibilityLabel="Edit end time"
-                accessibilityRole="button"
-                style={styles.timeTextButton}
-                testID="workout-end-time"
-                onPress={() => setTimeEditor("end-time")}
-              >
-                <Text style={styles.timeTextButtonText}>
-                  {formatTime(completedAt)}
-                </Text>
-              </Pressable>
-              <Text style={styles.metaText}> (</Text>
-              <Pressable
-                accessibilityLabel="Edit workout duration"
-                accessibilityRole="button"
-                style={styles.timeTextButton}
-                testID="workout-duration"
-                onPress={() => setTimeEditor("end-duration")}
-              >
-                <Text style={styles.timeTextButtonText}>
-                  {formatDuration(new Date(workout.startTime), completedAt)}
-                </Text>
-              </Pressable>
-              <Text style={styles.metaText}>)</Text>
-            </>
-          ) : (
-            <Text style={styles.metaText}>
-              {" "}
-              ({formatDuration(new Date(workout.startTime), new Date(now))})
-            </Text>
-          )}
-        </View>
+        <WorkoutTitleSection
+          canEditWorkout={canEditWorkout}
+          completedAt={completedAt}
+          editingName={workoutNameEditing}
+          editingNote={workoutNoteEditing}
+          now={now}
+          startTime={workout.startTime}
+          nameInputRef={workoutNameInputRef}
+          noteInputRef={workoutNoteInputRef}
+          workoutName={workout.name}
+          workoutNameDraft={workoutNameDraft}
+          workoutNote={workout.notes[0]?.text ?? ""}
+          workoutNoteDraft={workoutNoteDraft}
+          onChangeName={changeWorkoutNameDraft}
+          onChangeNote={changeWorkoutNoteDraft}
+          onEndNameEdit={finishWorkoutNameEdit}
+          onEndNoteEdit={finishWorkoutNoteEdit}
+          onOpenMenu={(anchor) => {
+            setWorkoutMenuAnchor(anchor);
+            setWorkoutMenuOpen(true);
+          }}
+          onStartNameEdit={startWorkoutNameEdit}
+          onStartNoteEdit={startWorkoutNoteEdit}
+        />
         {healthStatusText || timerStatusText ? (
           <Text style={styles.metaText}>
             {[healthStatusText, timerStatusText].filter(Boolean).join(" . ")}
           </Text>
         ) : null}
 
-        <View style={styles.inlineEditRow}>
-          <Text style={styles.subtleTitle}>body weight</Text>
-          <View style={styles.bodyWeightInputBox}>
-            <TextInput
-              value={bodyWeightText}
-              placeholder="add"
-              placeholderTextColor={palette.muted}
-              onChangeText={(value) => {
-                bodyWeightEditedRef.current = true;
-                const trimmed = value.trim();
-                if (!trimmed) {
-                  dispatch({ type: "UPDATE_BODY_WEIGHT", bodyWeightLb: null });
-                  return;
-                }
+        {canEditWorkout ? (
+          <View style={styles.inlineEditRow}>
+            <Text style={styles.subtleTitle}>body weight</Text>
+            <View style={styles.bodyWeightInputBox}>
+              <TextInput
+                value={bodyWeightInputText}
+                placeholder="add"
+                placeholderTextColor={palette.muted}
+                onFocus={beginTextEditing}
+                onChangeText={(value) => {
+                  bodyWeightEditedRef.current = true;
+                  setBodyWeightEntry(value);
+                  const trimmed = value.trim();
+                  if (!trimmed) {
+                    dispatch({
+                      type: "UPDATE_BODY_WEIGHT",
+                      bodyWeightLb: null,
+                    });
+                    return;
+                  }
 
-                const nextBodyWeight = Number(trimmed);
-                if (Number.isFinite(nextBodyWeight) && nextBodyWeight > 0) {
-                  dispatch({
-                    type: "UPDATE_BODY_WEIGHT",
-                    bodyWeightLb: nextBodyWeight,
-                  });
-                }
-              }}
-              keyboardType="decimal-pad"
-              style={[
-                styles.bodyWeightInput,
-                {
-                  width: getInlineTextInputWidth(bodyWeightText || "add"),
-                },
-              ]}
-            />
-            {workout.bodyWeightLb == null ? null : (
-              <Text style={styles.bodyWeightUnit}>lb</Text>
-            )}
+                  const nextBodyWeight = parsePositiveDecimalInput(trimmed);
+                  if (nextBodyWeight === "pending") return;
+                  if (nextBodyWeight != null) {
+                    dispatch({
+                      type: "UPDATE_BODY_WEIGHT",
+                      bodyWeightLb: nextBodyWeight,
+                    });
+                  }
+                }}
+                onBlur={() => setBodyWeightEntry(null)}
+                keyboardType="decimal-pad"
+                style={[
+                  styles.bodyWeightInput,
+                  {
+                    width: getInlineTextInputWidth(
+                      bodyWeightInputText || "add",
+                    ),
+                  },
+                ]}
+              />
+              {workout.bodyWeightLb == null ? null : (
+                <Text style={styles.bodyWeightUnit}>lb</Text>
+              )}
+            </View>
           </View>
-        </View>
-
-        {workout.notes[0]?.text ? (
-          <Pressable
-            accessibilityLabel="Edit workout note"
-            accessibilityRole="button"
-            style={styles.noteBadgeSelf}
-            testID="workout-note-badge"
-            onPress={() => setNoteEditor({ kind: "workout" })}
-          >
-            <Text style={styles.noteBadgeText}>{workout.notes[0].text}</Text>
-          </Pressable>
+        ) : workout.bodyWeightLb != null ? (
+          <Text style={styles.metaText}>
+            {formatNumber(workout.bodyWeightLb)}lb body weight
+          </Text>
         ) : null}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        <ExercisePlan
-          exercises={workout.exercises}
-          newExerciseName={newExerciseName}
-          addingExercise={addingExercise}
-          exerciseSuggestions={exerciseSuggestions}
-          exerciseSuggestionsLoaded={exerciseSuggestionsLoaded}
-          onNewExerciseNameChange={setNewExerciseName}
-          onAddExercise={(name) => void addExercise(name)}
-          onMoveTo={moveExerciseTo}
-          onDragStateChange={setPlanDragging}
-          onDelete={deleteExercise}
-        />
-
-        {workout.exercises.map((exercise, exerciseIndex) => (
-          <ExerciseSection
-            key={`${exercise.userExerciseId ?? exercise.name}-${exerciseIndex}`}
-            exercise={exercise}
-            exerciseIndex={exerciseIndex}
-            onDispatch={dispatch}
-            onOpenSetEditor={(setId, field) =>
-              setSetEditor({ exerciseIndex, setId, field })
-            }
-            onOpenNoteEditor={setNoteEditor}
-            onDeleteExercise={deleteExercise}
+        {showExerciseTabs ? (
+          <WorkoutExerciseTabs
+            editable={canEditWorkout}
+            currentExerciseIndex={currentExerciseIndex}
+            exercises={workout.exercises}
+            onEdit={() => setExercisePlanOpen(true)}
+            onSelect={selectExercise}
           />
-        ))}
+        ) : null}
+
+        {showExerciseTabs ? (
+          <View
+            style={[styles.exercisePagerViewport, { height: exercisePagerHeight }]}
+            onLayout={(event) => {
+              const nextTop = Math.round(event.nativeEvent.layout.y);
+              setExercisePagerContentTop((previousTop) =>
+                previousTop == null || Math.abs(previousTop - nextTop) > 1
+                  ? nextTop
+                  : previousTop,
+              );
+            }}
+          >
+            <ScrollView
+              ref={exercisePagerRef}
+              contentContainerStyle={styles.exercisePagerContent}
+              decelerationRate="fast"
+              keyboardShouldPersistTaps="always"
+              nestedScrollEnabled
+              pagingEnabled
+              scrollEnabled={!exerciseNavigationLocked}
+              showsVerticalScrollIndicator={false}
+              snapToAlignment="start"
+              snapToInterval={exercisePagerHeight}
+              style={styles.exercisePagerScroll}
+              onMomentumScrollEnd={(event) => {
+                selectExerciseFromPagerOffset(
+                  event.nativeEvent.contentOffset.y,
+                );
+              }}
+              onScrollEndDrag={(event) => {
+                selectExerciseFromPagerOffset(
+                  event.nativeEvent.contentOffset.y,
+                );
+              }}
+            >
+              {workout.exercises.map(renderExercisePage)}
+            </ScrollView>
+          </View>
+        ) : (
+          <Text style={styles.metaText}>add an exercise</Text>
+        )}
       </ScrollView>
 
-      <SetEditorModal
-        workout={workout}
-        target={setEditor}
+      {canEditWorkout ? (
+        <SetEditorModal
+          workout={workout}
+          target={setEditor}
+          onClose={() => {
+            commitPendingHistory();
+            setSetEditor(null);
+          }}
+          onRetarget={(nextTarget) => {
+            commitPendingHistory();
+            setSetEditor(nextTarget);
+          }}
+          onStartRestTimer={() => {
+            void startRestTimer();
+          }}
+          onDispatch={dispatch}
+        />
+      ) : null}
+      <WorkoutTitleCommandMenu
+        visible={canEditWorkout && workoutMenuOpen}
+        anchor={workoutMenuAnchor}
+        hasWorkoutNote={Boolean(workout.notes[0]?.text?.trim())}
+        onAddNote={() => {
+          setWorkoutMenuOpen(false);
+          startWorkoutNoteEdit();
+        }}
+        onAdjustTime={() => {
+          setWorkoutMenuOpen(false);
+          setWorkoutTimeAdjustOpen(true);
+        }}
         onClose={() => {
-          commitPendingHistory();
-          setSetEditor(null);
+          setWorkoutMenuOpen(false);
+          setWorkoutMenuAnchor(null);
         }}
-        onRetarget={(nextTarget) => {
-          commitPendingHistory();
-          setSetEditor(nextTarget);
+        onEditName={() => {
+          setWorkoutMenuOpen(false);
+          startWorkoutNameEdit();
         }}
-        onDispatch={dispatch}
+        onRemoveNote={() => {
+          setWorkoutMenuOpen(false);
+          setWorkoutNoteEditing(false);
+          setWorkoutNoteDraft(null);
+          updateWorkoutNote("");
+        }}
       />
-      <NoteEditorModal
-        workout={workout}
-        target={noteEditor}
-        onClose={() => setNoteEditor(null)}
-        onSave={(target, text) => {
-          if (target.kind === "workout") updateWorkoutNote(text);
-          if (target.kind === "exercise") {
-            dispatch({
-              type: "UPDATE_USER_EXERCISE_NOTE",
-              exerciseIndex: target.exerciseIndex,
-              note: text.trim(),
-            });
-          }
-          if (target.kind === "workout-exercise") {
-            updateWorkoutExerciseNote(target.exerciseIndex, text);
-          }
-          if (target.kind === "set") {
-            const setIndex = findSetIndex(
-              workout.exercises[target.exerciseIndex],
-              target.setId,
-            );
-            if (setIndex != null) {
-              dispatch({
-                type: "UPDATE_SET_NOTE",
-                exerciseIndex: target.exerciseIndex,
-                setIndex,
-                notes: text,
-              });
-            }
-          }
+      {isActiveWorkout && restTimerDurationOpen ? (
+        <RestTimerDurationSheet
+          durationSeconds={restTimerDurationSeconds}
+          anchor={restTimerDurationAnchor}
+          restTimerCountdown={restTimerCountdown}
+          restTimerProgress={restTimerProgress}
+          onChooseDuration={chooseRestTimerDuration}
+          onStartDuration={startChosenRestTimerDuration}
+          onClose={() => {
+            setRestTimerDurationOpen(false);
+            setRestTimerDurationAnchor(null);
+          }}
+        />
+      ) : null}
+      <ExercisePlanModal
+        visible={canEditWorkout && exercisePlanOpen}
+        exercises={workout.exercises}
+        newExerciseName={newExerciseName}
+        addingExercise={addingExercise}
+        exerciseSuggestions={exerciseSuggestions}
+        exerciseSuggestionsLoaded={exerciseSuggestionsLoaded}
+        onClose={() => {
+          setPlanDragging(false);
+          setExercisePlanOpen(false);
+        }}
+        onNewExerciseNameChange={setNewExerciseName}
+        onAddExercise={(name) => void addExercise(name)}
+        onMoveTo={moveExerciseTo}
+        onDragStateChange={setPlanDragging}
+        onTextInputFocus={beginTextEditing}
+        onDelete={deleteExercise}
+      />
+      <WorkoutTimingEditorModal
+        visible={canEditWorkout && workoutTimeAdjustOpen}
+        completedAt={completedAt}
+        now={now}
+        startTime={workout.startTime}
+        onClose={() => setWorkoutTimeAdjustOpen(false)}
+        onSave={(nextStartTime, nextCompletedTime) => {
+          updateWorkoutTiming(nextStartTime, nextCompletedTime);
+          setWorkoutTimeAdjustOpen(false);
         }}
       />
       <WorkoutStartTimeEditor
-        target={isDurationEditTarget(timeEditor) ? null : timeEditor}
+        target={
+          canEditWorkout && !isDurationEditTarget(timeEditor)
+            ? timeEditor
+            : null
+        }
         startTime={workout.startTime}
         completedAt={completedAt}
         onClose={() => setTimeEditor(null)}
         onSaveStartTime={updateStartTime}
         onSaveCompletedAt={updateCompletedAt}
       />
-      {isDurationEditTarget(timeEditor) ? (
+      {canEditWorkout && isDurationEditTarget(timeEditor) ? (
         <WorkoutDurationEditor
           key={`${timeEditor}-${workout.startTime}-${completedAt?.getTime() ?? "running"}`}
           target={timeEditor}
@@ -2308,7 +3352,8 @@ function WorkoutScreen({
       <FinishPreviewModal
         workout={finishedWorkout}
         saving={saving}
-        open={finishPreviewOpen}
+        open={finishPreviewOpen && !finishPreviewBlockedByEditor}
+        saveLabel={isEditingPastWorkout ? "save changes" : "save workout"}
         onEditEndDate={() => setTimeEditor("finish-end-date")}
         onEditEndTime={() => setTimeEditor("finish-end-time")}
         onEditDuration={() => setTimeEditor("finish-duration")}
@@ -2316,6 +3361,1156 @@ function WorkoutScreen({
         onSave={() => void saveFinishedWorkout()}
       />
     </SafeAreaView>
+  );
+}
+
+function ActiveWorkoutHeader({
+  canRedo,
+  canUndo,
+  heartRateBpm,
+  showHeartRate,
+  restTimerCountdown,
+  restTimerIdleLabel,
+  restTimerProgress,
+  saving,
+  onBack,
+  onOpenRestTimerDuration,
+  onRedo,
+  onSave,
+  onToggleRestTimer,
+  onUndo,
+}: {
+  canRedo: boolean;
+  canUndo: boolean;
+  heartRateBpm: number | null;
+  showHeartRate: boolean;
+  restTimerCountdown: string | null;
+  restTimerIdleLabel: string;
+  restTimerProgress: number;
+  saving: boolean;
+  onBack: () => void;
+  onOpenRestTimerDuration: (anchor: MenuAnchor | null) => void;
+  onRedo: () => void;
+  onSave: () => void;
+  onToggleRestTimer: () => void;
+  onUndo: () => void;
+}) {
+  const timerLongPressRef = useRef(false);
+  const timerHoldTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const timerButtonRef = useRef<View | null>(null);
+  const timerRunning = Boolean(restTimerCountdown);
+
+  const openRestTimerDuration = () => {
+    const timerButton = timerButtonRef.current;
+    if (!timerButton) {
+      onOpenRestTimerDuration(null);
+      return;
+    }
+
+    timerButton.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+      onOpenRestTimerDuration({
+        x,
+        y,
+        width: measuredWidth,
+        height: measuredHeight,
+      });
+    });
+  };
+  return (
+    <View style={styles.topActions}>
+      <View style={styles.topLeftActions}>
+        <Pressable
+          ref={timerButtonRef}
+          accessibilityLabel={
+            restTimerCountdown
+              ? "Stop rest timer"
+              : `Start ${restTimerIdleLabel} rest timer`
+          }
+          accessibilityRole="button"
+          style={[
+            styles.timerButton,
+            timerRunning ? styles.timerButtonRunning : null,
+          ]}
+          testID="workout-rest-timer"
+          delayLongPress={REST_TIMER_HOLD_DELAY_MS}
+          onPressIn={() => {
+            if (timerHoldTimeoutRef.current) {
+              clearTimeout(timerHoldTimeoutRef.current);
+            }
+            timerLongPressRef.current = false;
+            timerHoldTimeoutRef.current = setTimeout(() => {
+              timerHoldTimeoutRef.current = null;
+              timerLongPressRef.current = true;
+              openRestTimerDuration();
+            }, REST_TIMER_HOLD_DELAY_MS);
+          }}
+          onLongPress={() => {
+            if (timerLongPressRef.current) return;
+            if (timerHoldTimeoutRef.current) {
+              clearTimeout(timerHoldTimeoutRef.current);
+              timerHoldTimeoutRef.current = null;
+            }
+            timerLongPressRef.current = true;
+            openRestTimerDuration();
+          }}
+          onPressOut={() => {
+            if (timerHoldTimeoutRef.current) {
+              clearTimeout(timerHoldTimeoutRef.current);
+              timerHoldTimeoutRef.current = null;
+            }
+            if (!timerLongPressRef.current) return;
+            requestAnimationFrame(() => {
+              timerLongPressRef.current = false;
+            });
+          }}
+          onPress={() => {
+            if (timerLongPressRef.current) {
+              return;
+            }
+            onToggleRestTimer();
+          }}
+        >
+          {timerRunning ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.timerButtonProgressFill,
+                { width: `${Math.round(restTimerProgress * 100)}%` },
+              ]}
+            />
+          ) : null}
+          <View style={styles.timerButtonContent}>
+            <Icon name="timer-outline" size={18} color={palette.ink} />
+            <Text style={styles.timerButtonText}>
+              {restTimerCountdown ?? restTimerIdleLabel}
+            </Text>
+          </View>
+        </Pressable>
+        {showHeartRate ? (
+          <View
+            accessibilityLabel={
+              heartRateBpm == null
+                ? "Heart rate waiting for sample"
+                : `Heart rate ${heartRateBpm} beats per minute`
+            }
+            style={styles.heartRateIndicator}
+          >
+            <Icon name="heart" size={14} color={palette.danger} />
+            <Text style={styles.heartRateText}>{heartRateBpm ?? "--"}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <WorkoutHeaderActions
+        canRedo={canRedo}
+        canUndo={canUndo}
+        saving={saving}
+        saveKind="finish"
+        saveLabel="Finish workout"
+        showOnlyAvailableHistoryActions
+        onBack={onBack}
+        onRedo={onRedo}
+        onSave={onSave}
+        onUndo={onUndo}
+      />
+    </View>
+  );
+}
+
+function RestTimerDurationSheet({
+  durationSeconds,
+  anchor,
+  restTimerCountdown,
+  restTimerProgress,
+  onChooseDuration,
+  onStartDuration,
+  onClose,
+}: {
+  durationSeconds: number;
+  anchor: MenuAnchor | null;
+  restTimerCountdown: string | null;
+  restTimerProgress: number;
+  onChooseDuration: (durationSeconds: number) => void;
+  onStartDuration: (durationSeconds: number) => void;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const initialMode = REST_TIMER_PRESET_SECONDS.includes(durationSeconds)
+    ? "preset"
+    : "custom";
+  const [mode, setMode] = useState<"preset" | "custom">(initialMode);
+  const [selectedSeconds, setSelectedSeconds] = useState(
+    normalizeRestTimerSeconds(durationSeconds),
+  );
+  const selectedSecondsRef = useRef(selectedSeconds);
+  const sheetTop = Math.max(8, Math.round(anchor?.y ?? insets.top + 48));
+  const durationOptions =
+    mode === "preset" ? REST_TIMER_PRESET_SECONDS : REST_TIMER_CUSTOM_SECONDS;
+  const pickerSelectedSeconds = durationOptions.includes(selectedSeconds)
+    ? selectedSeconds
+    : closestRestTimerOption(selectedSeconds, durationOptions);
+  const timerRunning = Boolean(restTimerCountdown);
+
+  const chooseDuration = (nextSeconds: number) => {
+    const normalized = normalizeRestTimerSeconds(nextSeconds);
+    if (selectedSecondsRef.current === normalized) return;
+    selectedSecondsRef.current = normalized;
+    setSelectedSeconds(normalized);
+    onChooseDuration(normalized);
+  };
+
+  const handleModeChange = (nextMode: "preset" | "custom") => {
+    const nextOptions =
+      nextMode === "preset"
+        ? REST_TIMER_PRESET_SECONDS
+        : REST_TIMER_CUSTOM_SECONDS;
+    const nextSelected = closestRestTimerOption(
+      selectedSecondsRef.current,
+      nextOptions,
+    );
+    setMode(nextMode);
+    chooseDuration(nextSelected);
+  };
+
+  return (
+    <AppModal visible transparent animationType="fade" onRequestClose={onClose}>
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={[
+          styles.restTimerDurationShade,
+          {
+            paddingBottom: Math.max(10, insets.bottom + 10),
+            paddingTop: sheetTop,
+          },
+        ]}
+      >
+        <View style={styles.restTimerDurationSheet}>
+          <View style={styles.restTimerDurationHeader}>
+            <Pressable
+              accessibilityLabel="Close rest timer duration"
+              accessibilityRole="button"
+              style={styles.iconButtonSmall}
+              testID="rest-timer-duration-close"
+              onPress={onClose}
+            >
+              <Icon name="close-outline" size={24} />
+            </Pressable>
+            <Text style={styles.restTimerDurationTitle}>rest timer</Text>
+            <View style={styles.iconButtonSpacer} />
+          </View>
+
+          <Text style={styles.restTimerDurationHelp}>
+            choose a duration. start when ready.
+          </Text>
+
+          <View style={styles.restTimerModeToggle}>
+            {(["preset", "custom"] as const).map((nextMode) => {
+              const selected = mode === nextMode;
+              return (
+                <Pressable
+                  key={nextMode}
+                  accessibilityLabel={`Show ${nextMode} rest timer durations`}
+                  accessibilityRole="button"
+                  style={[
+                    styles.restTimerModeButton,
+                    selected ? styles.restTimerModeButtonSelected : null,
+                  ]}
+                  testID={`rest-timer-mode-${nextMode}`}
+                  onPress={() => handleModeChange(nextMode)}
+                >
+                  <Text
+                    style={[
+                      styles.restTimerModeText,
+                      selected ? styles.restTimerModeTextSelected : null,
+                    ]}
+                  >
+                    {nextMode}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.restTimerPickerFrame}>
+            <Picker
+              itemStyle={styles.restTimerPickerItem}
+              selectedValue={pickerSelectedSeconds}
+              style={styles.restTimerPicker}
+              testID="rest-timer-duration-picker"
+              onValueChange={(value) => chooseDuration(Number(value))}
+            >
+              {durationOptions.map((optionSeconds) => (
+                <Picker.Item
+                  key={optionSeconds}
+                  label={formatCountdown(optionSeconds)}
+                  value={optionSeconds}
+                />
+              ))}
+            </Picker>
+          </View>
+
+          <Pressable
+            accessibilityLabel={
+              timerRunning
+                ? `Reset rest timer, ${restTimerCountdown} left`
+                : `Start ${formatCountdown(selectedSeconds)} rest timer`
+            }
+            accessibilityRole="button"
+            style={[
+              styles.restTimerUseCustomButton,
+              timerRunning ? styles.restTimerUseCustomButtonRunning : null,
+            ]}
+            testID="rest-timer-start-selected"
+            onPress={() => onStartDuration(selectedSeconds)}
+          >
+            {timerRunning ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.timerButtonProgressFill,
+                  { width: `${Math.round(restTimerProgress * 100)}%` },
+                ]}
+              />
+            ) : null}
+            <Text style={styles.restTimerUseCustomText}>
+              {timerRunning ? restTimerCountdown : `start ${formatCountdown(selectedSeconds)}`}
+            </Text>
+          </Pressable>
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function WorkoutTitleSection({
+  canEditWorkout,
+  completedAt,
+  editingName,
+  editingNote,
+  nameInputRef,
+  noteInputRef,
+  now,
+  startTime,
+  workoutName,
+  workoutNameDraft,
+  workoutNote,
+  workoutNoteDraft,
+  onChangeName,
+  onChangeNote,
+  onEndNameEdit,
+  onEndNoteEdit,
+  onOpenMenu,
+  onStartNameEdit,
+  onStartNoteEdit,
+}: {
+  canEditWorkout: boolean;
+  completedAt: Date | null;
+  editingName: boolean;
+  editingNote: boolean;
+  nameInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  noteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  now: number;
+  startTime: number;
+  workoutName: string;
+  workoutNameDraft: string | null;
+  workoutNote: string;
+  workoutNoteDraft: string | null;
+  onChangeName: (name: string) => void;
+  onChangeNote: (note: string) => void;
+  onEndNameEdit: () => void;
+  onEndNoteEdit: () => void;
+  onOpenMenu: (anchor: MenuAnchor | null) => void;
+  onStartNameEdit: () => void;
+  onStartNoteEdit: () => void;
+}) {
+  const presentDialog = useAppDialog();
+  const { width } = useWindowDimensions();
+  const menuButtonRef = useRef<View | null>(null);
+  const startedAt = new Date(startTime);
+  const timingEnd = completedAt ?? new Date(now);
+  const titleEditValue = workoutNameDraft ?? workoutName;
+  const noteValue = workoutNoteDraft ?? workoutNote;
+  const titleInputWidth = Math.min(
+    getWorkoutTitleInputWidth(titleEditValue),
+    Math.max(80, width - 96),
+  );
+
+  useEffect(() => {
+    if (!editingName) return;
+
+    const frame = requestAnimationFrame(() => nameInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [editingName, nameInputRef]);
+
+  useEffect(() => {
+    if (!editingNote) return;
+
+    const frame = requestAnimationFrame(() => noteInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [editingNote]);
+
+  const openMenu = () => {
+    const menuButton = menuButtonRef.current;
+    if (!menuButton) {
+      onOpenMenu(null);
+      return;
+    }
+
+    menuButton.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+      onOpenMenu({
+        x,
+        y,
+        width: measuredWidth,
+        height: measuredHeight,
+      });
+    });
+  };
+
+  return (
+    <View style={styles.workoutTitleBlock}>
+      <View style={styles.workoutTitleHeader}>
+        {editingName ? (
+          <TextInput
+            key={titleEditValue}
+            ref={nameInputRef}
+            accessibilityLabel="Edit workout name"
+            autoComplete="off"
+            autoCapitalize="words"
+            autoCorrect={false}
+            importantForAutofill="no"
+            inputMode="text"
+            keyboardType="default"
+            multiline={false}
+            returnKeyType="done"
+            selectTextOnFocus
+            style={[styles.workoutTitleEditingInput, { width: titleInputWidth }]}
+            testID="workout-title-inline-input"
+            textContentType="none"
+            defaultValue={titleEditValue}
+            onBlur={onEndNameEdit}
+            onChangeText={onChangeName}
+            onTouchStart={(event) => event.stopPropagation()}
+            onSubmitEditing={onEndNameEdit}
+          />
+        ) : canEditWorkout ? (
+          <Pressable
+            accessibilityLabel="Edit workout name"
+            accessibilityRole="button"
+            hitSlop={4}
+            style={styles.workoutTitleDisplayPressable}
+            testID="workout-title-display"
+            onPress={onStartNameEdit}
+          >
+            <Text numberOfLines={2} style={styles.workoutTitleDisplay}>
+              {workoutName}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text numberOfLines={2} style={styles.workoutTitleDisplay}>
+            {workoutName}
+          </Text>
+        )}
+        {canEditWorkout ? (
+          <Pressable
+            ref={menuButtonRef}
+            accessibilityLabel="Workout title options"
+            accessibilityRole="button"
+            hitSlop={8}
+          style={styles.workoutTitleMenuButton}
+          testID="workout-title-menu"
+          onPress={openMenu}
+        >
+          <Icon name="ellipsis-horizontal" size={20} color={palette.ink} />
+        </Pressable>
+        ) : null}
+      </View>
+      <View style={styles.workoutTitleMetaRow}>
+        <Icon name="calendar-outline" size={18} color={palette.muted} />
+        <Text style={styles.workoutTitleMetaText}>
+          {formatTitleDate(startedAt)}
+        </Text>
+      </View>
+      <View style={styles.workoutTitleMetaRow}>
+        <Icon name="time-outline" size={19} color={palette.muted} />
+        <Text style={styles.workoutTitleMetaText}>
+          {formatElapsedClock(startedAt, timingEnd)}
+        </Text>
+      </View>
+      {editingNote ? (
+        <TextInput
+          ref={noteInputRef}
+          accessibilityLabel="Edit workout note"
+          autoComplete="off"
+          autoCapitalize="sentences"
+          autoCorrect={false}
+          autoFocus
+          contextMenuHidden
+          defaultValue={noteValue}
+          blurOnSubmit={false}
+          importantForAutofill="no"
+          inputMode="text"
+          keyboardType="default"
+          multiline
+          placeholder="Notes"
+          placeholderTextColor={palette.muted}
+          spellCheck={false}
+          returnKeyType="default"
+          selectTextOnFocus={false}
+          textContentType="none"
+          style={styles.workoutTitleNoteInput}
+          testID="workout-note-inline-input"
+          onBlur={onEndNoteEdit}
+          onChangeText={onChangeNote}
+          onTouchStart={(event) => event.stopPropagation()}
+        />
+      ) : workoutNote ? (
+        canEditWorkout ? (
+          <Pressable
+            accessibilityLabel="Edit workout note"
+            accessibilityRole="button"
+            hitSlop={6}
+            onPress={onStartNoteEdit}
+          >
+            <Text style={styles.workoutTitleNoteText}>{workoutNote}</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.workoutTitleNoteText}>{workoutNote}</Text>
+        )
+      ) : null}
+    </View>
+  );
+}
+
+function InlineNoteEditor({
+  iconName,
+  inputRef,
+  note,
+  placeholder,
+  testID,
+  onBlur,
+  onChangeText,
+}: {
+  iconName?: IconName;
+  inputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  note: string;
+  placeholder: string;
+  testID: string;
+  onBlur: () => void;
+  onChangeText: (note: string) => void;
+}) {
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [inputRef, testID]);
+
+  const input = (
+    <TextInput
+      key={`${testID}-${note}`}
+      ref={inputRef}
+      accessibilityLabel={placeholder}
+      autoComplete="off"
+      autoCapitalize="sentences"
+      autoCorrect={false}
+      blurOnSubmit={false}
+      contextMenuHidden
+      defaultValue={note}
+      importantForAutofill="no"
+      inputMode="text"
+      keyboardType="default"
+      multiline
+      placeholder={placeholder}
+      placeholderTextColor={palette.muted}
+      returnKeyType="default"
+      selectTextOnFocus={false}
+      spellCheck={false}
+      style={[
+        styles.inlineNoteInput,
+        iconName ? null : styles.inlineNoteInputPlain,
+      ]}
+      testID={testID}
+      textContentType="none"
+      onBlur={onBlur}
+      onChangeText={onChangeText}
+      onTouchStart={(event) => event.stopPropagation()}
+    />
+  );
+
+  if (!iconName) return input;
+
+  return (
+    <View style={styles.inlineNoteInputRow}>
+      <Icon name={iconName} size={13} color={palette.muted} />
+      {input}
+    </View>
+  );
+}
+
+function WorkoutTitleCommandMenu({
+  visible,
+  anchor,
+  hasWorkoutNote,
+  onAddNote,
+  onAdjustTime,
+  onClose,
+  onEditName,
+  onRemoveNote,
+}: {
+  visible: boolean;
+  anchor: MenuAnchor | null;
+  hasWorkoutNote: boolean;
+  onAddNote: () => void;
+  onAdjustTime: () => void;
+  onClose: () => void;
+  onEditName: () => void;
+  onRemoveNote: () => void;
+}) {
+  const menuTop = Math.max(8, Math.round(anchor?.y ?? 132));
+
+  return (
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade onDismiss={onClose} style={styles.commandMenuShade}>
+        <View style={[styles.commandMenuPanel, { top: menuTop }]}>
+          <CommandMenuItem
+            icon="pencil-outline"
+            label="Edit Workout Name"
+            onPress={onEditName}
+            testID="workout-menu-edit-name"
+          />
+          <CommandMenuItem
+            icon="refresh-outline"
+            label="Adjust Start/End Time"
+            onPress={onAdjustTime}
+            testID="workout-menu-adjust-time"
+          />
+          {hasWorkoutNote ? (
+            <CommandMenuItem
+              danger
+              icon="trash-outline"
+              label="Remove Note"
+              onPress={onRemoveNote}
+              testID="workout-menu-remove-note"
+            />
+          ) : (
+            <CommandMenuItem
+              icon="document-outline"
+              label="Add Note"
+              onPress={onAddNote}
+              testID="workout-menu-add-note"
+            />
+          )}
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function ExerciseCommandMenu({
+  visible,
+  anchor,
+  onAddNote,
+  onAddPinnedNote,
+  onClose,
+  onOpenPreferences,
+  onRemoveExercise,
+}: {
+  visible: boolean;
+  anchor: MenuAnchor | null;
+  onAddNote: () => void;
+  onAddPinnedNote: () => void;
+  onClose: () => void;
+  onOpenPreferences: () => void;
+  onRemoveExercise: () => void;
+}) {
+  const menuTop = Math.max(8, Math.round(anchor?.y ?? 312));
+
+  return (
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade onDismiss={onClose} style={styles.commandMenuShade}>
+        <View style={[styles.commandMenuPanel, { top: menuTop }]}>
+          <CommandMenuItem
+            icon="document-outline"
+            label="Add Note"
+            onPress={onAddNote}
+            testID="exercise-menu-add-note"
+          />
+          <CommandMenuItem
+            icon="pin-outline"
+            label="Add Pinned Note"
+            onPress={onAddPinnedNote}
+            testID="exercise-menu-add-pinned-note"
+          />
+          <CommandMenuItem
+            icon="options-outline"
+            label="Preferences"
+            onPress={onOpenPreferences}
+            testID="exercise-menu-preferences"
+          />
+          <CommandMenuItem
+            danger
+            icon="close-outline"
+            label="Remove Exercise"
+            onPress={onRemoveExercise}
+            testID="exercise-menu-remove"
+          />
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function CommandMenuItem({
+  danger = false,
+  icon,
+  label,
+  onPress,
+  testID,
+}: {
+  danger?: boolean;
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      style={styles.commandMenuItem}
+      testID={testID}
+      onPress={onPress}
+    >
+      <Icon name={icon} size={21} color={danger ? palette.danger : palette.muted} />
+      <Text
+        style={[
+          styles.commandMenuItemText,
+          danger ? styles.commandMenuItemTextDanger : null,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function WorkoutTimingEditorModal({
+  visible,
+  completedAt,
+  now,
+  startTime,
+  onClose,
+  onSave,
+}: {
+  visible: boolean;
+  completedAt: Date | null;
+  now: number;
+  startTime: number;
+  onClose: () => void;
+  onSave: (startTime: number, completedTime: number | null) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [draftStart, setDraftStart] = useState(() => new Date(startTime));
+  const [draftCompleted, setDraftCompleted] = useState<Date | null>(
+    () => completedAt,
+  );
+  const [selectedField, setSelectedField] = useState<"start" | "end" | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!visible) return;
+    setDraftStart(new Date(startTime));
+    setDraftCompleted(completedAt);
+    setSelectedField(null);
+  }, [completedAt, startTime, visible]);
+
+  const automaticTiming = draftCompleted == null;
+  const durationEnd = draftCompleted ?? new Date(now);
+  const selectedPickerValue =
+    selectedField === "start"
+      ? draftStart
+      : (draftCompleted ?? defaultCompletedAtForStartTime(draftStart.getTime()));
+
+  const toggleAutomaticTiming = () => {
+    if (automaticTiming) {
+      setDraftCompleted(defaultCompletedAtForStartTime(draftStart.getTime()));
+      setSelectedField("end");
+    } else {
+      setDraftCompleted(null);
+      setSelectedField(null);
+    }
+  };
+
+  const updateStart = (nextStart: Date) => {
+    const previousDurationMs =
+      draftCompleted == null
+        ? null
+        : Math.max(60_000, draftCompleted.getTime() - draftStart.getTime());
+    setDraftStart(nextStart);
+    if (previousDurationMs != null) {
+      setDraftCompleted(new Date(nextStart.getTime() + previousDurationMs));
+    }
+  };
+
+  const updateEnd = (nextEnd: Date) => {
+    setDraftCompleted(
+      new Date(Math.max(draftStart.getTime() + 60_000, nextEnd.getTime())),
+    );
+  };
+
+  return (
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={[
+          styles.adjustTimeShade,
+          {
+            paddingBottom: Math.max(8, insets.bottom + 8),
+            paddingTop: Math.max(8, insets.top + 8),
+          },
+        ]}
+      >
+        <View style={styles.adjustTimeSheet}>
+          <View style={styles.adjustTimeHeader}>
+            <Pressable
+              accessibilityLabel="Close adjust time"
+              accessibilityRole="button"
+              style={styles.adjustTimeCloseButton}
+              testID="adjust-time-close"
+              onPress={onClose}
+            >
+              <Icon name="close-outline" size={26} color={palette.ink} />
+            </Pressable>
+            <Text style={styles.adjustTimeTitle}>Adjust Start/End Time</Text>
+            <Pressable
+              accessibilityLabel="Save workout timing"
+              accessibilityRole="button"
+              hitSlop={8}
+              testID="adjust-time-save"
+              onPress={() =>
+                onSave(
+                  draftStart.getTime(),
+                  draftCompleted ? draftCompleted.getTime() : null,
+                )
+              }
+            >
+              <Text style={styles.adjustTimeSaveText}>Save</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.adjustTimeAutoRow}>
+            <Text style={styles.adjustTimeLabel}>Automatic Timing</Text>
+            <Pressable
+              accessibilityLabel={
+                automaticTiming
+                  ? "Disable automatic timing"
+                  : "Enable automatic timing"
+              }
+              accessibilityRole="switch"
+              accessibilityState={{ checked: automaticTiming }}
+              style={[
+                styles.adjustTimeSwitch,
+                automaticTiming ? styles.adjustTimeSwitchOn : null,
+              ]}
+              testID="adjust-time-automatic"
+              onPress={toggleAutomaticTiming}
+            >
+              <View
+                style={[
+                  styles.adjustTimeSwitchKnob,
+                  automaticTiming ? styles.adjustTimeSwitchKnobOn : null,
+                ]}
+              />
+            </Pressable>
+          </View>
+          <Text style={styles.adjustTimeHelp}>
+            Disable Automatic Timing to manually set an End Time for this
+            workout.
+          </Text>
+
+          <View style={styles.adjustTimeRows}>
+            <AdjustTimeRow
+              label="Duration"
+              value={formatElapsedClock(draftStart, durationEnd)}
+            />
+            <AdjustTimeRow
+              active={selectedField === "start"}
+              label="Start Time"
+              value={formatAdjustDateTime(draftStart, new Date(now))}
+              onPress={() => setSelectedField("start")}
+            />
+            <AdjustTimeRow
+              active={selectedField === "end"}
+              label="End Time"
+              value={
+                automaticTiming
+                  ? "Currently Active"
+                  : formatAdjustDateTime(durationEnd, new Date(now))
+              }
+              onPress={automaticTiming ? undefined : () => setSelectedField("end")}
+            />
+          </View>
+
+          {selectedField ? (
+            <DateTimePicker
+              accessibilityLabel={
+                selectedField === "start" ? "Start time" : "End time"
+              }
+              display="spinner"
+              mode="datetime"
+              minimumDate={
+                selectedField === "end"
+                  ? new Date(draftStart.getTime() + 60_000)
+                  : undefined
+              }
+              style={styles.adjustDateTimePicker}
+              testID={`adjust-time-${selectedField}-picker`}
+              value={selectedPickerValue}
+              onChange={(_event, selectedDate) => {
+                if (!selectedDate) return;
+                if (selectedField === "start") updateStart(selectedDate);
+                else updateEnd(selectedDate);
+              }}
+            />
+          ) : null}
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function AdjustTimeRow({
+  active = false,
+  label,
+  value,
+  onPress,
+}: {
+  active?: boolean;
+  label: string;
+  value: string;
+  onPress?: () => void;
+}) {
+  const content = (
+    <>
+      <Text style={styles.adjustTimeLabel}>{label}</Text>
+      <Text
+        style={[
+          styles.adjustTimeValue,
+          onPress ? styles.adjustTimeValueAction : null,
+          active ? styles.adjustTimeValueActive : null,
+        ]}
+      >
+        {value}
+      </Text>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.adjustTimeRow}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      accessibilityLabel={`Edit ${label}`}
+      accessibilityRole="button"
+      style={styles.adjustTimeRow}
+      onPress={onPress}
+    >
+      {content}
+    </Pressable>
+  );
+}
+
+function PastReviewWorkoutHeader({
+  onBack,
+  onEdit,
+}: {
+  onBack: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <View style={[styles.topActions, styles.pastReviewTopActions]}>
+      <Pressable
+        accessibilityLabel="Close workout"
+        accessibilityRole="button"
+        style={styles.iconButton}
+        testID="workout-close"
+        onPress={onBack}
+      >
+        <Icon name="close-outline" size={20} />
+      </Pressable>
+      <Pressable
+        accessibilityLabel="Edit workout"
+        accessibilityRole="button"
+        style={styles.textButton}
+        testID="workout-enter-edit-mode"
+        onPress={onEdit}
+      >
+        <Text style={styles.textButtonText}>edit</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function PastEditWorkoutHeader({
+  canRedo,
+  canUndo,
+  saving,
+  showDelete,
+  onBack,
+  onDelete,
+  onRedo,
+  onSave,
+  onUndo,
+}: {
+  canRedo: boolean;
+  canUndo: boolean;
+  saving: boolean;
+  showDelete: boolean;
+  onBack: () => void;
+  onDelete: () => void;
+  onRedo: () => void;
+  onSave: () => void;
+  onUndo: () => void;
+}) {
+  return (
+    <View style={styles.topActions}>
+      <View />
+      <WorkoutHeaderActions
+        canRedo={canRedo}
+        canUndo={canUndo}
+        saving={saving}
+        saveLabel="Save workout changes"
+        showDelete={showDelete}
+        showOnlyAvailableHistoryActions
+        onBack={onBack}
+        onDelete={onDelete}
+        onRedo={onRedo}
+        onSave={onSave}
+        onUndo={onUndo}
+      />
+    </View>
+  );
+}
+
+function WorkoutHeaderActions({
+  canRedo,
+  canUndo,
+  saving,
+  saveLabel,
+  saveKind = "icon",
+  showDelete = false,
+  showOnlyAvailableHistoryActions = false,
+  onBack,
+  onDelete,
+  onRedo,
+  onSave,
+  onUndo,
+}: {
+  canRedo: boolean;
+  canUndo: boolean;
+  saving: boolean;
+  saveLabel: string;
+  saveKind?: "icon" | "finish";
+  showDelete?: boolean;
+  showOnlyAvailableHistoryActions?: boolean;
+  onBack: () => void;
+  onDelete?: () => void;
+  onRedo: () => void;
+  onSave: () => void;
+  onUndo: () => void;
+}) {
+  const showUndo = canUndo || !showOnlyAvailableHistoryActions;
+  const showRedo = canRedo || !showOnlyAvailableHistoryActions;
+
+  return (
+    <View style={styles.topActionButtons}>
+      <Pressable
+        accessibilityLabel="Close workout"
+        accessibilityRole="button"
+        style={styles.iconButton}
+        testID="workout-close"
+        onPress={onBack}
+      >
+        <Icon name="close-outline" size={20} />
+      </Pressable>
+      {showUndo ? (
+        <Pressable
+          accessibilityLabel="Undo workout edit"
+          accessibilityRole="button"
+          disabled={!canUndo}
+          style={[
+            styles.iconButton,
+            !canUndo ? styles.iconButtonDisabled : null,
+          ]}
+          testID="workout-undo"
+          onPress={onUndo}
+        >
+          <Icon
+            name="arrow-undo-outline"
+            size={20}
+            color={canUndo ? palette.muted : palette.disabled}
+          />
+        </Pressable>
+      ) : null}
+      {showRedo ? (
+        <Pressable
+          accessibilityLabel="Redo workout edit"
+          accessibilityRole="button"
+          disabled={!canRedo}
+          style={[
+            styles.iconButton,
+            !canRedo ? styles.iconButtonDisabled : null,
+          ]}
+          testID="workout-redo"
+          onPress={onRedo}
+        >
+          <Icon
+            name="arrow-redo-outline"
+            size={20}
+            color={canRedo ? palette.muted : palette.disabled}
+          />
+        </Pressable>
+      ) : null}
+      {showDelete && onDelete ? (
+        <Pressable
+          accessibilityLabel="Delete workout"
+          accessibilityRole="button"
+          style={styles.iconButton}
+          testID="workout-delete"
+          onPress={onDelete}
+        >
+          <Icon name="trash-outline" size={20} color={palette.muted} />
+        </Pressable>
+      ) : null}
+      <Pressable
+        accessibilityLabel={saveLabel}
+        accessibilityRole="button"
+        disabled={saving}
+        style={saveKind === "finish" ? styles.finishButton : styles.iconButton}
+        testID="workout-save"
+        onPress={onSave}
+      >
+        {saveKind === "finish" ? (
+          <Text style={styles.finishButtonText}>
+            {saving ? "saving" : "Finish"}
+          </Text>
+        ) : (
+          <Icon name="save-outline" size={20} color={palette.ink} />
+        )}
+      </Pressable>
+    </View>
   );
 }
 
@@ -2329,6 +4524,7 @@ function ExercisePlan({
   onAddExercise,
   onMoveTo,
   onDragStateChange,
+  onTextInputFocus,
   onDelete,
 }: {
   exercises: WorkoutExercise[];
@@ -2340,9 +4536,9 @@ function ExercisePlan({
   onAddExercise: (name?: string) => void;
   onMoveTo: (exerciseIndex: number, targetIndex: number) => void;
   onDragStateChange: (dragging: boolean) => void;
+  onTextInputFocus: () => void;
   onDelete: (exerciseIndex: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [dragState, setDragState] = useState<PlanDragState | null>(null);
   const dragTranslateY = useMemo(() => new Animated.Value(0), []);
   const trimmedExerciseName = newExerciseName.trim();
@@ -2359,7 +4555,6 @@ function ExercisePlan({
     (exercise) =>
       exercise.name.toLowerCase() === trimmedExerciseName.toLowerCase(),
   );
-  const toggleOpen = useCallback(() => setOpen((current) => !current), []);
   const getTargetIndex = useCallback(
     (exerciseIndex: number, dy: number) =>
       clampIndex(
@@ -2412,116 +4607,170 @@ function ExercisePlan({
 
   return (
     <View style={styles.planBlock}>
-      <Pressable
-        accessibilityLabel={`${open ? "Collapse" : "Expand"} exercises`}
-        accessibilityRole="button"
-        hitSlop={10}
-        style={styles.planHeader}
-        testID="plan-toggle"
-        onPress={toggleOpen}
-      >
-        <Icon
-          name={open ? "chevron-down-outline" : "chevron-forward-outline"}
-          size={17}
-          color={palette.muted}
-        />
-        <Text style={styles.subtleTitle}>exercises</Text>
-      </Pressable>
-      {open ? (
-        <>
-          {exercises.map((exercise, index) => {
-            const isDragging = dragState?.exerciseIndex === index;
-            const translateY = isDragging
-              ? dragTranslateY
-              : getPlanRowShift(index, dragState);
+      {exercises.map((exercise, index) => {
+        const isDragging = dragState?.exerciseIndex === index;
+        const translateY = isDragging
+          ? dragTranslateY
+          : getPlanRowShift(index, dragState);
 
-            return (
-              <Animated.View
-                key={`${exercise.name}-${index}`}
-                style={[
-                  styles.planRow,
-                  isDragging ? styles.planRowDragging : null,
-                  { transform: [{ translateY }] },
-                ]}
-              >
-                <ExerciseDragHandle
-                  exerciseName={exercise.name}
-                  exerciseIndex={index}
-                  dragging={isDragging}
-                  onDragStart={startDrag}
-                  onDragMove={moveDrag}
-                  onDragEnd={finishDrag}
-                  onDragCancel={cancelDrag}
-                />
-                <Text style={styles.planName}>{exercise.name}</Text>
-                <Pressable
-                  accessibilityLabel={`Delete ${exercise.name}`}
-                  accessibilityRole="button"
-                  style={styles.microButton}
-                  testID={`plan-delete-${index}`}
-                  onPress={() => onDelete(index)}
-                >
-                  <Icon name="trash-outline" size={16} color={palette.muted} />
-                </Pressable>
-              </Animated.View>
-            );
-          })}
-          <View style={styles.addExerciseRow}>
-            <TextInput
-              value={newExerciseName}
-              onChangeText={onNewExerciseNameChange}
-              placeholder="exercise name"
-              placeholderTextColor={palette.muted}
-              style={styles.exerciseInput}
-              autoCapitalize="words"
+        return (
+          <Animated.View
+            key={`${exercise.name}-${index}`}
+            style={[
+              styles.planRow,
+              isDragging ? styles.planRowDragging : null,
+              { transform: [{ translateY }] },
+            ]}
+          >
+            <ExerciseDragHandle
+              exerciseName={exercise.name}
+              exerciseIndex={index}
+              dragging={isDragging}
+              onDragStart={startDrag}
+              onDragMove={moveDrag}
+              onDragEnd={finishDrag}
+              onDragCancel={cancelDrag}
             />
+            <Text style={styles.planName}>{exercise.name}</Text>
             <Pressable
-              accessibilityLabel={`Add ${newExerciseName || "exercise"}`}
+              accessibilityLabel={`Delete ${exercise.name}`}
               accessibilityRole="button"
-              style={styles.addButton}
-              testID="plan-add-exercise"
-              onPress={() => onAddExercise()}
-              disabled={addingExercise}
+              style={styles.microButton}
+              testID={`plan-delete-${index}`}
+              onPress={() => onDelete(index)}
             >
-              <Text style={styles.iconButtonTextSmall}>
-                {addingExercise ? "..." : "+"}
+              <Icon name="trash-outline" size={16} color={palette.muted} />
+            </Pressable>
+          </Animated.View>
+        );
+      })}
+      <View style={styles.addExerciseRow}>
+        <TextInput
+          value={newExerciseName}
+          onChangeText={onNewExerciseNameChange}
+          onFocus={onTextInputFocus}
+          placeholder="exercise name"
+          placeholderTextColor={palette.muted}
+          style={styles.exerciseInput}
+          autoCapitalize="words"
+        />
+        <Pressable
+          accessibilityLabel={`Add ${newExerciseName || "exercise"}`}
+          accessibilityRole="button"
+          style={styles.addButton}
+          testID="plan-add-exercise"
+          onPress={() => onAddExercise()}
+          disabled={addingExercise}
+        >
+          <Text style={styles.iconButtonTextSmall}>
+            {addingExercise ? "..." : "+"}
+          </Text>
+        </Pressable>
+      </View>
+      {trimmedExerciseName ? (
+        <View style={styles.exerciseSuggestions}>
+          {matchingExerciseSuggestions.map((suggestion) => (
+            <Pressable
+              key={suggestion.id}
+              accessibilityLabel={`Add ${suggestion.name}`}
+              accessibilityRole="button"
+              style={styles.exerciseSuggestion}
+              testID={`plan-suggestion-${suggestion.id}`}
+              onPress={() => onAddExercise(suggestion.name)}
+            >
+              <Text style={styles.exerciseSuggestionText}>
+                {suggestion.name}
               </Text>
             </Pressable>
-          </View>
-          {trimmedExerciseName ? (
-            <View style={styles.exerciseSuggestions}>
-              {matchingExerciseSuggestions.map((suggestion) => (
-                <Pressable
-                  key={suggestion.id}
-                  accessibilityLabel={`Add ${suggestion.name}`}
-                  accessibilityRole="button"
-                  style={styles.exerciseSuggestion}
-                  testID={`plan-suggestion-${suggestion.id}`}
-                  onPress={() => onAddExercise(suggestion.name)}
-                >
-                  <Text style={styles.exerciseSuggestionText}>
-                    {suggestion.name}
-                  </Text>
-                </Pressable>
-              ))}
-              {exerciseSuggestionsLoaded && !hasExactExerciseSuggestion ? (
-                <Pressable
-                  accessibilityLabel={`Create ${trimmedExerciseName}`}
-                  accessibilityRole="button"
-                  style={styles.exerciseSuggestion}
-                  testID="plan-create-exercise"
-                  onPress={() => onAddExercise(trimmedExerciseName)}
-                >
-                  <Text style={styles.exerciseSuggestionMutedText}>
-                    create {trimmedExerciseName}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
+          ))}
+          {exerciseSuggestionsLoaded && !hasExactExerciseSuggestion ? (
+            <Pressable
+              accessibilityLabel={`Create ${trimmedExerciseName}`}
+              accessibilityRole="button"
+              style={styles.exerciseSuggestion}
+              testID="plan-create-exercise"
+              onPress={() => onAddExercise(trimmedExerciseName)}
+            >
+              <Text style={styles.exerciseSuggestionMutedText}>
+                create {trimmedExerciseName}
+              </Text>
+            </Pressable>
           ) : null}
-        </>
+        </View>
       ) : null}
     </View>
+  );
+}
+
+function ExercisePlanModal({
+  visible,
+  exercises,
+  newExerciseName,
+  addingExercise,
+  exerciseSuggestions,
+  exerciseSuggestionsLoaded,
+  onClose,
+  onNewExerciseNameChange,
+  onAddExercise,
+  onMoveTo,
+  onDragStateChange,
+  onTextInputFocus,
+  onDelete,
+}: {
+  visible: boolean;
+  exercises: WorkoutExercise[];
+  newExerciseName: string;
+  addingExercise: boolean;
+  exerciseSuggestions: ExerciseSuggestion[];
+  exerciseSuggestionsLoaded: boolean;
+  onClose: () => void;
+  onNewExerciseNameChange: (name: string) => void;
+  onAddExercise: (name?: string) => void;
+  onMoveTo: (exerciseIndex: number, targetIndex: number) => void;
+  onDragStateChange: (dragging: boolean) => void;
+  onTextInputFocus: () => void;
+  onDelete: (exerciseIndex: number) => void;
+}) {
+  return (
+    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <DismissibleModalShade onDismiss={onClose} style={styles.exercisePlanShade}>
+        <View style={styles.exercisePlanSheet}>
+          <View style={styles.exercisePlanHeader}>
+            <Pressable
+              accessibilityLabel="Close exercise editor"
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.exerciseDetailsCloseButton}
+              onPress={onClose}
+            >
+              <Icon name="close-outline" size={25} color={palette.ink} />
+            </Pressable>
+            <Text style={styles.exercisePlanTitle}>exercises</Text>
+            <View style={styles.exercisePlanHeaderSpacer} />
+          </View>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.exercisePlanScroll}
+            contentContainerStyle={styles.exercisePlanScrollContent}
+          >
+            <ExercisePlan
+              exercises={exercises}
+              newExerciseName={newExerciseName}
+              addingExercise={addingExercise}
+              exerciseSuggestions={exerciseSuggestions}
+              exerciseSuggestionsLoaded={exerciseSuggestionsLoaded}
+              onNewExerciseNameChange={onNewExerciseNameChange}
+              onAddExercise={onAddExercise}
+              onMoveTo={onMoveTo}
+              onDragStateChange={onDragStateChange}
+              onTextInputFocus={onTextInputFocus}
+              onDelete={onDelete}
+            />
+          </ScrollView>
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
   );
 }
 
@@ -2621,281 +4870,2778 @@ function clampIndex(index: number, count: number) {
   return Math.max(0, Math.min(count - 1, index));
 }
 
-function ExerciseSection({
-  exercise,
-  exerciseIndex,
-  onDispatch,
-  onOpenSetEditor,
-  onOpenNoteEditor,
+function WorkoutExerciseTabs({
+  editable,
+  currentExerciseIndex,
+  exercises,
+  onEdit,
+  onSelect,
 }: {
-  exercise: WorkoutExercise;
-  exerciseIndex: number;
-  onDispatch: (action: Action) => void;
-  onOpenSetEditor: (setId: string, field?: SetEditField) => void;
-  onOpenNoteEditor: (target: NoteEditTarget) => void;
-  onDeleteExercise: (exerciseIndex: number) => void;
+  editable: boolean;
+  currentExerciseIndex: number;
+  exercises: WorkoutExercise[];
+  onEdit: () => void;
+  onSelect: (exerciseIndex: number) => void;
 }) {
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const { warmups, working } = splitSets(exercise);
-
   return (
-    <View style={styles.exerciseBlock}>
-      <View style={styles.exerciseTitleRow}>
-        <Pressable
-          accessibilityLabel={`${exercise.name} pinned exercise note`}
-          accessibilityRole="button"
-          style={styles.flexColumn}
-          testID={`exercise-title-${exerciseIndex}`}
-          onPress={() => onOpenNoteEditor({ kind: "exercise", exerciseIndex })}
-        >
-          <Text style={styles.exerciseTitle}>{exercise.name}</Text>
-        </Pressable>
-        <View style={styles.exerciseTitleActions}>
+    <View style={styles.workoutExerciseTabs}>
+      {exercises.map((exercise, exerciseIndex) => {
+        const selected = exerciseIndex === currentExerciseIndex;
+        return (
           <Pressable
-            accessibilityLabel={`${exercise.name} note for this workout`}
-            accessibilityRole="button"
-            hitSlop={8}
-            style={styles.iconButtonSmall}
-            testID={`exercise-workout-note-${exerciseIndex}`}
-            onPress={() =>
-              onOpenNoteEditor({ kind: "workout-exercise", exerciseIndex })
-            }
-          >
-            <Icon name="pencil-outline" size={20} />
-          </Pressable>
-          <Pressable
-            accessibilityLabel={`${historyOpen ? "Hide" : "Show"} ${exercise.name} history`}
+            key={`${exercise.userExerciseId ?? exercise.name}-${exerciseIndex}`}
+            accessibilityLabel={`Show ${exercise.name}`}
             accessibilityRole="button"
             hitSlop={8}
             style={[
-              styles.iconButtonSmall,
-              styles.historyIconButton,
-              historyOpen ? styles.iconButtonActive : null,
+              styles.workoutExerciseTab,
+              selected ? styles.workoutExerciseTabSelected : null,
             ]}
-            testID={`exercise-history-${exerciseIndex}`}
-            onPress={() => setHistoryOpen((open) => !open)}
+            onPress={() => onSelect(exerciseIndex)}
           >
-            <Icon
-              name={historyOpen ? "chevron-up-outline" : "time-outline"}
-              size={20}
-              color={historyOpen ? palette.ink : palette.muted}
-            />
-          </Pressable>
-        </View>
-      </View>
-
-      {exercise.exerciseNotes ? (
-        <Pressable
-          accessibilityLabel={`Edit ${exercise.name} pinned exercise note`}
-          accessibilityRole="button"
-          style={styles.noteBadgeSelf}
-          testID={`exercise-pinned-note-${exerciseIndex}`}
-          onPress={() => onOpenNoteEditor({ kind: "exercise", exerciseIndex })}
-        >
-          <View style={styles.noteBadgeRow}>
-            <Icon name="pin-outline" size={13} color={palette.muted} />
-            <Text style={styles.noteBadgeTextInline}>
-              {exercise.exerciseNotes}
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.workoutExerciseTabText,
+                selected ? styles.workoutExerciseTabTextSelected : null,
+              ]}
+            >
+              {exercise.name}
             </Text>
+          </Pressable>
+        );
+      })}
+      {editable ? (
+        <Pressable
+          accessibilityLabel="Edit exercises"
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.workoutExerciseTab}
+          testID="workout-exercise-tabs-edit"
+          onPress={onEdit}
+        >
+          <Text numberOfLines={1} style={styles.workoutExerciseTabText}>
+            edit
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function ExerciseNextHint({
+  exerciseName,
+  onPress,
+}: {
+  exerciseName: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={`Go to next exercise, ${exerciseName}`}
+      accessibilityRole="button"
+      hitSlop={8}
+      style={styles.exerciseNextHint}
+      onPress={onPress}
+    >
+      <Text style={styles.exerciseNextHintLabel}>next</Text>
+      <Icon name="arrow-forward" size={15} color={palette.muted} />
+      <Text numberOfLines={1} style={styles.exerciseNextHintName}>
+        {exerciseName}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ExerciseSection({
+  exercise,
+  exerciseIndex,
+  inlineNoteDraft,
+  inlineNoteInputRef,
+  inlineNoteTarget,
+  selectedField,
+  selectedSetId,
+  viewMode,
+  onDispatch,
+  onChangeInlineNote,
+  onEndInlineNoteEdit,
+  onSelectExercise,
+  onOpenSetEditor,
+  onOpenNoteEditor,
+  onStartInlineNoteEdit,
+  onStartTextEdit,
+  onStartRestTimer,
+  onDeleteExercise,
+  onSaveUserExerciseSettings,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  inlineNoteDraft: string | null;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteTarget: InlineNoteEditTarget | null;
+  selectedField: SetEditField | null;
+  selectedSetId: string | null;
+  viewMode: WorkoutViewMode;
+  onDispatch: (action: Action) => void;
+  onChangeInlineNote: (note: string) => void;
+  onEndInlineNoteEdit: () => void;
+  onSelectExercise: () => void;
+  onOpenSetEditor: (setId: string, field?: SetEditField) => void;
+  onOpenNoteEditor: (target: NoteEditTarget) => void;
+  onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
+  onStartTextEdit: () => void;
+  onStartRestTimer: () => void;
+  onDeleteExercise: (exerciseIndex: number) => void;
+  onSaveUserExerciseSettings: (
+    exerciseIndex: number,
+    settings: UserExerciseSettings,
+  ) => void;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsTab, setDetailsTab] = useState<ExerciseDetailsTab>("history");
+  const [detailsEditRequest, setDetailsEditRequest] = useState(0);
+  const [exerciseMenuOpen, setExerciseMenuOpen] = useState(false);
+  const [exerciseMenuAnchor, setExerciseMenuAnchor] =
+    useState<MenuAnchor | null>(null);
+  const exerciseMenuButtonRef = useRef<View | null>(null);
+  const { warmups, working } = splitSets(exercise);
+  const editable = viewMode !== "past-review";
+  const pinnedNoteTarget: InlineNoteEditTarget = {
+    kind: "exercise",
+    exerciseIndex,
+  };
+  const workoutExerciseNoteTarget: InlineNoteEditTarget = {
+    kind: "workout-exercise",
+    exerciseIndex,
+  };
+  const editingPinnedNote = isSameNoteTarget(
+    inlineNoteTarget,
+    pinnedNoteTarget,
+  );
+  const editingWorkoutExerciseNote = isSameNoteTarget(
+    inlineNoteTarget,
+    workoutExerciseNoteTarget,
+  );
+  const closeExerciseDetails = () => {
+    setDetailsOpen(false);
+  };
+  const openExerciseDetails = (tab: ExerciseDetailsTab) => {
+    onSelectExercise();
+    setDetailsTab(tab);
+    setDetailsOpen(true);
+  };
+  const openExerciseMenu = () => {
+    onSelectExercise();
+    const menuButton = exerciseMenuButtonRef.current;
+    if (!menuButton) {
+      setExerciseMenuAnchor(null);
+      setExerciseMenuOpen(true);
+      return;
+    }
+
+    menuButton.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+      setExerciseMenuAnchor({
+        x,
+        y,
+        width: measuredWidth,
+        height: measuredHeight,
+      });
+      setExerciseMenuOpen(true);
+    });
+  };
+
+  const openExercisePreferences = () => {
+    setExerciseMenuOpen(false);
+    setExerciseMenuAnchor(null);
+    openExerciseDetails("about");
+    setDetailsEditRequest((request) => request + 1);
+  };
+
+  return (
+    <View
+      accessibilityLabel={`Make ${exercise.name} the current exercise`}
+      style={styles.exerciseBlock}
+      testID={`exercise-section-${exerciseIndex}`}
+    >
+      <View style={styles.exerciseTitleRow}>
+        <Pressable
+          accessibilityLabel={`Open ${exercise.name} details`}
+          accessibilityRole="button"
+          style={styles.flexColumn}
+          testID={`exercise-title-${exerciseIndex}`}
+          onPress={() => {
+            openExerciseDetails("history");
+          }}
+        >
+          <View style={styles.exerciseTitleTextRow}>
+            <Text style={styles.exerciseTitle}>{exercise.name}</Text>
           </View>
         </Pressable>
+        {editable ? (
+          <View style={styles.exerciseTitleActions}>
+            <Pressable
+              ref={exerciseMenuButtonRef}
+              accessibilityLabel={`${exercise.name} actions`}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.iconButtonSmall}
+              testID={`exercise-actions-${exerciseIndex}`}
+              onPress={openExerciseMenu}
+            >
+              <Icon name="ellipsis-horizontal" size={20} />
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+
+      <ExerciseCommandMenu
+        visible={editable && exerciseMenuOpen}
+        anchor={exerciseMenuAnchor}
+        onAddNote={() => {
+          setExerciseMenuOpen(false);
+          setExerciseMenuAnchor(null);
+          onOpenNoteEditor({ kind: "workout-exercise", exerciseIndex });
+        }}
+        onAddPinnedNote={() => {
+          setExerciseMenuOpen(false);
+          setExerciseMenuAnchor(null);
+          onOpenNoteEditor({ kind: "exercise", exerciseIndex });
+        }}
+        onClose={() => {
+          setExerciseMenuOpen(false);
+          setExerciseMenuAnchor(null);
+        }}
+        onOpenPreferences={openExercisePreferences}
+        onRemoveExercise={() => {
+          setExerciseMenuOpen(false);
+          setExerciseMenuAnchor(null);
+          onDeleteExercise(exerciseIndex);
+        }}
+      />
+
+      {editingPinnedNote ? (
+        <InlineNoteEditor
+          iconName="pin-outline"
+          inputRef={inlineNoteInputRef}
+          note={inlineNoteDraft ?? exercise.exerciseNotes ?? ""}
+          placeholder="pinned exercise note"
+          testID={`exercise-pinned-note-input-${exerciseIndex}`}
+          onBlur={onEndInlineNoteEdit}
+          onChangeText={onChangeInlineNote}
+        />
+      ) : exercise.exerciseNotes ? (
+        editable ? (
+          <Pressable
+            accessibilityLabel={`Edit ${exercise.name} pinned exercise note`}
+            accessibilityRole="button"
+            style={styles.noteBadgeSelf}
+            testID={`exercise-pinned-note-${exerciseIndex}`}
+            onPress={() => {
+              onSelectExercise();
+              onStartInlineNoteEdit(pinnedNoteTarget);
+            }}
+          >
+            <View style={styles.noteBadgeRow}>
+              <Icon name="pin-outline" size={13} color={palette.muted} />
+              <Text style={styles.noteBadgeTextInline}>
+                {exercise.exerciseNotes}
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={styles.noteBadgeSelf}>
+            <View style={styles.noteBadgeRow}>
+              <Icon name="pin-outline" size={13} color={palette.muted} />
+              <Text style={styles.noteBadgeTextInline}>
+                {exercise.exerciseNotes}
+              </Text>
+            </View>
+          </View>
+        )
       ) : null}
 
-      {exercise.notes[0]?.text ? (
+      {editingWorkoutExerciseNote ? (
+        <InlineNoteEditor
+          inputRef={inlineNoteInputRef}
+          note={inlineNoteDraft ?? exercise.notes[0]?.text ?? ""}
+          placeholder="this workout note"
+          testID={`exercise-workout-note-input-${exerciseIndex}`}
+          onBlur={onEndInlineNoteEdit}
+          onChangeText={onChangeInlineNote}
+        />
+      ) : exercise.notes[0]?.text ? (
+        editable ? (
+          <Pressable
+            accessibilityLabel={`Edit ${exercise.name} note for this workout`}
+            accessibilityRole="button"
+            style={styles.noteBadgeSelf}
+            testID={`exercise-workout-note-badge-${exerciseIndex}`}
+            onPress={() => {
+              onSelectExercise();
+              onStartInlineNoteEdit(workoutExerciseNoteTarget);
+            }}
+          >
+            <Text style={styles.noteBadgeText}>{exercise.notes[0].text}</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.noteBadgeSelf}>
+            <Text style={styles.noteBadgeText}>{exercise.notes[0].text}</Text>
+          </View>
+        )
+      ) : null}
+
+      <ExerciseDetailsSheet
+        exercise={exercise}
+        editRequest={detailsEditRequest}
+        open={detailsOpen}
+        selectedTab={detailsTab}
+        onClose={closeExerciseDetails}
+        onSaveUserExerciseSettings={(settings) => {
+          onSelectExercise();
+          onSaveUserExerciseSettings(exerciseIndex, settings);
+        }}
+        onTextInputFocus={onStartTextEdit}
+        onSelectTab={setDetailsTab}
+      />
+
+      {editable && USE_SWIPEABLE_EXERCISE_SET_CARDS ? (
+        <ExerciseSetCards
+          exercise={exercise}
+          exerciseIndex={exerciseIndex}
+          inlineNoteDraft={inlineNoteDraft}
+          inlineNoteInputRef={inlineNoteInputRef}
+          inlineNoteTarget={inlineNoteTarget}
+          selectedField={selectedField}
+          selectedSetId={selectedSetId}
+          onChangeInlineNote={onChangeInlineNote}
+          onDispatch={onDispatch}
+          onEndInlineNoteEdit={onEndInlineNoteEdit}
+          onOpenSet={onOpenSetEditor}
+          onSelectExercise={onSelectExercise}
+          onStartRestTimer={onStartRestTimer}
+          onStartInlineNoteEdit={onStartInlineNoteEdit}
+        />
+      ) : editable ? (
+        <ExerciseSetLedgerView
+          exercise={exercise}
+          exerciseIndex={exerciseIndex}
+          inlineNoteDraft={inlineNoteDraft}
+          inlineNoteInputRef={inlineNoteInputRef}
+          inlineNoteTarget={inlineNoteTarget}
+          selectedField={selectedField}
+          selectedSetId={selectedSetId}
+          onChangeInlineNote={onChangeInlineNote}
+          onDispatch={onDispatch}
+          onEndInlineNoteEdit={onEndInlineNoteEdit}
+          onOpenSet={onOpenSetEditor}
+          onSelectExercise={onSelectExercise}
+          onStartRestTimer={onStartRestTimer}
+          onStartInlineNoteEdit={onStartInlineNoteEdit}
+        />
+      ) : (
+        <>
+          {warmups.length > 0 ? (
+            <SetGroup
+              title="warm-up"
+              exercise={exercise}
+              sets={warmups}
+              selectedSetId={null}
+              readonly
+            />
+          ) : null}
+          <SetGroup
+            title="working sets"
+            exercise={exercise}
+            sets={working}
+            selectedSetId={null}
+            readonly
+          />
+        </>
+      )}
+    </View>
+  );
+}
+
+function ExerciseSetLedgerView({
+  exercise,
+  exerciseIndex,
+  inlineNoteDraft,
+  inlineNoteInputRef,
+  inlineNoteTarget,
+  selectedField,
+  selectedSetId,
+  onChangeInlineNote,
+  onDispatch,
+  onEndInlineNoteEdit,
+  onOpenSet,
+  onSelectExercise,
+  onStartRestTimer,
+  onStartInlineNoteEdit,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  inlineNoteDraft: string | null;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteTarget: InlineNoteEditTarget | null;
+  selectedField: SetEditField | null;
+  selectedSetId: string | null;
+  onChangeInlineNote: (note: string) => void;
+  onDispatch: (action: Action) => void;
+  onEndInlineNoteEdit: () => void;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onSelectExercise: () => void;
+  onStartRestTimer: () => void;
+  onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
+}) {
+  const split = splitSets(exercise);
+  const groups = [
+    ...groupLedgerSets(split.warmups),
+    ...groupLedgerSets(split.working),
+  ];
+  const previousEntry = exercise.history?.[0];
+  const previousExercise = previousEntry
+    ? buildHistoricalExercise(exercise, previousEntry)
+    : null;
+  const previousGroups = previousExercise
+    ? [
+        ...groupLedgerSets(splitSets(previousExercise).warmups),
+        ...groupLedgerSets(splitSets(previousExercise).working),
+      ]
+    : [];
+
+  return (
+    <NotebookSetLedger
+      exercise={exercise}
+      exerciseIndex={exerciseIndex}
+      groups={groups}
+      inlineNoteDraft={inlineNoteDraft}
+      inlineNoteInputRef={inlineNoteInputRef}
+      inlineNoteTarget={inlineNoteTarget}
+      previousExercise={previousExercise}
+      previousGroups={previousGroups}
+      selectedField={selectedField}
+      selectedSetId={selectedSetId}
+      onChangeInlineNote={onChangeInlineNote}
+      onDispatch={onDispatch}
+      onEndInlineNoteEdit={onEndInlineNoteEdit}
+      onOpenSet={onOpenSet}
+      onSelectExercise={onSelectExercise}
+      onStartRestTimer={onStartRestTimer}
+      onStartInlineNoteEdit={onStartInlineNoteEdit}
+    />
+  );
+}
+
+function NotebookSetLedger({
+  exercise,
+  exerciseIndex,
+  groups,
+  inlineNoteDraft,
+  inlineNoteInputRef,
+  inlineNoteTarget,
+  previousExercise,
+  previousGroups,
+  selectedField,
+  selectedSetId,
+  onChangeInlineNote,
+  onDispatch,
+  onEndInlineNoteEdit,
+  onOpenSet,
+  onSelectExercise,
+  onStartRestTimer,
+  onStartInlineNoteEdit,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  groups: IndexedWorkoutSet[][];
+  inlineNoteDraft: string | null;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteTarget: InlineNoteEditTarget | null;
+  previousExercise: WorkoutExercise | null;
+  previousGroups: IndexedWorkoutSet[][];
+  selectedField: SetEditField | null;
+  selectedSetId: string | null;
+  onChangeInlineNote: (note: string) => void;
+  onDispatch: (action: Action) => void;
+  onEndInlineNoteEdit: () => void;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onSelectExercise: () => void;
+  onStartRestTimer: () => void;
+  onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
+}) {
+  const presentDialog = useAppDialog();
+  const [revealedPreviousGroupIndex, setRevealedPreviousGroupIndex] =
+    useState<number | null>(null);
+
+  const addSet = () => {
+    onSelectExercise();
+    const baseSet =
+      [...exercise.sets]
+        .reverse()
+        .find((candidate) => candidate.modifier !== "warmup") ??
+      exercise.sets[exercise.sets.length - 1];
+    const nextSetIndex = exercise.sets.length;
+    const nextSet: WorkoutSet = {
+      clientId: makeClientId(),
+      weight: baseSet?.weight ?? null,
+      reps: baseSet?.reps ?? null,
+      completed: false,
+      weightExplicit: baseSet?.weight != null,
+      repsExplicit: baseSet?.reps != null,
+      prevWeight: baseSet?.weight ?? null,
+      prevReps: baseSet?.reps ?? null,
+      weightModifier: baseSet?.weightModifier,
+      restBefore: groups.length > 0 ? "standard" : undefined,
+    };
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: [...exercise.sets, nextSet],
+    });
+    onOpenSet(getSetTargetId(nextSet, nextSetIndex), "weight");
+  };
+
+  const appendShortRestSegment = (group: IndexedWorkoutSet[]) => {
+    const lastSegment = group[group.length - 1];
+    if (!lastSegment) return;
+    onSelectExercise();
+    const nextSet: WorkoutSet = {
+      clientId: makeClientId(),
+      weight: lastSegment.set.weight,
+      reps: null,
+      completed: false,
+      weightExplicit: lastSegment.set.weight !== null,
+      repsExplicit: false,
+      prevWeight: null,
+      prevReps: null,
+      modifier: lastSegment.set.modifier,
+      weightModifier: lastSegment.set.weightModifier,
+      restBefore: "short",
+    };
+    const nextSets = [...exercise.sets];
+    nextSets.splice(lastSegment.index + 1, 0, nextSet);
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: nextSets,
+    });
+    onOpenSet(getSetTargetId(nextSet, lastSegment.index + 1), "reps");
+  };
+
+  const removeSetGroup = (group: IndexedWorkoutSet[]) => {
+    const groupIndexes = new Set(group.map(({ index }) => index));
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: exercise.sets.filter(
+        (_set, setIndex) => !groupIndexes.has(setIndex),
+      ),
+    });
+  };
+
+  const removeShortRestSegment = (indexedSet: IndexedWorkoutSet) => {
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: exercise.sets.filter(
+        (_set, setIndex) => setIndex !== indexedSet.index,
+      ),
+    });
+  };
+
+  const deleteSetGroup = (group: IndexedWorkoutSet[], logicalLabel: string) => {
+    presentDialog({
+      title: "Delete set?",
+      message: `${logicalLabel} and any short-rest reps`,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => removeSetGroup(group),
+        },
+      ],
+    });
+  };
+
+  const deleteShortRestSegment = (indexedSet: IndexedWorkoutSet) => {
+    presentDialog({
+      title: "Delete short-rest reps?",
+      message: formatSetInline(exercise, indexedSet) || "short-rest reps",
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => removeShortRestSegment(indexedSet),
+        },
+      ],
+    });
+  };
+
+  const openSetCommandMenu = (
+    group: IndexedWorkoutSet[],
+    logicalLabel: string,
+    noteSet: IndexedWorkoutSet = group[0]!,
+  ) => {
+    onSelectExercise();
+    triggerSelectionHaptic();
+    const noteTarget: InlineNoteEditTarget = {
+      kind: "set",
+      exerciseIndex,
+      setId: getSetTargetId(noteSet.set, noteSet.index),
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          cancelButtonIndex: 3,
+          destructiveButtonIndex: 2,
+          options: ["edit note", "extend set", "delete set", "cancel"],
+          title: logicalLabel,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) onStartInlineNoteEdit(noteTarget);
+          if (buttonIndex === 1) appendShortRestSegment(group);
+          if (buttonIndex === 2) deleteSetGroup(group, logicalLabel);
+        },
+      );
+      return;
+    }
+
+    presentDialog({
+      title: logicalLabel,
+      actions: [
+        { label: "edit note", onPress: () => onStartInlineNoteEdit(noteTarget) },
+        { label: "extend set", onPress: () => appendShortRestSegment(group) },
+        {
+          label: "delete set",
+          variant: "danger",
+          onPress: () => deleteSetGroup(group, logicalLabel),
+        },
+        { label: "cancel", variant: "cancel" },
+      ],
+    });
+  };
+
+  const toggleWarmupGroup = (group: IndexedWorkoutSet[]) => {
+    const leadingSet = group[0];
+    if (!leadingSet) return;
+    const isWarmup = leadingSet.set.modifier === "warmup";
+    const nextModifier: WorkoutSet["modifier"] = isWarmup
+      ? undefined
+      : "warmup";
+    presentDialog({
+      title: `Change ${setLabel(exercise, leadingSet.index)}?`,
+      message: `Make this ${isWarmup ? "working set" : "warm-up set"}?`,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "change",
+          variant: "primary",
+          onPress: () => {
+            triggerSelectionHaptic();
+            const groupIndexes = new Set(group.map(({ index }) => index));
+            onDispatch({
+              type: "REPLACE_EXERCISE_SETS",
+              exerciseIndex,
+              sets: exercise.sets.map((set, setIndex) =>
+                groupIndexes.has(setIndex)
+                  ? { ...set, modifier: nextModifier }
+                  : set,
+              ),
+            });
+          },
+        },
+      ],
+    });
+  };
+
+  if (groups.length === 0) {
+    return (
+      <View style={styles.notebookLedger}>
+        <Text style={styles.metaText}>none</Text>
+        <NotebookAddSetButton onPress={addSet} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.notebookLedger}>
+      {groups.map((group, groupIndex) => {
+        const leadingSet = group[0]!;
+        const logicalLabel = setLabel(exercise, leadingSet.index);
+        const previousGroup = previousGroups[groupIndex] ?? null;
+        const previousAvailable = Boolean(previousExercise && previousGroup);
+        const previousRevealed =
+          previousAvailable && revealedPreviousGroupIndex === groupIndex;
+        return (
+          <React.Fragment
+            key={`${getSetTargetId(leadingSet.set, leadingSet.index)}-${leadingSet.index}`}
+          >
+            {groupIndex > 0 ? (
+              <NotebookRestSeparator
+                label={
+                  leadingSet.set.restBefore === "short"
+                    ? "short"
+                    : formatRestDurationLabel(leadingSet.set)
+                }
+                onPress={() => {
+                  onSelectExercise();
+                  toggleRest(onDispatch, exerciseIndex, exercise, leadingSet.index);
+                }}
+              />
+            ) : null}
+            {group.map((indexedSet, segmentIndex) => {
+              const setId = getSetTargetId(indexedSet.set, indexedSet.index);
+              const setNoteTarget: InlineNoteEditTarget = {
+                kind: "set",
+                exerciseIndex,
+                setId,
+              };
+              const editingSetNote = isSameNoteTarget(
+                inlineNoteTarget,
+                setNoteTarget,
+              );
+              const rowLabel =
+                segmentIndex === 0
+                  ? getLedgerSetIndexLabel(exercise, indexedSet)
+                  : "";
+              const loadLabel = formatLedgerLoadLabel(exercise, indexedSet);
+              const repsLabel = formatLedgerRepsLabel(exercise, indexedSet);
+              const setNoteText = indexedSet.set.notes?.trim();
+              const isWeightSelected =
+                selectedSetId === setId && selectedField === "weight";
+              const isRepsSelected =
+                selectedSetId === setId && selectedField === "reps";
+              const segmentLabel = setLabel(exercise, indexedSet.index);
+
+              return (
+                <View key={`${setId}-${indexedSet.index}`}>
+                  {segmentIndex > 0 ? (
+                    <NotebookRestSeparator
+                      label="short"
+                      onPress={() => {
+                        onSelectExercise();
+                        toggleRest(
+                          onDispatch,
+                          exerciseIndex,
+                          exercise,
+                          indexedSet.index,
+                        );
+                      }}
+                    />
+                  ) : null}
+                  <SwipeActionSetRow
+                    canComplete={segmentIndex === 0}
+                    completed={Boolean(indexedSet.set.completed)}
+                    hasNote={Boolean(indexedSet.set.notes?.trim())}
+                    onComplete={() => {
+                      if (segmentIndex !== 0) return;
+                      const wasCompleted = Boolean(indexedSet.set.completed);
+                      onSelectExercise();
+                      triggerSelectionHaptic();
+                      onDispatch({
+                        type: "TOGGLE_SET_COMPLETED",
+                        exerciseIndex,
+                        setIndex: indexedSet.index,
+                      });
+                      if (!wasCompleted) onStartRestTimer();
+                    }}
+                    onDelete={() => {
+                      if (segmentIndex === 0) {
+                        deleteSetGroup(group, logicalLabel);
+                      } else {
+                        deleteShortRestSegment(indexedSet);
+                      }
+                    }}
+                    onNote={() => {
+                      onSelectExercise();
+                      onStartInlineNoteEdit(setNoteTarget);
+                    }}
+                    onSwipeStart={() => setRevealedPreviousGroupIndex(null)}
+                  >
+                    {({ isPressSuppressed, swipeTouchHandlers }) => (
+                      <Pressable
+                        accessible={false}
+                        {...swipeTouchHandlers}
+                        style={styles.notebookSetRow}
+                        onLongPress={() => {
+                          if (isPressSuppressed() || !previousAvailable) return;
+                          triggerSelectionHaptic();
+                          setRevealedPreviousGroupIndex(groupIndex);
+                        }}
+                        onPressOut={() => {
+                          if (isPressSuppressed()) return;
+                          setRevealedPreviousGroupIndex(null);
+                        }}
+                      >
+                        {segmentIndex === 0 ? (
+                          <Pressable
+                            accessibilityLabel={`Toggle ${logicalLabel} warm-up`}
+                            accessibilityRole="button"
+                            {...swipeTouchHandlers}
+                            hitSlop={8}
+                            style={[
+                              styles.notebookSetIndex,
+                              indexedSet.set.modifier === "warmup"
+                                ? styles.notebookSetIndexWarmup
+                                : null,
+                            ]}
+                            onPress={() => {
+                              if (isPressSuppressed()) return;
+                              toggleWarmupGroup(group);
+                            }}
+                            onLongPress={() => {
+                              if (isPressSuppressed()) return;
+                              openSetCommandMenu(
+                                group,
+                                logicalLabel,
+                                indexedSet,
+                              );
+                            }}
+                          >
+                            <Text style={styles.notebookSetIndexText}>
+                              {rowLabel}
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <View style={styles.notebookSetIndex} />
+                        )}
+                        <View style={styles.notebookSetContent}>
+                          <View style={styles.notebookCurrentValue}>
+                            <Pressable
+                              accessibilityLabel={`Edit ${segmentLabel} weight ${loadLabel}`}
+                              accessibilityRole="button"
+                              {...swipeTouchHandlers}
+                              hitSlop={8}
+                              style={[
+                                styles.notebookValueChip,
+                                isWeightSelected
+                                  ? styles.notebookValueChipActive
+                                  : null,
+                              ]}
+                              onPress={() => {
+                                if (isPressSuppressed()) return;
+                                onSelectExercise();
+                                onOpenSet(setId, "weight");
+                              }}
+                              onLongPress={() => {
+                                if (isPressSuppressed()) return;
+                                openSetCommandMenu(
+                                  group,
+                                  logicalLabel,
+                                  indexedSet,
+                                );
+                              }}
+                            >
+                              <Text style={styles.notebookValueText}>
+                                {loadLabel}
+                              </Text>
+                            </Pressable>
+                            <Text style={styles.notebookMultiplyText}>x</Text>
+                            <Pressable
+                              accessibilityLabel={`Edit ${segmentLabel} reps ${repsLabel}`}
+                              accessibilityRole="button"
+                              {...swipeTouchHandlers}
+                              hitSlop={8}
+                              style={[
+                                styles.notebookRepsChip,
+                                isRepsSelected
+                                  ? styles.notebookValueChipActive
+                                  : null,
+                              ]}
+                              onPress={() => {
+                                if (isPressSuppressed()) return;
+                                onSelectExercise();
+                                onOpenSet(setId, "reps");
+                              }}
+                              onLongPress={() => {
+                                if (isPressSuppressed()) return;
+                                openSetCommandMenu(
+                                  group,
+                                  logicalLabel,
+                                  indexedSet,
+                                );
+                              }}
+                            >
+                              <Text style={styles.notebookValueText}>
+                                {repsLabel}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                        {segmentIndex === 0 ? (
+                          indexedSet.set.completed ? (
+                            <Pressable
+                              accessibilityLabel={`Mark ${segmentLabel} incomplete`}
+                              accessibilityRole="button"
+                              {...swipeTouchHandlers}
+                              hitSlop={8}
+                              style={styles.notebookCompletionIndicator}
+                              onPress={() => {
+                                if (isPressSuppressed()) return;
+                                onSelectExercise();
+                                triggerSelectionHaptic();
+                                onDispatch({
+                                  type: "TOGGLE_SET_COMPLETED",
+                                  exerciseIndex,
+                                  setIndex: indexedSet.index,
+                                });
+                              }}
+                            >
+                              <Icon
+                                name="checkmark"
+                                size={16}
+                                color={palette.ink}
+                              />
+                            </Pressable>
+                          ) : (
+                            <View style={styles.notebookCompletionIndicator} />
+                          )
+                        ) : (
+                          <View
+                            style={styles.notebookCompletionIndicatorSpacer}
+                          />
+                        )}
+                      </Pressable>
+                    )}
+                  </SwipeActionSetRow>
+                  {editingSetNote ? (
+                    <InlineNoteEditor
+                      inputRef={inlineNoteInputRef}
+                      note={inlineNoteDraft ?? indexedSet.set.notes ?? ""}
+                      placeholder={`${segmentLabel} note`}
+                      testID={`set-note-inline-input-${exerciseIndex}-${indexedSet.index}`}
+                      onBlur={onEndInlineNoteEdit}
+                      onChangeText={onChangeInlineNote}
+                    />
+                  ) : setNoteText ? (
+                    <Pressable
+                      accessibilityLabel={`Edit ${segmentLabel} note`}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      style={styles.notebookSetNote}
+                      onPress={() => {
+                        onSelectExercise();
+                        onStartInlineNoteEdit(setNoteTarget);
+                      }}
+                    >
+                      <Text style={styles.noteBadgeText}>{setNoteText}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })}
+            {previousExercise && previousGroup && previousRevealed ? (
+              <NotebookPreviousPeek
+                exercise={previousExercise}
+                group={previousGroup}
+              />
+            ) : null}
+          </React.Fragment>
+        );
+      })}
+      <NotebookAddSetButton onPress={addSet} />
+    </View>
+  );
+}
+
+function NotebookPreviousPeek({
+  exercise,
+  group,
+}: {
+  exercise: WorkoutExercise;
+  group: IndexedWorkoutSet[];
+}) {
+  const value = formatPreviousSetGroup(exercise, group);
+  const notes = group
+    .map(({ set }) => set.notes?.trim())
+    .filter((note): note is string => Boolean(note));
+
+  return (
+    <View style={styles.notebookPreviousPeek}>
+      <Text style={styles.notebookPreviousPeekTitle}>previous</Text>
+      <View style={styles.notebookPreviousPeekEntry}>
+        <View style={styles.notebookPreviousPeekRow}>
+          <Text style={styles.notebookPreviousPeekValue}>{value}</Text>
+        </View>
+        {notes.map((note, index) => (
+          <Text
+            key={`${note}-${index}`}
+            style={styles.notebookPreviousPeekNote}
+          >
+            {note}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function SwipeActionSetRow({
+  children,
+  canComplete,
+  completed,
+  hasNote,
+  onComplete,
+  onDelete,
+  onNote,
+  onSwipeStart,
+}: {
+  children:
+    | React.ReactNode
+    | ((helpers: SwipeActionSetRowHelpers) => React.ReactNode);
+  canComplete: boolean;
+  completed: boolean;
+  hasNote: boolean;
+  onComplete: () => void;
+  onDelete: () => void;
+  onNote: () => void;
+  onSwipeStart: () => void;
+}) {
+  const leftOpenX = 72;
+  const rightOpenX = -96;
+  const translateX = useMemo(() => new Animated.Value(0), []);
+  const openSideRef = useRef<"left" | "right" | null>(null);
+  const didExecuteRef = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const touchDeltaXRef = useRef(0);
+  const touchSwipingRef = useRef(false);
+  const suppressPressUntilRef = useRef(0);
+
+  const animateTo = useCallback((toValue: number) => {
+    Animated.spring(translateX, {
+      toValue,
+      useNativeDriver: true,
+    }).start();
+  }, [translateX]);
+
+  const resetPosition = useCallback(() => {
+    openSideRef.current = null;
+    animateTo(0);
+  }, [animateTo]);
+
+  const openLeft = useCallback(() => {
+    openSideRef.current = "left";
+    animateTo(leftOpenX);
+  }, [animateTo]);
+
+  const openRight = useCallback(() => {
+    openSideRef.current = "right";
+    animateTo(rightOpenX);
+  }, [animateTo]);
+
+  const executeComplete = useCallback(() => {
+    if (!canComplete) {
+      resetPosition();
+      return;
+    }
+    if (didExecuteRef.current) return;
+    didExecuteRef.current = true;
+    onComplete();
+    resetPosition();
+    requestAnimationFrame(() => {
+      didExecuteRef.current = false;
+    });
+  }, [canComplete, onComplete, resetPosition]);
+
+  const executeDelete = useCallback(() => {
+    if (didExecuteRef.current) return;
+    didExecuteRef.current = true;
+    Animated.timing(translateX, {
+      duration: 160,
+      toValue: rightOpenX,
+      useNativeDriver: true,
+    }).start(() => {
+      onDelete();
+      didExecuteRef.current = false;
+      resetPosition();
+    });
+  }, [onDelete, resetPosition, translateX]);
+
+  const settleSwipe = useCallback(
+    (dx: number, vx = 0) => {
+      if (dx <= -118 || (dx <= -68 && vx < -1)) {
+        executeDelete();
+        return;
+      }
+      if (canComplete && (dx >= 92 || (dx >= 56 && vx > 1))) {
+        executeComplete();
+        return;
+      }
+      if (dx <= -34) {
+        openRight();
+        return;
+      }
+      if (canComplete && dx >= 30) {
+        openLeft();
+        return;
+      }
+      resetPosition();
+    },
+    [
+      canComplete,
+      executeComplete,
+      executeDelete,
+      openLeft,
+      openRight,
+      resetPosition,
+    ],
+  );
+
+  const getTouchPoint = useCallback((event: GestureResponderEvent) => {
+    const touch =
+      event.nativeEvent.touches[0] ?? event.nativeEvent.changedTouches[0];
+    return touch ? { x: touch.pageX, y: touch.pageY } : null;
+  }, []);
+
+  const beginTouch = useCallback(
+    (event: GestureResponderEvent) => {
+      touchStartRef.current = getTouchPoint(event);
+      touchDeltaXRef.current = 0;
+      touchSwipingRef.current = false;
+    },
+    [getTouchPoint],
+  );
+
+  const moveTouch = useCallback(
+    (event: GestureResponderEvent) => {
+      const start = touchStartRef.current;
+      const point = getTouchPoint(event);
+      if (!start || !point) return;
+
+      const dx = point.x - start.x;
+      const dy = point.y - start.y;
+      touchDeltaXRef.current = dx;
+
+      if (
+        !touchSwipingRef.current &&
+        Math.abs(dx) > 5 &&
+        Math.abs(dx) > Math.abs(dy) * 1.12
+      ) {
+        touchSwipingRef.current = true;
+        onSwipeStart();
+      }
+
+      if (!touchSwipingRef.current) return;
+      event.stopPropagation();
+      translateX.setValue(Math.max(-128, Math.min(96, dx)));
+    },
+    [getTouchPoint, onSwipeStart, translateX],
+  );
+
+  const endTouch = useCallback(
+    (event: GestureResponderEvent) => {
+      if (!touchSwipingRef.current) {
+        touchStartRef.current = null;
+        touchDeltaXRef.current = 0;
+        return;
+      }
+
+      event.stopPropagation();
+      const dx = touchDeltaXRef.current;
+      touchStartRef.current = null;
+      touchDeltaXRef.current = 0;
+      touchSwipingRef.current = false;
+      suppressPressUntilRef.current = Date.now() + 450;
+      settleSwipe(dx);
+    },
+    [settleSwipe],
+  );
+
+  const cancelTouch = useCallback((_event: GestureResponderEvent) => {
+    touchStartRef.current = null;
+    touchDeltaXRef.current = 0;
+    touchSwipingRef.current = false;
+    resetPosition();
+  }, [resetPosition]);
+
+  const isPressSuppressed = useCallback(
+    () => touchSwipingRef.current || Date.now() < suppressPressUntilRef.current,
+    [],
+  );
+
+  const swipeTouchHandlers = useMemo(
+    () => ({
+      onTouchCancel: cancelTouch,
+      onTouchEnd: endTouch,
+      onTouchMove: moveTouch,
+      onTouchStart: beginTouch,
+    }),
+    [beginTouch, cancelTouch, endTouch, moveTouch],
+  );
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          Math.abs(gestureState.dx) > 8 &&
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2,
+        onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
+          Math.abs(gestureState.dx) > 12 &&
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.4,
+        onPanResponderGrant: () => {
+          onSwipeStart();
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          translateX.setValue(Math.max(-128, Math.min(96, gestureState.dx)));
+        },
+        onPanResponderRelease: (_event, gestureState) =>
+          settleSwipe(gestureState.dx, gestureState.vx),
+        onPanResponderTerminate: resetPosition,
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [
+      canComplete,
+      onSwipeStart,
+      resetPosition,
+      settleSwipe,
+      translateX,
+    ],
+  );
+
+  return (
+    <View style={styles.notebookSwipeRow}>
+      <View style={styles.notebookSwipeCompleteAction}>
+        {canComplete ? (
+          <Pressable
+            accessibilityLabel={completed ? "Mark set incomplete" : "Complete set"}
+            accessibilityRole="button"
+            style={[
+              styles.notebookSwipeActionButton,
+              styles.notebookSwipeCompleteButton,
+            ]}
+            onPress={executeComplete}
+          >
+            <Icon
+              name={completed ? "refresh-outline" : "checkmark"}
+              size={15}
+              color={palette.ink}
+            />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={styles.notebookSwipeTrailingActions}>
         <Pressable
-          accessibilityLabel={`Edit ${exercise.name} note for this workout`}
+          accessibilityLabel={hasNote ? "Edit set note" : "Add set note"}
           accessibilityRole="button"
-          style={styles.noteBadgeSelf}
-          testID={`exercise-workout-note-badge-${exerciseIndex}`}
-          onPress={() =>
-            onOpenNoteEditor({ kind: "workout-exercise", exerciseIndex })
-          }
+          style={[
+            styles.notebookSwipeActionButton,
+            hasNote ? styles.notebookSwipeNoteButtonActive : null,
+          ]}
+          onPress={() => {
+            onNote();
+            resetPosition();
+          }}
         >
-          <Text style={styles.noteBadgeText}>{exercise.notes[0].text}</Text>
+          <Icon name="pencil-outline" size={14} color={palette.muted} />
         </Pressable>
-      ) : null}
+        <Pressable
+          accessibilityLabel="Delete set"
+          accessibilityRole="button"
+          style={[
+            styles.notebookSwipeActionButton,
+            styles.notebookSwipeDeleteButton,
+          ]}
+          onPress={executeDelete}
+        >
+          <Icon name="trash-outline" size={14} color={palette.danger} />
+        </Pressable>
+      </View>
+      <Animated.View
+        {...panResponder.panHandlers}
+        {...swipeTouchHandlers}
+        style={[
+          styles.notebookSwipeForeground,
+          { transform: [{ translateX }] },
+        ]}
+      >
+        {typeof children === "function"
+          ? children({ isPressSuppressed, swipeTouchHandlers })
+          : children}
+      </Animated.View>
+    </View>
+  );
+}
 
-      {historyOpen ? <ExerciseHistory exercise={exercise} /> : null}
+function NotebookRestSeparator({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={`Edit rest ${label}`}
+      accessibilityRole="button"
+      hitSlop={8}
+      style={styles.notebookRestSeparator}
+      onPress={onPress}
+    >
+      <View style={styles.notebookRestLine} />
+      <Text style={styles.notebookRestText}>{label}</Text>
+      <View style={styles.notebookRestLine} />
+    </Pressable>
+  );
+}
 
+function NotebookAddSetButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityLabel="Add set"
+      accessibilityRole="button"
+      style={styles.notebookAddSetButton}
+      onPress={onPress}
+    >
+      <Text style={styles.notebookAddSetText}>+ set</Text>
+    </Pressable>
+  );
+}
+
+function formatRestDurationLabel(set: WorkoutSet) {
+  if (set.modifier === "warmup") return "none";
+  return "3:00";
+}
+
+function LegacyExerciseSetLedgerView({
+  exercise,
+  exerciseIndex,
+  selectedField,
+  selectedSetId,
+  onDispatch,
+  onOpenSet,
+  onSelectExercise,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  selectedField: SetEditField | null;
+  selectedSetId: string | null;
+  onDispatch: (action: Action) => void;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onSelectExercise: () => void;
+}) {
+  const { warmups, working } = splitSets(exercise);
+
+  return (
+    <>
       {warmups.length > 0 ? (
-        <SetGroup
+        <SetLedger
           title="warm-up"
           exercise={exercise}
           sets={warmups}
-          selectedSetId={null}
-          onOpenSet={onOpenSetEditor}
-          onToggleRest={(setIndex) =>
-            toggleRest(onDispatch, exerciseIndex, exercise, setIndex)
-          }
+          selectedField={selectedField}
+          selectedSetId={selectedSetId}
+          onOpenSet={onOpenSet}
+          onToggleComplete={(setIndex) => {
+            onSelectExercise();
+            onDispatch({
+              type: "TOGGLE_SET_COMPLETED",
+              exerciseIndex,
+              setIndex,
+            });
+          }}
+          onToggleRest={(setIndex) => {
+            onSelectExercise();
+            toggleRest(onDispatch, exerciseIndex, exercise, setIndex);
+          }}
         />
       ) : null}
 
       <View style={styles.currentSetHeaderRow}>
         <Text style={styles.subtleTitle}>working sets</Text>
-        <Pressable
-          accessibilityLabel={`Add set to ${exercise.name}`}
-          accessibilityRole="button"
-          hitSlop={8}
-          style={styles.iconButtonTiny}
-          testID={`exercise-add-set-${exerciseIndex}`}
-          onPress={() => {
-            const nextSetIndex = exercise.sets.length;
-            const nextSet: WorkoutSet = {
-              clientId: makeClientId(),
-              weight: null,
-              reps: null,
-              completed: false,
-              weightExplicit: false,
-              repsExplicit: false,
-              prevWeight: null,
-              prevReps: null,
-              weightModifier:
-                exercise.sets[exercise.sets.length - 1]?.weightModifier,
-            };
+        <AddExerciseSetButton
+          exercise={exercise}
+          exerciseIndex={exerciseIndex}
+          onDispatch={onDispatch}
+          onOpenSet={onOpenSet}
+          onSelectExercise={onSelectExercise}
+        />
+      </View>
+      <SetLedger
+        exercise={exercise}
+        sets={working}
+        selectedField={selectedField}
+        selectedSetId={selectedSetId}
+        onOpenSet={onOpenSet}
+        onToggleComplete={(setIndex) => {
+          onSelectExercise();
+          onDispatch({
+            type: "TOGGLE_SET_COMPLETED",
+            exerciseIndex,
+            setIndex,
+          });
+        }}
+        onToggleRest={(setIndex) => {
+          onSelectExercise();
+          toggleRest(onDispatch, exerciseIndex, exercise, setIndex);
+        }}
+      />
+    </>
+  );
+}
+
+function AddExerciseSetButton({
+  exercise,
+  exerciseIndex,
+  onDispatch,
+  onOpenSet,
+  onSelectExercise,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  onDispatch: (action: Action) => void;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onSelectExercise: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={`Add set to ${exercise.name}`}
+      accessibilityRole="button"
+      hitSlop={8}
+      style={styles.iconButtonTiny}
+      testID={`exercise-add-set-${exerciseIndex}`}
+      onPress={() => {
+        onSelectExercise();
+        const nextSetIndex = exercise.sets.length;
+        const nextSet: WorkoutSet = {
+          clientId: makeClientId(),
+          weight: null,
+          reps: null,
+          completed: false,
+          weightExplicit: false,
+          repsExplicit: false,
+          prevWeight: null,
+          prevReps: null,
+          weightModifier:
+            exercise.sets[exercise.sets.length - 1]?.weightModifier,
+        };
+        onDispatch({
+          type: "REPLACE_EXERCISE_SETS",
+          exerciseIndex,
+          sets: [...exercise.sets, nextSet],
+        });
+        onOpenSet(getSetTargetId(nextSet, nextSetIndex), "weight");
+      }}
+    >
+      <Icon name="add-outline" size={24} color={palette.muted} />
+    </Pressable>
+  );
+}
+
+function ExerciseSetCards({
+  exercise,
+  exerciseIndex,
+  inlineNoteDraft,
+  inlineNoteInputRef,
+  inlineNoteTarget,
+  selectedField,
+  selectedSetId,
+  onChangeInlineNote,
+  onDispatch,
+  onEndInlineNoteEdit,
+  onOpenSet,
+  onSelectExercise,
+  onStartRestTimer,
+  onStartInlineNoteEdit,
+}: {
+  exercise: WorkoutExercise;
+  exerciseIndex: number;
+  inlineNoteDraft: string | null;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteTarget: InlineNoteEditTarget | null;
+  selectedField: SetEditField | null;
+  selectedSetId: string | null;
+  onChangeInlineNote: (note: string) => void;
+  onDispatch: (action: Action) => void;
+  onEndInlineNoteEdit: () => void;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onSelectExercise: () => void;
+  onStartRestTimer: () => void;
+  onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
+}) {
+  const presentDialog = useAppDialog();
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView | null>(null);
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
+  const [cardsViewportWidth, setCardsViewportWidth] = useState(0);
+  const cardWidth = cardsViewportWidth || Math.max(248, width - 32);
+  const split = splitSets(exercise);
+  const groups = [
+    ...groupLedgerSets(split.warmups),
+    ...groupLedgerSets(split.working),
+  ];
+  const clampedActiveCardIndex = clampIndex(activeCardIndex, groups.length);
+  const canSwipeToPreviousSet = clampedActiveCardIndex > 0;
+  const canSwipeToNextSet = clampedActiveCardIndex < groups.length - 1;
+  const previousEntry = exercise.history?.[0];
+  const previousExercise = previousEntry
+    ? buildHistoricalExercise(exercise, previousEntry)
+    : null;
+  const previousGroups = previousExercise
+    ? [
+        ...groupLedgerSets(splitSets(previousExercise).warmups),
+        ...groupLedgerSets(splitSets(previousExercise).working),
+      ]
+    : [];
+  let warmupTabCount = 0;
+  let workingTabCount = 0;
+  const tabs = groups.map((group) => {
+    const leadingSet = group[0]!;
+    const isWarmup = leadingSet.set.modifier === "warmup";
+    const label = isWarmup
+      ? `W${++warmupTabCount}`
+      : `set ${++workingTabCount}`;
+    return {
+      completed: Boolean(leadingSet.set.completed),
+      group,
+      label,
+      leadingSet,
+      setId: getSetTargetId(leadingSet.set, leadingSet.index),
+    };
+  });
+  const scrollToSetCard = (setIndex: number) => {
+    const groupIndex = groups.findIndex((group) =>
+      group.some((indexedSet) => indexedSet.index === setIndex),
+    );
+    if (groupIndex < 0) return;
+    setActiveCardIndex(groupIndex);
+    scrollRef.current?.scrollTo({
+      animated: true,
+      x: groupIndex * cardWidth,
+      y: 0,
+    });
+  };
+  const scrollToSetCardById = (
+    setId: string,
+    nextExercise: WorkoutExercise = exercise,
+  ) => {
+    const nextSplit = splitSets(nextExercise);
+    const nextGroups = [
+      ...groupLedgerSets(nextSplit.warmups),
+      ...groupLedgerSets(nextSplit.working),
+    ];
+    const nextGroupIndex = nextGroups.findIndex((group) =>
+      group.some(
+        (indexedSet) =>
+          getSetTargetId(indexedSet.set, indexedSet.index) === setId,
+      ),
+    );
+    if (nextGroupIndex < 0) return;
+    setActiveCardIndex(nextGroupIndex);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        animated: true,
+        x: nextGroupIndex * cardWidth,
+        y: 0,
+      });
+    });
+  };
+  const scrollToSetTab = (indexedSet: IndexedWorkoutSet) => {
+    onSelectExercise();
+    scrollToSetCard(indexedSet.index);
+  };
+  const addSet = () => {
+    onSelectExercise();
+    const nextSetIndex = exercise.sets.length;
+    const nextSet: WorkoutSet = {
+      clientId: makeClientId(),
+      weight: null,
+      reps: null,
+      completed: false,
+      weightExplicit: false,
+      repsExplicit: false,
+      prevWeight: null,
+      prevReps: null,
+      weightModifier: exercise.sets[exercise.sets.length - 1]?.weightModifier,
+    };
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: [...exercise.sets, nextSet],
+    });
+    onOpenSet(getSetTargetId(nextSet, nextSetIndex), "weight");
+  };
+  const appendShortRestSegment = (group: IndexedWorkoutSet[]) => {
+    const lastSegment = group[group.length - 1];
+    if (!lastSegment) return;
+    onSelectExercise();
+    const nextSet: WorkoutSet = {
+      clientId: makeClientId(),
+      weight: lastSegment.set.weight,
+      reps: null,
+      completed: false,
+      weightExplicit: lastSegment.set.weight !== null,
+      repsExplicit: false,
+      prevWeight: null,
+      prevReps: null,
+      modifier: lastSegment.set.modifier,
+      weightModifier: lastSegment.set.weightModifier,
+      restBefore: "short",
+    };
+    const nextSets = [...exercise.sets];
+    nextSets.splice(lastSegment.index + 1, 0, nextSet);
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex,
+      sets: nextSets,
+    });
+    onOpenSet(getSetTargetId(nextSet, lastSegment.index + 1), "reps");
+  };
+  const deleteShortRestSegment = (indexedSet: IndexedWorkoutSet) => {
+    presentDialog({
+      title: "Delete short-rest reps?",
+      message: formatSetInline(exercise, indexedSet) || "short-rest reps",
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => {
+            const nextSets = exercise.sets.filter(
+              (_set, setIndex) => setIndex !== indexedSet.index,
+            );
             onDispatch({
               type: "REPLACE_EXERCISE_SETS",
               exerciseIndex,
-              sets: [...exercise.sets, nextSet],
+              sets: nextSets,
             });
-            onOpenSetEditor(getSetTargetId(nextSet, nextSetIndex), "weight");
-          }}
+          },
+        },
+      ],
+    });
+  };
+  const deleteSetGroup = (group: IndexedWorkoutSet[], logicalLabel: string) => {
+    presentDialog({
+      title: "Delete set?",
+      message: `${logicalLabel} and any short-rest reps`,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => {
+            const groupIndexes = new Set(group.map(({ index }) => index));
+            const nextSets = exercise.sets.filter(
+              (_set, setIndex) => !groupIndexes.has(setIndex),
+            );
+            onDispatch({
+              type: "REPLACE_EXERCISE_SETS",
+              exerciseIndex,
+              sets: nextSets,
+            });
+          },
+        },
+      ],
+    });
+  };
+  const openSetCommandMenu = (
+    group: IndexedWorkoutSet[],
+    logicalLabel: string,
+    noteSet: IndexedWorkoutSet = group[0]!,
+  ) => {
+    onSelectExercise();
+    triggerSelectionHaptic();
+
+    const noteTarget: InlineNoteEditTarget = {
+      kind: "set",
+      exerciseIndex,
+      setId: getSetTargetId(noteSet.set, noteSet.index),
+    };
+    const editNote = () => onStartInlineNoteEdit(noteTarget);
+    const extend = () => appendShortRestSegment(group);
+    const remove = () => deleteSetGroup(group, logicalLabel);
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          cancelButtonIndex: 3,
+          destructiveButtonIndex: 2,
+          options: ["edit note", "extend set", "delete set", "cancel"],
+          title: logicalLabel,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) editNote();
+          if (buttonIndex === 1) extend();
+          if (buttonIndex === 2) remove();
+        },
+      );
+      return;
+    }
+
+    presentDialog({
+      title: logicalLabel,
+      actions: [
+        { label: "edit note", onPress: editNote },
+        { label: "extend set", onPress: extend },
+        { label: "delete set", variant: "danger", onPress: remove },
+        { label: "cancel", variant: "cancel" },
+      ],
+    });
+  };
+
+  return (
+    <View style={styles.exerciseSetCardsBlock}>
+      {tabs.length > 0 ? (
+        <ScrollView
+          horizontal
+          keyboardShouldPersistTaps="handled"
+          showsHorizontalScrollIndicator={false}
+          style={styles.exerciseSetTabsScroll}
         >
-          <Icon name="add-outline" size={24} color={palette.muted} />
-        </Pressable>
+          <View style={styles.exerciseSetTabs}>
+            {tabs.map((tab, tabIndex) => {
+              const selected = activeCardIndex === tabIndex;
+              return (
+                <Pressable
+                  key={`${tab.setId}-${tab.leadingSet.index}`}
+                  accessibilityLabel={`Show ${tab.label}`}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  style={[
+                    styles.exerciseSetTab,
+                    selected ? styles.exerciseSetTabSelected : null,
+                  ]}
+                  onPress={() => scrollToSetTab(tab.leadingSet)}
+                >
+                  <View style={styles.exerciseSetTabContent}>
+                    <Text
+                      style={[
+                        styles.exerciseSetTabText,
+                        selected ? styles.exerciseSetTabTextSelected : null,
+                      ]}
+                    >
+                      {tab.label}
+                    </Text>
+                    {tab.completed ? (
+                      <Icon
+                        name="checkmark-circle"
+                        size={13}
+                        color={palette.ink}
+                      />
+                    ) : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+            <Pressable
+              accessibilityLabel={`Add set to ${exercise.name}`}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.exerciseSetTab}
+              onPress={addSet}
+            >
+              <Icon name="add-outline" size={17} color={palette.muted} />
+            </Pressable>
+          </View>
+        </ScrollView>
+      ) : null}
+      {groups.length === 0 ? <Text style={styles.metaText}>none</Text> : null}
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        decelerationRate="fast"
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.exerciseSetCardsContent}
+        onLayout={(event) => {
+          const nextWidth = Math.round(event.nativeEvent.layout.width);
+          if (nextWidth > 0 && nextWidth !== cardsViewportWidth) {
+            setCardsViewportWidth(nextWidth);
+          }
+        }}
+        onMomentumScrollEnd={(event) => {
+          const nextIndex = Math.round(
+            event.nativeEvent.contentOffset.x / cardWidth,
+          );
+          setActiveCardIndex(
+            Math.max(0, Math.min(groups.length - 1, nextIndex)),
+          );
+        }}
+        snapToAlignment="start"
+        snapToInterval={cardWidth}
+        style={styles.exerciseSetCardsScroll}
+      >
+        {groups.map((group, groupIndex) => {
+          const leadingSet = group[0]!;
+          const previousGroup = previousGroups[groupIndex] ?? null;
+          const leadingSetId = getSetTargetId(
+            leadingSet.set,
+            leadingSet.index,
+          );
+          const logicalLabel = setLabel(exercise, leadingSet.index);
+          const cardLabel = setCardKindLabel(exercise, leadingSet.index);
+          const cardIsWarmup = leadingSet.set.modifier === "warmup";
+          const toggleWarmup = () => {
+            onSelectExercise();
+            const nextModifier: WorkoutSet["modifier"] = cardIsWarmup
+              ? undefined
+              : "warmup";
+            const nextKindLabel = cardIsWarmup ? "working set" : "warm-up set";
+            presentDialog({
+              title: `Change ${logicalLabel}?`,
+              message: `Make this ${nextKindLabel}?`,
+              actions: [
+                { label: "cancel", variant: "cancel" },
+                {
+                  label: "change",
+                  variant: "primary",
+                  onPress: () => {
+                    triggerSelectionHaptic();
+                    const groupIndexes = new Set(
+                      group.map(({ index }) => index),
+                    );
+                    const nextSets = exercise.sets.map((set, setIndex) =>
+                      groupIndexes.has(setIndex)
+                        ? {
+                            ...set,
+                            modifier: nextModifier,
+                          }
+                        : set,
+                    );
+                    const nextExercise = { ...exercise, sets: nextSets };
+                    onDispatch({
+                      type: "REPLACE_EXERCISE_SETS",
+                      exerciseIndex,
+                      sets: nextSets,
+                    });
+                    scrollToSetCardById(leadingSetId, nextExercise);
+                  },
+                },
+              ],
+            });
+          };
+          return (
+            <Pressable
+              key={`${leadingSetId}-${leadingSet.index}`}
+              accessible={false}
+              style={[styles.exerciseSetCard, { width: cardWidth }]}
+              onLongPress={() => openSetCommandMenu(group, logicalLabel)}
+            >
+              <View style={styles.exerciseSetCardRow}>
+                <Pressable
+                  accessibilityLabel={`${cardIsWarmup ? "Make" : "Mark"} ${logicalLabel} ${cardIsWarmup ? "a working set" : "warm-up"}`}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  style={[
+                    styles.exerciseSetKindToggle,
+                    cardIsWarmup ? styles.exerciseSetKindToggleWarmup : null,
+                  ]}
+                  onPress={toggleWarmup}
+                >
+                  <Text
+                    style={[
+                      styles.exerciseSetKindToggleText,
+                      cardIsWarmup
+                        ? styles.exerciseSetKindToggleTextWarmup
+                        : null,
+                    ]}
+                  >
+                    {cardLabel}
+                  </Text>
+                </Pressable>
+                <View style={styles.exerciseSetCardLine}>
+                  <PreviousSetReference
+                    entry={previousEntry}
+                    exercise={previousExercise}
+                    group={previousGroup}
+                  />
+                  {group.map((indexedSet, segmentIndex) => {
+                  const setId = getSetTargetId(
+                    indexedSet.set,
+                    indexedSet.index,
+                  );
+                  const values = getSetDisplayValues(
+                    exercise,
+                    indexedSet.set,
+                    indexedSet.index,
+                  );
+                  const loadLabel = formatLedgerLoadLabel(exercise, indexedSet);
+                  const repsLabel = formatLedgerRepsLabel(exercise, indexedSet);
+                  const segmentLabel = setLabel(exercise, indexedSet.index);
+                  const setNoteTarget: InlineNoteEditTarget = {
+                    kind: "set",
+                    exerciseIndex,
+                    setId,
+                  };
+                  const editingSetNote = isSameNoteTarget(
+                    inlineNoteTarget,
+                    setNoteTarget,
+                  );
+                  const isWeightSelected =
+                    selectedSetId === setId && selectedField === "weight";
+                  const isRepsSelected =
+                    selectedSetId === setId && selectedField === "reps";
+
+                  return (
+                    <View
+                      key={`${setId}-${indexedSet.index}`}
+                      style={styles.exerciseSetCardSegmentBlock}
+                    >
+                      {segmentIndex > 0 ? (
+                        <Pressable
+                          accessibilityLabel={`Toggle rest before ${segmentLabel}`}
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          style={styles.exerciseSetCardRestLabel}
+                          onPress={() => {
+                            onSelectExercise();
+                            toggleRest(
+                              onDispatch,
+                              exerciseIndex,
+                              exercise,
+                              indexedSet.index,
+                            );
+                          }}
+                        >
+                          <Text style={styles.exerciseSetCardRestLabelText}>
+                            short rest
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      <View
+                        style={[
+                          styles.exerciseSetCardSegment,
+                          segmentIndex > 0
+                            ? styles.exerciseSetCardContinuation
+                            : null,
+                        ]}
+                      >
+                        <Pressable
+                          accessibilityLabel={`Edit ${segmentLabel} weight ${loadLabel}`}
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          style={[
+                            styles.exerciseSetCardChip,
+                            isWeightSelected
+                              ? styles.inlineSetChipActive
+                              : null,
+                          ]}
+                          onPress={() => {
+                            onSelectExercise();
+                            onOpenSet(setId, "weight");
+                          }}
+                          onLongPress={() =>
+                            openSetCommandMenu(
+                              group,
+                              segmentLabel,
+                              indexedSet,
+                            )
+                          }
+                        >
+                          <Text style={styles.exerciseSetCardText}>
+                            {loadLabel}
+                          </Text>
+                        </Pressable>
+                        <Text style={styles.exerciseSetCardText}>x</Text>
+                        <Pressable
+                          accessibilityLabel={`Edit ${segmentLabel} reps ${repsLabel}`}
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          style={[
+                            styles.exerciseSetCardChip,
+                            isRepsSelected ? styles.inlineSetChipActive : null,
+                          ]}
+                          onLongPress={() =>
+                            openSetCommandMenu(
+                              group,
+                              segmentLabel,
+                              indexedSet,
+                            )
+                          }
+                          onPress={() => {
+                            onSelectExercise();
+                            onOpenSet(setId, "reps");
+                          }}
+                        >
+                          <Text style={styles.exerciseSetCardText}>
+                            {values.reps == null
+                              ? "-"
+                              : formatNumber(Number(values.reps))}
+                          </Text>
+                        </Pressable>
+                        {segmentIndex === 0 ? (
+                          <View style={styles.flexSpacer} />
+                        ) : null}
+                        {segmentIndex > 0 ? (
+                          <Pressable
+                            accessibilityLabel={`Delete ${segmentLabel} short-rest reps`}
+                            accessibilityRole="button"
+                            hitSlop={8}
+                            style={styles.exerciseSetCardDelete}
+                            onPress={() => deleteShortRestSegment(indexedSet)}
+                          >
+                            <Icon
+                              name="trash-outline"
+                              size={15}
+                              color={palette.muted}
+                            />
+                          </Pressable>
+                        ) : null}
+                        {segmentIndex === 0 ? (
+                          <Pressable
+                            accessibilityLabel={`${indexedSet.set.completed ? "Mark incomplete" : "Complete"} ${segmentLabel}`}
+                            accessibilityRole="button"
+                            hitSlop={8}
+                            style={[
+                              styles.exerciseSetCardCompleteButton,
+                              indexedSet.set.completed
+                                ? styles.exerciseSetCardCompleteButtonActive
+                                : null,
+                            ]}
+                            onPress={() => {
+                              const wasCompleted = Boolean(
+                                indexedSet.set.completed,
+                              );
+                              onSelectExercise();
+                              triggerSelectionHaptic();
+                              onDispatch({
+                                type: "TOGGLE_SET_COMPLETED",
+                                exerciseIndex,
+                                setIndex: indexedSet.index,
+                              });
+                              if (!wasCompleted) onStartRestTimer();
+                            }}
+                          >
+                            <Icon
+                              name={
+                                indexedSet.set.completed
+                                  ? "checkmark-outline"
+                                  : "checkmark"
+                              }
+                              size={15}
+                              color={
+                                indexedSet.set.completed
+                                  ? palette.ink
+                                  : palette.muted
+                              }
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                      {editingSetNote ? (
+                        <InlineNoteEditor
+                          inputRef={inlineNoteInputRef}
+                          note={inlineNoteDraft ?? indexedSet.set.notes ?? ""}
+                          placeholder={`${segmentLabel} note`}
+                          testID={`set-note-inline-input-${exerciseIndex}-${indexedSet.index}`}
+                          onBlur={onEndInlineNoteEdit}
+                          onChangeText={onChangeInlineNote}
+                        />
+                      ) : indexedSet.set.notes?.trim() ? (
+                        <Pressable
+                          accessibilityLabel={`Edit ${segmentLabel} note`}
+                          accessibilityRole="button"
+                          hitSlop={6}
+                          style={styles.noteBadgeSelf}
+                          testID={`set-note-inline-badge-${exerciseIndex}-${indexedSet.index}`}
+                          onPress={() => {
+                            onSelectExercise();
+                            onStartInlineNoteEdit(setNoteTarget);
+                          }}
+                        >
+                          <Text style={styles.noteBadgeText}>
+                            {indexedSet.set.notes}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  );
+                  })}
+                </View>
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {canSwipeToPreviousSet ? (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={[styles.setSwipeIndicator, styles.setSwipeIndicatorLeft]}
+        >
+          <Icon name="chevron-back-outline" size={15} color={palette.muted} />
+        </View>
+      ) : null}
+      {canSwipeToNextSet ? (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={[styles.setSwipeIndicator, styles.setSwipeIndicatorRight]}
+        >
+          <Icon name="chevron-forward-outline" size={15} color={palette.muted} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function PreviousSetReference({
+  entry,
+  exercise,
+  group,
+}: {
+  entry: ExerciseHistoryEntry | undefined;
+  exercise: WorkoutExercise | null;
+  group: IndexedWorkoutSet[] | null;
+}) {
+  if (!entry || !exercise || !group) return null;
+
+  const notes = group
+    .map((indexedSet) => indexedSet.set.notes?.trim())
+    .filter((note): note is string => Boolean(note));
+  const value = formatPreviousSetGroup(exercise, group);
+
+  return (
+    <View style={styles.previousSetReference}>
+      <View style={styles.previousSetReferenceRow}>
+        <Text style={styles.previousSetReferenceLabel}>Previous</Text>
+        <Text style={styles.previousSetReferenceValue}>{value}</Text>
       </View>
-      <SetGroup
-        exercise={exercise}
-        sets={working}
-        selectedSetId={null}
-        onOpenSet={onOpenSetEditor}
-        onToggleRest={(setIndex) =>
-          toggleRest(onDispatch, exerciseIndex, exercise, setIndex)
-        }
+      {notes.map((note, index) => (
+        <Text
+          key={`${note}-${index}`}
+          numberOfLines={2}
+          style={styles.previousSetReferenceNote}
+        >
+          {note}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function ExerciseDetailsSheet({
+  exercise,
+  editRequest,
+  open,
+  selectedTab,
+  onClose,
+  onSaveUserExerciseSettings,
+  onTextInputFocus,
+  onSelectTab,
+}: {
+  exercise: WorkoutExercise;
+  editRequest: number;
+  open: boolean;
+  selectedTab: ExerciseDetailsTab;
+  onClose: () => void;
+  onSaveUserExerciseSettings: (settings: UserExerciseSettings) => void;
+  onTextInputFocus: () => void;
+  onSelectTab: (tab: ExerciseDetailsTab) => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [editing, setEditing] = useState(false);
+  const [draftNote, setDraftNote] = useState("");
+  const [draftStartingWeight, setDraftStartingWeight] = useState<
+    number | null
+  >(null);
+  const [draftLoadMode, setDraftLoadMode] =
+    useState<PlateLoadMode>("equal-sides");
+  const [startingWeightMenuOpen, setStartingWeightMenuOpen] = useState(false);
+
+  const startEditing = useCallback(() => {
+    setDraftNote(exercise.exerciseNotes ?? "");
+    setDraftStartingWeight(exercise.plateStartingWeight ?? null);
+    setDraftLoadMode(parsePlateMode(exercise.plateLoadMode));
+    setStartingWeightMenuOpen(false);
+    setEditing(true);
+  }, [exercise.exerciseNotes, exercise.plateLoadMode, exercise.plateStartingWeight]);
+
+  useEffect(() => {
+    if (!open || editRequest === 0) return;
+    startEditing();
+  }, [editRequest, open, startEditing]);
+
+  const closeSheet = () => {
+    setEditing(false);
+    onClose();
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setStartingWeightMenuOpen(false);
+  };
+
+  const saveEditing = () => {
+    onSaveUserExerciseSettings({
+      note: draftNote,
+      plateStartingWeight: draftStartingWeight,
+      plateLoadMode: draftLoadMode,
+    });
+    setEditing(false);
+    setStartingWeightMenuOpen(false);
+    onSelectTab("about");
+  };
+
+  if (!open) return null;
+
+  return (
+    <AppModal
+      visible
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={closeSheet}
+    >
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.exerciseDetailsShade}>
+        <View
+          style={[
+            styles.exerciseDetailsSheet,
+            { paddingTop: Math.max(insets.top + 8, 48) },
+            editing ? styles.exerciseDetailsSheetEditing : null,
+          ]}
+        >
+          <View style={styles.exerciseDetailsHeader}>
+            <Pressable
+              accessibilityLabel={
+                editing ? "Cancel exercise editing" : "Close exercise details"
+              }
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.exerciseDetailsCloseButton}
+              onPress={editing ? cancelEditing : closeSheet}
+            >
+              <Icon name="close-outline" size={25} color={palette.ink} />
+            </Pressable>
+            <Text
+              numberOfLines={1}
+              style={styles.exerciseDetailsHeaderTitle}
+            >
+              {editing ? "Edit Exercise" : exercise.name}
+            </Text>
+            <Pressable
+              accessibilityLabel={
+                editing ? `Save ${exercise.name}` : `Edit ${exercise.name}`
+              }
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.exerciseDetailsEditButton}
+              onPress={editing ? saveEditing : startEditing}
+            >
+              <Text style={styles.exerciseDetailsEditText}>
+                {editing ? "Save" : "Edit"}
+              </Text>
+            </Pressable>
+          </View>
+
+          {editing ? null : (
+            <ExerciseDetailsTabBar
+              selectedTab={selectedTab}
+              onSelectTab={onSelectTab}
+            />
+          )}
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.exerciseDetailsBody}
+            contentContainerStyle={styles.exerciseDetailsBodyContent}
+          >
+            {editing ? (
+              <ExerciseDetailsEditContent
+                exercise={exercise}
+                draftLoadMode={draftLoadMode}
+                draftNote={draftNote}
+                draftStartingWeight={draftStartingWeight}
+                startingWeightMenuOpen={startingWeightMenuOpen}
+                onChangeDraftLoadMode={setDraftLoadMode}
+                onChangeDraftNote={setDraftNote}
+                onChangeDraftStartingWeight={(weight) => {
+                  setDraftStartingWeight(weight);
+                  setStartingWeightMenuOpen(false);
+                }}
+                onTextInputFocus={onTextInputFocus}
+                onToggleStartingWeightMenu={() =>
+                  setStartingWeightMenuOpen((open) => !open)
+                }
+              />
+            ) : (
+              <ExerciseDetailsTabContent
+                exercise={exercise}
+                selectedTab={selectedTab}
+              />
+            )}
+          </ScrollView>
+        </View>
+      </SafeAreaView>
+    </AppModal>
+  );
+}
+
+function ExerciseDetailsEditContent({
+  exercise,
+  draftLoadMode,
+  draftNote,
+  draftStartingWeight,
+  startingWeightMenuOpen,
+  onChangeDraftLoadMode,
+  onChangeDraftNote,
+  onChangeDraftStartingWeight,
+  onTextInputFocus,
+  onToggleStartingWeightMenu,
+}: {
+  exercise: WorkoutExercise;
+  draftLoadMode: PlateLoadMode;
+  draftNote: string;
+  draftStartingWeight: number | null;
+  startingWeightMenuOpen: boolean;
+  onChangeDraftLoadMode: (mode: PlateLoadMode) => void;
+  onChangeDraftNote: (note: string) => void;
+  onChangeDraftStartingWeight: (weight: number | null) => void;
+  onTextInputFocus: () => void;
+  onToggleStartingWeightMenu: () => void;
+}) {
+  const startingWeightChoices: Array<{
+    label: string;
+    weight: number | null;
+  }> = [{ label: "not set", weight: null }, ...STARTING_WEIGHTS];
+
+  return (
+    <View style={styles.exerciseDetailsEditForm}>
+      <View style={styles.exerciseDetailsEditGroup}>
+        <Text style={styles.exerciseDetailsEditLabel}>Name</Text>
+        <View style={styles.exerciseDetailsLockedField}>
+          <Text
+            numberOfLines={1}
+            style={styles.exerciseDetailsLockedFieldText}
+          >
+            {exercise.name}
+          </Text>
+          <Icon name="lock-closed-outline" size={16} color={palette.muted} />
+        </View>
+      </View>
+
+      <View style={styles.exerciseDetailsEditGroup}>
+        <Text style={styles.exerciseDetailsEditLabel}>
+          pinned exercise note
+        </Text>
+        <TextInput
+          accessibilityLabel={`${exercise.name} pinned exercise note`}
+          autoCapitalize="sentences"
+          autoCorrect={false}
+          blurOnSubmit={false}
+          multiline
+          placeholder="note"
+          placeholderTextColor={palette.muted}
+          style={styles.exerciseDetailsNoteInput}
+          value={draftNote}
+          onChangeText={onChangeDraftNote}
+          onFocus={onTextInputFocus}
+        />
+      </View>
+
+      <View style={styles.exerciseDetailsEditGroup}>
+        <Text style={styles.exerciseDetailsEditLabel}>
+          starting weight / bar
+        </Text>
+        <Pressable
+          accessibilityLabel="Choose exercise starting weight or bar"
+          accessibilityRole="button"
+          style={styles.exerciseDetailsSelect}
+          onPress={onToggleStartingWeightMenu}
+        >
+          <Text style={styles.exerciseDetailsSelectText}>
+            {formatExerciseStartingWeightChoice(draftStartingWeight)}
+          </Text>
+          <Icon name="chevron-down-outline" size={18} />
+        </Pressable>
+        {startingWeightMenuOpen ? (
+          <View style={styles.exerciseDetailsMenu}>
+            {startingWeightChoices.map((choice) => (
+              <Pressable
+                key={choice.weight == null ? "unset" : choice.weight}
+                accessibilityLabel={`Use ${choice.label} starting weight`}
+                accessibilityRole="button"
+                style={styles.exerciseDetailsMenuItem}
+                onPress={() => onChangeDraftStartingWeight(choice.weight)}
+              >
+                <Text style={styles.exerciseDetailsMenuItemText}>
+                  {choice.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.exerciseDetailsEditGroup}>
+        <Text style={styles.exerciseDetailsEditLabel}>load mode</Text>
+        <View style={styles.segmentedRow}>
+          <SegmentedChoice
+            active={draftLoadMode === "equal-sides"}
+            accessibilityLabel="Use weight per side"
+            onPress={() => onChangeDraftLoadMode("equal-sides")}
+          >
+            weight per side
+          </SegmentedChoice>
+          <SegmentedChoice
+            active={draftLoadMode === "total"}
+            accessibilityLabel="Use total load"
+            onPress={() => onChangeDraftLoadMode("total")}
+          >
+            total load
+          </SegmentedChoice>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const EXERCISE_DETAILS_TABS: Array<{
+  id: ExerciseDetailsTab;
+  label: string;
+}> = [
+  { id: "about", label: "About" },
+  { id: "history", label: "History" },
+  { id: "charts", label: "Charts" },
+  { id: "records", label: "Records" },
+];
+
+function ExerciseDetailsTabBar({
+  selectedTab,
+  onSelectTab,
+}: {
+  selectedTab: ExerciseDetailsTab;
+  onSelectTab: (tab: ExerciseDetailsTab) => void;
+}) {
+  return (
+    <View style={styles.exerciseDetailsTabs}>
+      {EXERCISE_DETAILS_TABS.map((tab) => {
+        const selected = tab.id === selectedTab;
+        return (
+          <Pressable
+            key={tab.id}
+            accessibilityLabel={`Show ${tab.label}`}
+            accessibilityRole="button"
+            style={[
+              styles.exerciseDetailsTab,
+              selected ? styles.exerciseDetailsTabActive : null,
+            ]}
+            onPress={() => onSelectTab(tab.id)}
+          >
+            <Text
+              style={[
+                styles.exerciseDetailsTabText,
+                selected ? styles.exerciseDetailsTabTextActive : null,
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function ExerciseDetailsTabContent({
+  exercise,
+  selectedTab,
+}: {
+  exercise: WorkoutExercise;
+  selectedTab: ExerciseDetailsTab;
+}) {
+  if (selectedTab === "about") return <ExerciseDetailsAbout exercise={exercise} />;
+  if (selectedTab === "history") {
+    return <ExerciseDetailsHistory exercise={exercise} />;
+  }
+  if (selectedTab === "charts") return <ExerciseDetailsCharts exercise={exercise} />;
+  return <ExerciseDetailsRecords exercise={exercise} />;
+}
+
+function ExerciseDetailsAbout({ exercise }: { exercise: WorkoutExercise }) {
+  const pinnedNote = exercise.exerciseNotes?.trim();
+  const workoutExerciseNote = exercise.notes[0]?.text?.trim();
+
+  return (
+    <View style={styles.exerciseDetailsSection}>
+      {pinnedNote ? (
+        <ExerciseDetailsNoteRow iconName="pin-outline" value={pinnedNote} />
+      ) : null}
+      {workoutExerciseNote ? (
+        <ExerciseDetailsNoteRow value={workoutExerciseNote} />
+      ) : null}
+      <ExerciseDetailsInfoRow
+        label="Load helper"
+        value={formatExercisePlateSettings(exercise)}
+      />
+      <ExerciseDetailsInfoRow
+        label="History"
+        value={`${exercise.history?.length ?? 0} ${
+          exercise.history?.length === 1 ? "workout" : "workouts"
+        }`}
       />
     </View>
   );
 }
 
-function ExerciseHistory({ exercise }: { exercise: WorkoutExercise }) {
+function ExerciseDetailsNoteRow({
+  iconName,
+  value,
+}: {
+  iconName?: React.ComponentProps<typeof Ionicons>["name"];
+  value: string;
+}) {
+  return (
+    <View style={styles.exerciseDetailsNoteRow}>
+      {iconName ? (
+        <Icon name={iconName} size={13} color={palette.muted} />
+      ) : null}
+      <Text style={styles.exerciseDetailsInfoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function ExerciseDetailsInfoRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.exerciseDetailsInfoRow}>
+      <Text style={styles.exerciseDetailsInfoLabel}>{label}</Text>
+      <Text style={styles.exerciseDetailsInfoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function formatExercisePlateSettings(exercise: WorkoutExercise) {
+  const start =
+    exercise.plateStartingWeight == null
+      ? "start unset"
+      : exercise.plateStartingWeight === 0
+        ? "no starting weight"
+        : `${formatNumber(exercise.plateStartingWeight)}lb start`;
+  const mode =
+    exercise.plateLoadMode === "total"
+      ? "total load"
+      : exercise.plateLoadMode === "equal-sides"
+        ? "equal sides"
+        : "load mode unset";
+  return `${start} . ${mode}`;
+}
+
+function formatExerciseStartingWeightChoice(weight: number | null) {
+  if (weight == null) return "not set";
+  return getStartingWeightLabel(weight);
+}
+
+function ExerciseDetailsHistory({ exercise }: { exercise: WorkoutExercise }) {
   const entries = exercise.history ?? [];
-  const { width: windowWidth } = useWindowDimensions();
-  const historyWidth = Math.max(260, windowWidth - 28);
-  const stats = buildHistoryStats(entries);
-  const pages = [
-    ...(stats ? [{ kind: "stats" as const, stats }] : []),
-    ...entries.map((entry) => ({ kind: "entry" as const, entry })),
-  ];
 
   if (entries.length === 0) {
     return (
-      <View style={styles.historyBox}>
+      <View style={styles.exerciseDetailsEmpty}>
         <Text style={styles.metaText}>no history yet</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView
-      horizontal
-      contentOffset={stats ? { x: historyWidth, y: 0 } : undefined}
-      decelerationRate="fast"
-      snapToInterval={historyWidth}
-      snapToStart
-      showsHorizontalScrollIndicator={false}
-      style={styles.historyScroller}
-      contentContainerStyle={styles.historyScrollerContent}
-    >
-      {pages.map((page) => {
-        if (page.kind === "stats") {
-          return (
-            <View
-              key="history-stats"
-              style={[styles.historyBox, { width: historyWidth }]}
-            >
-              <Text style={styles.metaText}>
-                stats . last {page.stats.chartCount}{" "}
-                {page.stats.chartCount === 1 ? "workout" : "workouts"}
-              </Text>
-              <HistoryTinyChart
-                title="expected 1rm"
-                points={page.stats.e1rmPoints}
-              />
-              <HistoryTinyChart
-                title="volume"
-                points={page.stats.volumePoints}
-              />
-              <View style={styles.statLine}>
-                <Text style={styles.statLabel}>best set</Text>
-                <Text style={styles.statValue}>{page.stats.bestSet}</Text>
-              </View>
-            </View>
-          );
-        }
-
-        const entry = page.entry;
-        const historicalExercise: WorkoutExercise = {
-          ...exercise,
-          sets: entry.sets.map((set, index) => ({
-            weight: set.weight,
-            reps: set.reps,
-            completed: true,
-            weightExplicit: true,
-            repsExplicit: true,
-            prevWeight: null,
-            prevReps: null,
-            modifier: set.modifier,
-            weightModifier: set.weightModifier,
-            restBefore: set.restBefore,
-            notes: set.notes ?? undefined,
-            clientId: `history-${entry.relation}-${entry.date}-${index}`,
-          })),
-          previousSets: [],
-        };
-        const groups = splitSets(historicalExercise);
-
-        return (
-          <View
-            key={`${entry.relation}-${entry.date}`}
-            style={[styles.historyBox, { width: historyWidth }]}
-          >
-            <Text style={styles.metaText}>
-              {entry.relation} . {entry.relativeDate} . {entry.date}
-            </Text>
-            {entry.workoutNote ? (
-              <Text style={styles.noteBadge}>{entry.workoutNote}</Text>
-            ) : null}
-            {entry.workoutExerciseNote ? (
-              <Text style={styles.noteBadge}>{entry.workoutExerciseNote}</Text>
-            ) : null}
-            {groups.warmups.length > 0 ? (
-              <SetGroup
-                title="warm-up"
-                exercise={historicalExercise}
-                sets={groups.warmups}
-                selectedSetId={null}
-                readonly
-              />
-            ) : null}
-            <SetGroup
-              title="working sets"
-              exercise={historicalExercise}
-              sets={groups.working}
-              selectedSetId={null}
-              readonly
-            />
-          </View>
-        );
-      })}
-    </ScrollView>
+    <View style={styles.exerciseDetailsHistoryList}>
+      {entries.map((entry) => (
+        <View
+          key={`${entry.relation}-${entry.relativeDate}-${entry.date}`}
+          style={styles.exerciseDetailsHistoryCard}
+        >
+          <Text style={styles.exerciseDetailsHistoryMeta}>
+            {entry.relation} . {entry.relativeDate} . {entry.date}
+          </Text>
+          <ExerciseDetailsHistoryNote text={entry.workoutNote} />
+          <ExerciseDetailsHistoryNote
+            iconName="pin-outline"
+            text={entry.exerciseNotesSnapshot}
+          />
+          <ExerciseDetailsHistoryNote text={entry.workoutExerciseNote} />
+          <ExerciseDetailsHistorySetRows exercise={exercise} entry={entry} />
+        </View>
+      ))}
+    </View>
   );
 }
 
-type HistoryStats = {
-  chartCount: number;
-  e1rmPoints: HistoryChartPoint[];
-  volumePoints: HistoryChartPoint[];
-  bestSet: string;
-};
+function ExerciseDetailsHistoryNote({
+  iconName,
+  text,
+}: {
+  iconName?: IconName;
+  text?: string | null;
+}) {
+  const trimmedText = text?.trim();
+  if (!trimmedText) return null;
+
+  return (
+    <View style={styles.exerciseDetailsHistoryNoteBadge}>
+      {iconName ? <Icon name={iconName} size={13} color={palette.muted} /> : null}
+      <Text
+        style={[
+          styles.noteBadgeTextInline,
+          styles.exerciseDetailsHistoryNoteText,
+        ]}
+      >
+        {trimmedText}
+      </Text>
+    </View>
+  );
+}
+
+function ExerciseDetailsHistorySetRows({
+  exercise,
+  entry,
+}: {
+  exercise: WorkoutExercise;
+  entry: ExerciseHistoryEntry;
+}) {
+  const historicalExercise = buildHistoricalExercise(exercise, entry);
+  const indexedSets = historicalExercise.sets.map((set, index) => ({
+    index,
+    set,
+  }));
+  const groups = groupLedgerSets(indexedSets);
+
+  if (groups.length === 0) return <Text style={styles.metaText}>no sets</Text>;
+
+  return (
+    <View style={styles.exerciseDetailsHistoryRows}>
+      <View style={styles.exerciseDetailsHistoryRowHeader}>
+        <Text style={styles.exerciseDetailsHistoryHeaderText}>
+          Sets Performed
+        </Text>
+        <Text style={styles.exerciseDetailsHistoryHeaderText}>1RM</Text>
+      </View>
+      {groups.map((group) => {
+        const leadingSet = group[0]!;
+        const label =
+          leadingSet.set.modifier === "warmup"
+            ? "W"
+            : getLedgerSetIndexLabel(historicalExercise, leadingSet);
+        const e1rm = getHistoryGroupOneRepMax(entry, group);
+        const notes = group
+          .map((indexedSet, groupIndex) => ({
+            key: `${indexedSet.index}-${groupIndex}`,
+            text: indexedSet.set.notes?.trim(),
+          }))
+          .filter(
+            (note): note is { key: string; text: string } => Boolean(note.text),
+          );
+
+        return (
+          <View
+            key={`${entry.date}-${leadingSet.index}`}
+            style={styles.exerciseDetailsHistorySetBlock}
+          >
+            <View style={styles.exerciseDetailsHistorySetRow}>
+              <Text
+                style={[
+                  styles.exerciseDetailsHistorySetIndex,
+                  leadingSet.set.modifier === "warmup"
+                    ? styles.exerciseDetailsHistoryWarmupIndex
+                    : null,
+                ]}
+              >
+                {label}
+              </Text>
+              <Text style={styles.exerciseDetailsHistorySetText}>
+                {formatPreviousSetGroup(historicalExercise, group)}
+              </Text>
+              <Text style={styles.exerciseDetailsHistoryOneRepMax}>
+                {e1rm == null ? "-" : formatNumber(e1rm)}
+              </Text>
+            </View>
+            {notes.length > 0 ? (
+              <View style={styles.exerciseDetailsHistorySetNotes}>
+                {notes.map((note) => (
+                  <ExerciseDetailsHistoryNote
+                    key={note.key}
+                    text={note.text}
+                  />
+                ))}
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function getHistoryGroupOneRepMax(
+  entry: ExerciseHistoryEntry,
+  group: IndexedWorkoutSet[],
+) {
+  let best: number | null = null;
+  for (const indexedSet of group) {
+    const historySet = entry.sets[indexedSet.index];
+    if (!historySet) continue;
+    const weight = getHistorySetLoad(entry, historySet);
+    const reps = Number(historySet.reps);
+    if (weight == null || weight <= 0 || !Number.isFinite(reps) || reps <= 0) {
+      continue;
+    }
+    const e1rm = estimate1RM(weight, reps);
+    best = best == null || e1rm > best ? e1rm : best;
+  }
+  return best;
+}
+
+function ExerciseDetailsCharts({ exercise }: { exercise: WorkoutExercise }) {
+  const { chartCount, charts } = buildExerciseDetailsCharts(exercise.history);
+
+  if (chartCount === 0) {
+    return (
+      <View style={styles.exerciseDetailsEmpty}>
+        <Text style={styles.metaText}>more data soon</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.exerciseDetailsChartList}>
+      {charts.map((chart) => (
+        <View key={chart.key} style={styles.exerciseDetailsChartCard}>
+          <HistoryTinyChart title={chart.title} points={chart.points} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ExerciseDetailsRecords({ exercise }: { exercise: WorkoutExercise }) {
+  const records = buildExerciseDetailsRecords(exercise.history);
+
+  if (records.length === 0) {
+    return (
+      <View style={styles.exerciseDetailsEmpty}>
+        <Text style={styles.metaText}>more data soon</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.exerciseDetailsSection}>
+      {records.map((record) => (
+        <View key={record.label} style={styles.exerciseDetailsRecordRow}>
+          <View style={styles.flexColumn}>
+            <Text style={styles.exerciseDetailsRecordLabel}>
+              {record.label}
+            </Text>
+            {record.detail ? (
+              <Text style={styles.exerciseDetailsRecordDetail}>
+                {record.detail}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.exerciseDetailsRecordValue}>{record.value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 type HistoryChartPoint = {
   xValue: number;
@@ -2905,9 +7651,21 @@ type HistoryChartPoint = {
 
 type ParsedHistoryStats = {
   e1rm: number | null;
+  bestSetVolume: number | null;
   volume: number | null;
-  bestSet: string | null;
-  bestSetScore: number;
+  maxConsecutiveReps: number | null;
+};
+
+type ExerciseDetailsChart = {
+  key: string;
+  title: string;
+  points: HistoryChartPoint[];
+};
+
+type ExerciseDetailsRecord = {
+  label: string;
+  value: string;
+  detail?: string;
 };
 
 function HistoryTinyChart({
@@ -3012,10 +7770,13 @@ function getChartPositions(
   }));
 }
 
-function buildHistoryStats(
-  history: WorkoutExercise["history"],
-): HistoryStats | null {
-  if (!history || history.length === 0) return null;
+function buildExerciseDetailsCharts(history: WorkoutExercise["history"]): {
+  chartCount: number;
+  charts: ExerciseDetailsChart[];
+} {
+  if (!history || history.length === 0) {
+    return { chartCount: 0, charts: [] };
+  }
 
   const recentChronological = history
     .slice(0, 5)
@@ -3024,40 +7785,157 @@ function buildHistoryStats(
   const xValues = getHistoryChartXValues(
     recentChronological.map(({ entry }) => entry),
   );
-  const allChronological = history
-    .map((entry) => ({ entry, stats: getHistoryWorkoutStats(entry) }))
-    .reverse();
-  const e1rmPoints = recentChronological.flatMap(({ stats }, index) =>
-    stats.e1rm == null
-      ? []
-      : [toHistoryChartPoint(stats.e1rm, xValues[index] ?? index)],
-  );
-  const volumePoints = recentChronological.flatMap(({ stats }, index) =>
-    stats.volume == null
-      ? []
-      : [toHistoryChartPoint(stats.volume, xValues[index] ?? index)],
-  );
-  const bestEntry = allChronological.reduce<ParsedHistoryStats | null>(
-    (best, entry) =>
-      !best || entry.stats.bestSetScore > best.bestSetScore
-        ? entry.stats
-        : best,
-    null,
-  );
+  let currentPr: number | null = null;
+
+  const e1rmPoints: HistoryChartPoint[] = [];
+  const bestSetVolumePoints: HistoryChartPoint[] = [];
+  const totalVolumePoints: HistoryChartPoint[] = [];
+  const prPoints: HistoryChartPoint[] = [];
+  const maxRepPoints: HistoryChartPoint[] = [];
+
+  recentChronological.forEach(({ stats }, index) => {
+    const xValue = xValues[index] ?? index;
+    if (stats.e1rm != null) {
+      e1rmPoints.push(toHistoryChartPoint(stats.e1rm, xValue));
+      currentPr =
+        currentPr == null ? stats.e1rm : Math.max(currentPr, stats.e1rm);
+    }
+    if (currentPr != null) {
+      prPoints.push(toHistoryChartPoint(currentPr, xValue));
+    }
+    if (stats.bestSetVolume != null) {
+      bestSetVolumePoints.push(
+        toHistoryChartPoint(stats.bestSetVolume, xValue),
+      );
+    }
+    if (stats.volume != null) {
+      totalVolumePoints.push(toHistoryChartPoint(stats.volume, xValue));
+    }
+    if (stats.maxConsecutiveReps != null) {
+      maxRepPoints.push(
+        toHistoryChartPoint(stats.maxConsecutiveReps, xValue, "reps"),
+      );
+    }
+  });
 
   return {
     chartCount: recentChronological.length,
-    e1rmPoints,
-    volumePoints,
-    bestSet: bestEntry?.bestSet ?? "n/a",
+    charts: [
+      {
+        key: "best-set-e1rm",
+        title: "best set (est 1rm)",
+        points: e1rmPoints,
+      },
+      {
+        key: "best-set-volume",
+        title: "best set (max volume)",
+        points: bestSetVolumePoints,
+      },
+      {
+        key: "total-volume",
+        title: "total volume",
+        points: totalVolumePoints,
+      },
+      {
+        key: "pr-progression-e1rm",
+        title: "PR progression (1rm)",
+        points: prPoints,
+      },
+      {
+        key: "max-consecutive-reps",
+        title: "max consecutive reps",
+        points: maxRepPoints,
+      },
+    ],
   };
 }
 
-function toHistoryChartPoint(value: number, xValue: number): HistoryChartPoint {
+function buildExerciseDetailsRecords(
+  history: WorkoutExercise["history"],
+): ExerciseDetailsRecord[] {
+  if (!history || history.length === 0) return [];
+
+  const entries = history.map((entry) => ({
+    entry,
+    stats: getHistoryWorkoutStats(entry),
+  }));
+  const records: ExerciseDetailsRecord[] = [];
+
+  const bestE1rm = getBestHistoryMetric(entries, (item) => item.stats.e1rm);
+  if (bestE1rm) {
+    records.push({
+      label: "best set (est 1rm)",
+      value: `${formatNumber(bestE1rm.value)}lb`,
+      detail: `${bestE1rm.entry.relation} . ${bestE1rm.entry.date}`,
+    });
+  }
+
+  const bestSetVolume = getBestHistoryMetric(
+    entries,
+    (item) => item.stats.bestSetVolume,
+  );
+  if (bestSetVolume) {
+    records.push({
+      label: "best set (max volume)",
+      value: `${formatNumber(bestSetVolume.value)}lb`,
+      detail: `${bestSetVolume.entry.relation} . ${bestSetVolume.entry.date}`,
+    });
+  }
+
+  const bestTotalVolume = getBestHistoryMetric(
+    entries,
+    (item) => item.stats.volume,
+  );
+  if (bestTotalVolume) {
+    records.push({
+      label: "total volume",
+      value: `${formatNumber(bestTotalVolume.value)}lb`,
+      detail: `${bestTotalVolume.entry.relation} . ${bestTotalVolume.entry.date}`,
+    });
+  }
+
+  const maxReps = getBestHistoryMetric(
+    entries,
+    (item) => item.stats.maxConsecutiveReps,
+  );
+  if (maxReps) {
+    records.push({
+      label: "max consecutive reps",
+      value: formatNumber(maxReps.value),
+      detail: `${maxReps.entry.relation} . ${maxReps.entry.date}`,
+    });
+  }
+
+  return records;
+}
+
+function getBestHistoryMetric<T extends { entry: ExerciseHistoryEntry }>(
+  entries: T[],
+  selector: (entry: T) => number | null,
+) {
+  return entries.reduce<{
+    entry: ExerciseHistoryEntry;
+    value: number;
+  } | null>((best, item) => {
+    const value = selector(item);
+    if (value == null || !Number.isFinite(value)) return best;
+    if (!best || value > best.value) {
+      return { entry: item.entry, value };
+    }
+    return best;
+  }, null);
+}
+
+function toHistoryChartPoint(
+  value: number,
+  xValue: number,
+  unit: "lb" | "reps" = "lb",
+): HistoryChartPoint {
   return {
     xValue,
     value,
-    displayValue: `${formatNumber(value)}lb`,
+    displayValue:
+      unit === "lb" ? `${formatNumber(value)}lb` : formatNumber(value),
   };
 }
 
@@ -3101,9 +7979,9 @@ function parseHistoryRelativeDaysAgo(relativeDate: string) {
 function getHistoryWorkoutStats(
   entry: NonNullable<WorkoutExercise["history"]>[number],
 ): ParsedHistoryStats {
-  let bestSet: string | null = null;
-  let bestSetScore = Number.NEGATIVE_INFINITY;
   let bestE1rm: number | null = null;
+  let bestSetVolume: number | null = null;
+  let maxConsecutiveReps: number | null = null;
   let volume = 0;
 
   for (const set of entry.sets) {
@@ -3113,24 +7991,27 @@ function getHistoryWorkoutStats(
     const reps = Number(set.reps);
     if (weight == null || !Number.isFinite(reps) || reps <= 0) continue;
 
-    if (weight > 0) volume += weight * reps;
+    maxConsecutiveReps =
+      maxConsecutiveReps == null ? reps : Math.max(maxConsecutiveReps, reps);
+
+    if (weight > 0) {
+      const setVolume = weight * reps;
+      volume += setVolume;
+      bestSetVolume =
+        bestSetVolume == null ? setVolume : Math.max(bestSetVolume, setVolume);
+    }
 
     const e1rm = weight > 0 ? estimate1RM(weight, reps) : null;
-    const score = e1rm ?? weight;
     if (e1rm != null && (bestE1rm == null || e1rm > bestE1rm)) {
       bestE1rm = e1rm;
-    }
-    if (score > bestSetScore) {
-      bestSetScore = score;
-      bestSet = `${formatNumber(weight)}lb×${formatNumber(reps)}`;
     }
   }
 
   return {
     e1rm: bestE1rm,
+    bestSetVolume,
     volume: volume > 0 ? volume : null,
-    bestSet,
-    bestSetScore,
+    maxConsecutiveReps,
   };
 }
 
@@ -3145,6 +8026,394 @@ function getHistorySetLoad(
   return set.weight;
 }
 
+function SetLedger({
+  title,
+  exercise,
+  sets,
+  selectedSetId,
+  selectedField,
+  onOpenSet,
+  onToggleComplete,
+  onToggleRest,
+}: {
+  title?: string;
+  exercise: WorkoutExercise;
+  sets: IndexedWorkoutSet[];
+  selectedSetId: string | null;
+  selectedField: SetEditField | null;
+  onOpenSet: (setId: string, field?: SetEditField) => void;
+  onToggleComplete: (setIndex: number) => void;
+  onToggleRest: (setIndex: number) => void;
+}) {
+  const noteEntries = sets
+    .filter(({ set }) => Boolean(set.notes?.trim()))
+    .map(({ set, index }, noteIndex) => ({
+      letter: String.fromCharCode(97 + noteIndex),
+      note: set.notes!.trim(),
+      setId: getSetTargetId(set, index),
+    }));
+  const noteBySetId = new Map(
+    noteEntries.map((entry) => [entry.setId, entry.letter]),
+  );
+  const groups = groupLedgerSets(sets);
+
+  return (
+    <View style={styles.setLedger}>
+      {title ? <Text style={styles.subtleTitle}>{title}</Text> : null}
+      {sets.length === 0 ? <Text style={styles.metaText}>none</Text> : null}
+      {groups.map((group, rowIndex) => {
+        const leadingSet = group[0]!;
+        const leadingSetId = getSetTargetId(
+          leadingSet.set,
+          leadingSet.index,
+        );
+        const loadLabel = formatLedgerLoadLabel(exercise, leadingSet);
+        const isWeightSelected =
+          selectedSetId === leadingSetId && selectedField === "weight";
+        const rowSelected = group.some(
+          (indexedSet) =>
+            selectedSetId === getSetTargetId(indexedSet.set, indexedSet.index),
+        );
+        const setAccessibilityName = setLabel(exercise, leadingSet.index);
+
+        return (
+          <React.Fragment key={`${leadingSetId}-${leadingSet.index}`}>
+            {rowIndex > 0 ? (
+              <Pressable
+                accessibilityLabel={`Toggle rest before ${setAccessibilityName}`}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={styles.setLedgerRestRow}
+                onPress={() => onToggleRest(leadingSet.index)}
+              >
+                <Text style={styles.setLedgerRestText}>
+                  {leadingSet.set.restBefore === "short"
+                    ? "short rest"
+                    : "standard rest"}
+                </Text>
+              </Pressable>
+            ) : null}
+            <View
+              style={[
+                styles.setLedgerRow,
+                rowSelected ? styles.setLedgerRowSelected : null,
+              ]}
+            >
+              <Text style={styles.setLedgerIndex}>
+                {getLedgerSetIndexLabel(exercise, leadingSet)}
+              </Text>
+              <Pressable
+                accessibilityLabel={`Edit ${setAccessibilityName} weight ${loadLabel}`}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={[
+                  styles.setLedgerValue,
+                  isWeightSelected ? styles.setLedgerValueSelected : null,
+                ]}
+                onPress={() => onOpenSet(leadingSetId, "weight")}
+              >
+                <Text style={styles.setLedgerLoadText}>{loadLabel}</Text>
+              </Pressable>
+              <View style={styles.setLedgerRepsChain}>
+                {group.map((indexedSet, segmentIndex) => {
+                  const setId = getSetTargetId(indexedSet.set, indexedSet.index);
+                  const repsLabel = formatLedgerSegmentRepsLabel(
+                    exercise,
+                    indexedSet,
+                    segmentIndex === 0 ? undefined : group[segmentIndex - 1],
+                  );
+                  const noteLetter = noteBySetId.get(setId);
+                  const isRepsSelected =
+                    selectedSetId === setId && selectedField === "reps";
+                  const segmentAccessibilityName = setLabel(
+                    exercise,
+                    indexedSet.index,
+                  );
+
+                  return (
+                    <React.Fragment key={`${setId}-${indexedSet.index}`}>
+                      {segmentIndex > 0 ? (
+                        <Pressable
+                          accessibilityLabel={`Toggle rest before ${segmentAccessibilityName}`}
+                          accessibilityRole="button"
+                          hitSlop={8}
+                          style={styles.setLedgerShortRestChip}
+                          onPress={() => onToggleRest(indexedSet.index)}
+                        >
+                          <Text style={styles.setLedgerRestJoinText}>+</Text>
+                        </Pressable>
+                      ) : null}
+                      <Pressable
+                        accessibilityLabel={`Edit ${segmentAccessibilityName} reps ${repsLabel}`}
+                        accessibilityRole="button"
+                        hitSlop={8}
+                        style={[
+                          styles.setLedgerReps,
+                          indexedSet.set.completed
+                            ? styles.setLedgerRepsCompleted
+                            : null,
+                          isRepsSelected ? styles.setLedgerValueSelected : null,
+                        ]}
+                        onLongPress={() => {
+                          triggerSelectionHaptic();
+                          onToggleComplete(indexedSet.index);
+                        }}
+                        onPress={() => onOpenSet(setId, "reps")}
+                      >
+                        <Text style={styles.setLedgerRepsText}>
+                          {repsLabel}
+                          {noteLetter ? (
+                            <Text style={styles.supText}>{noteLetter}</Text>
+                          ) : null}
+                        </Text>
+                      </Pressable>
+                    </React.Fragment>
+                  );
+                })}
+              </View>
+            </View>
+          </React.Fragment>
+        );
+      })}
+      {noteEntries.length > 0 ? (
+        <View style={styles.noteList}>
+          {noteEntries.map((entry) => (
+            <View
+              key={`${entry.setId}-${entry.letter}-${entry.note}`}
+              style={styles.noteRow}
+            >
+              <Text style={styles.noteLetter}>{entry.letter}</Text>
+              <Text style={styles.noteBadge}>{entry.note}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function groupLedgerSets(sets: IndexedWorkoutSet[]) {
+  const groups: IndexedWorkoutSet[][] = [];
+  for (const indexedSet of sets) {
+    const currentGroup = groups[groups.length - 1];
+    if (indexedSet.set.restBefore === "short" && currentGroup) {
+      currentGroup.push(indexedSet);
+    } else {
+      groups.push([indexedSet]);
+    }
+  }
+  return groups;
+}
+
+function buildWatchCurrentSetSnapshot(
+  exercise: WorkoutExercise,
+  selectedSetId: string | null,
+) {
+  const { warmups, working } = splitSets(exercise);
+  const groups = [...groupLedgerSets(warmups), ...groupLedgerSets(working)];
+  const selectedIndex =
+    selectedSetId == null ? null : findSetIndex(exercise, selectedSetId);
+  const selectedGroup =
+    selectedIndex == null
+      ? null
+      : groups.find((group) =>
+          group.some((indexedSet) => indexedSet.index === selectedIndex),
+        );
+  const firstIncompleteGroup = groups.find(
+    (group) => !group[0]?.set.completed,
+  );
+  const group = selectedGroup ?? firstIncompleteGroup ?? groups[0] ?? [];
+  const leadingSet = group[0];
+
+  if (!leadingSet) {
+    return {
+      setId: null,
+      label: "set",
+      text: "no sets",
+      weight: null,
+      reps: null,
+      weightModifier: null,
+      completed: false,
+    };
+  }
+
+  return {
+    setId: getSetTargetId(leadingSet.set, leadingSet.index),
+    label: setLabel(exercise, leadingSet.index),
+    text: formatPreviousSetGroup(exercise, group),
+    weight: leadingSet.set.weight,
+    reps: leadingSet.set.reps,
+    weightModifier: leadingSet.set.weightModifier ?? null,
+    completed: Boolean(leadingSet.set.completed),
+  };
+}
+
+function getAdjacentIndex(
+  currentIndex: number,
+  count: number,
+  direction: "previous" | "next",
+) {
+  if (count <= 0) return null;
+  const nextIndex =
+    direction === "previous" ? currentIndex - 1 : currentIndex + 1;
+  return Math.min(Math.max(nextIndex, 0), count - 1);
+}
+
+function getAdjacentWatchSetGroupTarget(
+  exercise: WorkoutExercise | undefined,
+  selectedSetId: string | null,
+  direction: "previous" | "next",
+) {
+  if (!exercise) return null;
+  const { warmups, working } = splitSets(exercise);
+  const groups = [...groupLedgerSets(warmups), ...groupLedgerSets(working)];
+  if (groups.length === 0) return null;
+
+  const selectedIndex =
+    selectedSetId == null ? null : findSetIndex(exercise, selectedSetId);
+  const selectedGroupIndex =
+    selectedIndex == null
+      ? groups.findIndex((group) => !group[0]?.set.completed)
+      : groups.findIndex((group) =>
+          group.some((indexedSet) => indexedSet.index === selectedIndex),
+        );
+  const currentGroupIndex =
+    selectedGroupIndex >= 0 ? selectedGroupIndex : 0;
+  const nextGroupIndex = getAdjacentIndex(
+    currentGroupIndex,
+    groups.length,
+    direction,
+  );
+  if (nextGroupIndex == null) return null;
+  return groups[nextGroupIndex]?.[0] ?? null;
+}
+
+function normalizeWatchSetValue(
+  command: Extract<WatchWorkoutCommand, { type: "setSetValue" }>,
+  set: WorkoutSet,
+) {
+  const numericValue =
+    typeof command.value === "number" && Number.isFinite(command.value)
+      ? command.value
+      : null;
+
+  if (numericValue == null) return null;
+
+  if (command.field === "reps") {
+    return Math.max(0, Math.round(numericValue));
+  }
+
+  if (set.weightModifier === "bodyweight") {
+    return Math.round(numericValue * 2) / 2;
+  }
+
+  return Math.max(0, Math.round(numericValue * 2) / 2);
+}
+
+function buildHistoricalExercise(
+  exercise: WorkoutExercise,
+  entry: ExerciseHistoryEntry,
+): WorkoutExercise {
+  return {
+    ...exercise,
+    sets: entry.sets.map((set, index) => ({
+      weight: set.weight,
+      reps: set.reps,
+      completed: true,
+      weightExplicit: true,
+      repsExplicit: true,
+      prevWeight: null,
+      prevReps: null,
+      modifier: set.modifier,
+      weightModifier: set.weightModifier,
+      restBefore: set.restBefore,
+      notes: set.notes ?? undefined,
+      clientId: `history-${entry.relation}-${entry.date}-${index}`,
+    })),
+    previousSets: [],
+  };
+}
+
+function formatPreviousSetGroup(
+  exercise: WorkoutExercise,
+  group: IndexedWorkoutSet[],
+) {
+  const firstLoad = group[0]
+    ? formatLedgerLoadLabel(exercise, group[0])
+    : "";
+
+  return group
+    .map((indexedSet, index) => {
+      const load = formatLedgerLoadLabel(exercise, indexedSet);
+      const reps =
+        indexedSet.set.reps == null
+          ? "-"
+          : formatNumber(Number(indexedSet.set.reps));
+
+      if (index > 0 && load === firstLoad) return reps;
+      return `${load || "-lb"} x ${reps}`;
+    })
+    .join(" + ");
+}
+
+function formatLedgerLoadLabel(
+  exercise: WorkoutExercise,
+  indexedSet: IndexedWorkoutSet,
+) {
+  const values = getSetDisplayValues(
+    exercise,
+    indexedSet.set,
+    indexedSet.index,
+  );
+
+  if (values.weightModifier === "bodyweight") {
+    const offset = values.weight ?? 0;
+    if (offset > 0) return `BW+${formatNumber(offset)}lb`;
+    if (offset < 0) return `BW-${formatNumber(Math.abs(offset))}lb`;
+    return "BW";
+  }
+
+  if (values.weight == null) return "-lb";
+  return `${formatNumber(values.weight)}lb`;
+}
+
+function formatLedgerRepsLabel(
+  exercise: WorkoutExercise,
+  indexedSet: IndexedWorkoutSet,
+) {
+  const values = getSetDisplayValues(
+    exercise,
+    indexedSet.set,
+    indexedSet.index,
+  );
+  return values.reps == null ? "-" : formatNumber(Number(values.reps));
+}
+
+function formatLedgerSegmentRepsLabel(
+  exercise: WorkoutExercise,
+  indexedSet: IndexedWorkoutSet,
+  previousIndexedSet?: IndexedWorkoutSet,
+) {
+  if (!previousIndexedSet) return formatLedgerRepsLabel(exercise, indexedSet);
+  const token = getSetLineToken(exercise, indexedSet, previousIndexedSet);
+  if (token.kind === "reps-only") return token.repsLabel;
+  return `${token.weightLabel}x${token.repsLabel}`;
+}
+
+function getLedgerSetIndexLabel(
+  exercise: WorkoutExercise,
+  indexedSet: IndexedWorkoutSet,
+) {
+  if (indexedSet.set.modifier === "warmup") return "WU";
+  if (indexedSet.set.restBefore === "short") return "+";
+  const workingSetCount = exercise.sets
+    .slice(0, indexedSet.index + 1)
+    .filter(
+      (set) => set.modifier !== "warmup" && set.restBefore !== "short",
+    ).length;
+  return String(Math.max(1, workingSetCount));
+}
+
 function SetGroup({
   title,
   exercise,
@@ -3153,6 +8422,7 @@ function SetGroup({
   selectedField = null,
   readonly = false,
   onOpenSet,
+  onToggleComplete,
   onToggleRest,
 }: {
   title?: string;
@@ -3162,6 +8432,7 @@ function SetGroup({
   selectedField?: SetEditField | null;
   readonly?: boolean;
   onOpenSet?: (setId: string, field?: SetEditField) => void;
+  onToggleComplete?: (setIndex: number) => void;
   onToggleRest?: (setIndex: number) => void;
 }) {
   const noteEntries = sets
@@ -3186,21 +8457,26 @@ function SetGroup({
           const fullLabel = formatSetInline(exercise, indexedSet) || "set";
           const setAccessibilityName = setLabel(exercise, indexedSet.index);
           const noteLetter = noteBySetId.get(setId);
+          const separatorText =
+            indexedSet.set.restBefore === "short" ? "+" : ",";
           return (
-            <React.Fragment key={setId}>
+            <React.Fragment key={`${setId}-${indexedSet.index}`}>
               {index > 0 ? (
-                <Pressable
-                  accessibilityLabel={`Toggle rest before ${setAccessibilityName}`}
-                  accessibilityRole="button"
-                  disabled={readonly || !onToggleRest}
-                  hitSlop={10}
-                  style={styles.separatorChip}
-                  onPress={() => onToggleRest?.(indexedSet.index)}
-                >
-                  <Text style={styles.separatorText}>
-                    {indexedSet.set.restBefore === "short" ? "+" : ","}
-                  </Text>
-                </Pressable>
+                readonly || !onToggleRest ? (
+                  <View style={styles.separatorChip}>
+                    <Text style={styles.separatorText}>{separatorText}</Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    accessibilityLabel={`Toggle rest before ${setAccessibilityName}`}
+                    accessibilityRole="button"
+                    hitSlop={10}
+                    style={styles.separatorChip}
+                    onPress={() => onToggleRest(indexedSet.index)}
+                  >
+                    <Text style={styles.separatorText}>{separatorText}</Text>
+                  </Pressable>
+                )
               ) : null}
               {indexedSet.set.modifier === "warmup" ? (
                 <Text style={styles.warmupInlinePrefix}>w</Text>
@@ -3212,7 +8488,11 @@ function SetGroup({
                   disabled={readonly || !onOpenSet}
                   label={token.repsLabel}
                   noteLetter={noteLetter}
+                  completed={
+                    Boolean(onToggleComplete) && indexedSet.set.completed
+                  }
                   onPress={() => onOpenSet?.(setId, "reps")}
+                  onLongPress={() => onToggleComplete?.(indexedSet.index)}
                 />
               ) : (
                 <>
@@ -3232,7 +8512,11 @@ function SetGroup({
                     disabled={readonly || !onOpenSet}
                     label={token.repsLabel}
                     noteLetter={noteLetter}
+                    completed={
+                      Boolean(onToggleComplete) && indexedSet.set.completed
+                    }
                     onPress={() => onOpenSet?.(setId, "reps")}
+                    onLongPress={() => onToggleComplete?.(indexedSet.index)}
                   />
                 </>
               )}
@@ -3243,7 +8527,10 @@ function SetGroup({
       {noteEntries.length > 0 ? (
         <View style={styles.noteList}>
           {noteEntries.map((entry) => (
-            <View key={`${entry.setId}-${entry.letter}`} style={styles.noteRow}>
+            <View
+              key={`${entry.setId}-${entry.letter}-${entry.note}`}
+              style={styles.noteRow}
+            >
               <Text style={styles.noteLetter}>{entry.letter}</Text>
               <Text style={styles.noteBadge}>{entry.note}</Text>
             </View>
@@ -3260,28 +8547,57 @@ function SetValueChip({
   disabled,
   label,
   noteLetter,
+  completed = false,
   onPress,
+  onLongPress,
 }: {
   accessibilityLabel: string;
   active: boolean;
   disabled: boolean;
   label: string;
   noteLetter?: string;
+  completed?: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
+  const longPressedRef = useRef(false);
+  const chipStyle = [
+    styles.inlineSetChip,
+    completed ? styles.inlineSetChipCompleted : null,
+    active ? styles.inlineSetChipActive : null,
+  ];
+  const content = (
+    <Text style={styles.inlineSetText}>
+      {label}
+      {noteLetter ? <Text style={styles.supText}>{noteLetter}</Text> : null}
+    </Text>
+  );
+
+  if (disabled) {
+    return <View style={chipStyle}>{content}</View>;
+  }
+
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      disabled={disabled}
       hitSlop={10}
-      onPress={onPress}
-      style={[styles.inlineSetChip, active ? styles.inlineSetChipActive : null]}
+      onPress={() => {
+        if (longPressedRef.current) {
+          longPressedRef.current = false;
+          return;
+        }
+        onPress();
+      }}
+      onLongPress={() => {
+        if (!onLongPress) return;
+        longPressedRef.current = true;
+        triggerSelectionHaptic();
+        onLongPress();
+      }}
+      style={chipStyle}
     >
-      <Text style={styles.inlineSetText}>
-        {label}
-        {noteLetter ? <Text style={styles.supText}>{noteLetter}</Text> : null}
-      </Text>
+      {content}
     </Pressable>
   );
 }
@@ -3341,24 +8657,149 @@ function isExplicitNullWeight(set: WorkoutSet) {
   return set.weight === null && set.weightExplicit;
 }
 
+function getLogicalSetGroup(
+  exercise: WorkoutExercise,
+  setIndex: number,
+): IndexedWorkoutSet[] {
+  const selectedSet = exercise.sets[setIndex];
+  if (!selectedSet) return [];
+  const selectedModifier = selectedSet.modifier;
+
+  let startIndex = setIndex;
+  while (
+    startIndex > 0 &&
+    exercise.sets[startIndex]?.restBefore === "short" &&
+    exercise.sets[startIndex - 1]?.modifier === selectedModifier
+  ) {
+    startIndex -= 1;
+  }
+
+  let endIndex = setIndex;
+  while (
+    endIndex < exercise.sets.length - 1 &&
+    exercise.sets[endIndex + 1]?.restBefore === "short" &&
+    exercise.sets[endIndex + 1]?.modifier === selectedModifier
+  ) {
+    endIndex += 1;
+  }
+
+  return exercise.sets
+    .slice(startIndex, endIndex + 1)
+    .map((set, offset) => ({ set, index: startIndex + offset }));
+}
+
+function LogicalSetComposer({
+  exercise,
+  field,
+  group,
+  selectedSetId,
+  selectedSetIndex,
+  selectedWeightLabel,
+  onOpenSet,
+  onToggleRest,
+}: {
+  exercise: WorkoutExercise;
+  field: "weight" | "reps";
+  group: IndexedWorkoutSet[];
+  selectedSetId: string;
+  selectedSetIndex: number;
+  selectedWeightLabel: string;
+  onOpenSet: (setId: string, field: SetEditField) => void;
+  onToggleRest: (setIndex: number) => void;
+}) {
+  return (
+    <View style={styles.logicalSetComposer}>
+      {group.map((indexedSet, segmentIndex) => {
+        const setId = getSetTargetId(indexedSet.set, indexedSet.index);
+        const values = getSetDisplayValues(
+          exercise,
+          indexedSet.set,
+          indexedSet.index,
+        );
+        const weightLabel =
+          selectedSetIndex === indexedSet.index && field === "weight"
+            ? selectedWeightLabel
+            : formatKeyboardWeightLabel(values.weight, values.weightModifier);
+        const repsLabel =
+          values.reps == null ? "-" : formatNumber(Number(values.reps));
+        const setAccessibilityName = setLabel(exercise, indexedSet.index);
+
+        return (
+          <View
+            key={`${setId}-${indexedSet.index}`}
+            style={styles.logicalSetSegmentBlock}
+          >
+            {segmentIndex > 0 ? (
+              <Pressable
+                accessibilityLabel={`Toggle rest before ${setAccessibilityName}`}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={styles.logicalSetRestLabel}
+                onPress={() => onToggleRest(indexedSet.index)}
+              >
+                <Text style={styles.logicalSetRestLabelText}>short rest</Text>
+              </Pressable>
+            ) : null}
+            <View style={styles.logicalSetSegment}>
+              <Pressable
+                accessibilityLabel={`Edit ${setAccessibilityName} weight`}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={[
+                  styles.logicalSetChip,
+                  selectedSetId === setId && field === "weight"
+                    ? styles.inlineSetChipActive
+                    : null,
+                ]}
+                onPress={() => onOpenSet(setId, "weight")}
+              >
+                <Text style={styles.logicalSetText}>{weightLabel}</Text>
+              </Pressable>
+              <Text style={styles.logicalSetText}>x</Text>
+              <Pressable
+                accessibilityLabel={`Edit ${setAccessibilityName} reps`}
+                accessibilityRole="button"
+                hitSlop={8}
+                style={[
+                  styles.logicalSetChip,
+                  selectedSetId === setId && field === "reps"
+                    ? styles.inlineSetChipActive
+                    : null,
+                ]}
+                onPress={() => onOpenSet(setId, "reps")}
+              >
+                <Text style={styles.logicalSetText}>{repsLabel}</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function SetEditorModal({
   workout,
   target,
   onClose,
   onRetarget,
+  onStartRestTimer,
   onDispatch,
 }: {
   workout: Workout;
   target: SetEditTarget | null;
   onClose: () => void;
   onRetarget: (target: SetEditTarget | null) => void;
+  onStartRestTimer: () => void;
   onDispatch: (action: Action, options?: WorkoutDispatchOptions) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const presentDialog = useAppDialog();
   const nativeKeyboard = useNativeKeyboardFrame();
   const [field, setField] = useState<"weight" | "reps">("weight");
-  const [entry, setEntry] = useState("");
-  const [firstPress, setFirstPress] = useState(true);
+  const [entry, setEntryState] = useState("");
+  const entryRef = useRef("");
+  const firstPressRef = useRef(true);
   const [helperMode, setHelperMode] = useState<"increase" | "plates" | null>(
     null,
   );
@@ -3368,6 +8809,19 @@ function SetEditorModal({
   const setIndex =
     exercise && target ? findSetIndex(exercise, target.setId) : null;
   const set = setIndex == null ? undefined : exercise?.sets[setIndex];
+  const exerciseRef = useRef<WorkoutExercise | undefined>(undefined);
+  const setIndexRef = useRef<number | null>(null);
+  const targetRef = useRef<SetEditTarget | null>(null);
+  const setEntryValue = (nextEntry: string) => {
+    entryRef.current = nextEntry;
+    setEntryState(nextEntry);
+  };
+  const setFirstPressValue = (nextFirstPress: boolean) => {
+    firstPressRef.current = nextFirstPress;
+  };
+  exerciseRef.current = exercise;
+  setIndexRef.current = setIndex;
+  targetRef.current = target;
 
   useEffect(() => {
     if (!target?.field) return;
@@ -3377,7 +8831,7 @@ function SetEditorModal({
   useEffect(() => {
     if (!exercise || setIndex == null || !set) return;
     const values = getSetDisplayValues(exercise, set, setIndex);
-    setEntry(
+    setEntryValue(
       field === "weight"
         ? values.weight == null
           ? ""
@@ -3386,7 +8840,7 @@ function SetEditorModal({
           ? ""
           : String(values.reps),
     );
-    setFirstPress(true);
+    setFirstPressValue(true);
   }, [field, target?.exerciseIndex, target?.setId]);
 
   useEffect(() => {
@@ -3400,12 +8854,16 @@ function SetEditorModal({
     const parsed =
       nextEntry.trim() === "" ? null : parseKeypadEntry(nextEntry, nextField);
     if (parsed === "pending") return;
+    const currentExercise = exerciseRef.current;
+    const currentSetIndex = setIndexRef.current;
+    const currentTarget = targetRef.current;
+    if (!currentExercise || currentSetIndex == null || !currentTarget) return;
 
     onDispatch(
       {
         type: "REPLACE_EXERCISE_SETS",
-        exerciseIndex: target.exerciseIndex,
-        sets: materializeEditedExerciseSets(exercise, setIndex, {
+        exerciseIndex: currentTarget.exerciseIndex,
+        sets: materializeEditedExerciseSets(currentExercise, currentSetIndex, {
           [nextField]: parsed,
         }),
       },
@@ -3415,67 +8873,128 @@ function SetEditorModal({
 
   const selectField = (nextField: "weight" | "reps") => {
     setField(nextField);
-    setFirstPress(true);
+    setFirstPressValue(true);
+  };
+
+  const advanceSetEditor = () => {
+    if (field === "weight") {
+      selectField("reps");
+      onRetarget({
+        exerciseIndex: target.exerciseIndex,
+        setId: target.setId,
+        field: "reps",
+      });
+      return;
+    }
+
+    const nextSetIndex = setIndex + 1;
+    const nextSet = exercise.sets[nextSetIndex];
+    if (!nextSet) {
+      selectField("weight");
+      return;
+    }
+
+    selectField("weight");
+    onRetarget({
+      exerciseIndex: target.exerciseIndex,
+      setId: getSetTargetId(nextSet, nextSetIndex),
+      field: "weight",
+    });
+  };
+
+  const completeAndAdvanceSetEditor = () => {
+    commitValue(entryRef.current, "reps");
+    if (!set.completed) {
+      triggerSelectionHaptic();
+      onDispatch({
+        type: "TOGGLE_SET_COMPLETED",
+        exerciseIndex: target.exerciseIndex,
+        setIndex,
+      });
+      onStartRestTimer();
+    }
+
+    const nextSetIndex = setIndex + 1;
+    const nextSet = exercise.sets[nextSetIndex];
+    if (!nextSet) {
+      onClose();
+      return;
+    }
+
+    selectField("weight");
+    onRetarget({
+      exerciseIndex: target.exerciseIndex,
+      setId: getSetTargetId(nextSet, nextSetIndex),
+      field: "weight",
+    });
   };
 
   const handleKey = (key: string) => {
-    const currentEntry = firstPress ? "" : entry;
+    const currentEntry = firstPressRef.current ? "" : entryRef.current;
     const next =
-      key === "." && currentEntry.includes(".")
-        ? currentEntry
-        : key === "."
-          ? currentEntry || "0."
-          : currentEntry === "0"
-            ? key
+      key === "."
+        ? field === "weight" && !currentEntry.includes(".")
+          ? currentEntry === "" || currentEntry === "-"
+            ? `${currentEntry}0.`
+            : `${currentEntry}.`
+          : currentEntry
+        : currentEntry === "0"
+          ? key
+          : currentEntry === "-0"
+            ? `-${key}`
             : `${currentEntry}${key}`;
-    setEntry(next);
-    setFirstPress(false);
+    setEntryValue(next);
+    setFirstPressValue(false);
     commitValue(next);
   };
 
   const backspace = () => {
-    const next = firstPress ? "" : entry.slice(0, -1);
-    setEntry(next);
-    setFirstPress(false);
+    const next = firstPressRef.current ? "" : entryRef.current.slice(0, -1);
+    setEntryValue(next);
+    setFirstPressValue(false);
     commitValue(next);
   };
 
   const stepValue = (sign: 1 | -1) => {
-    const current = Number(entry) || 0;
+    const current = Number(entryRef.current) || 0;
     const next =
       field === "weight"
         ? formatNumber(Math.max(0, current + sign * 5))
         : String(Math.max(0, current + sign));
-    setEntry(next);
-    setFirstPress(false);
+    setEntryValue(next);
+    setFirstPressValue(false);
     commitValue(next);
   };
 
   const toggleSign = () => {
     if (set?.weightModifier !== "bodyweight") return;
-    const current = Number(entry) || 0;
+    const current = Number(entryRef.current) || 0;
     const next = String(current * -1);
-    setEntry(next);
-    setFirstPress(false);
+    setEntryValue(next);
+    setFirstPressValue(false);
     commitValue(next);
   };
 
   const addShortRestSet = () => {
+    const logicalSetGroup = getLogicalSetGroup(exercise, setIndex);
+    const insertAfterIndex =
+      logicalSetGroup[logicalSetGroup.length - 1]?.index ?? setIndex;
+    const baseSet = exercise.sets[insertAfterIndex] ?? set;
     const nextSet: WorkoutSet = {
       clientId: makeClientId(),
-      weight: set.weight,
+      weight: baseSet.weight,
       reps: null,
       completed: false,
-      weightExplicit: set.weight !== null,
+      weightExplicit: baseSet.weight !== null,
       repsExplicit: false,
       prevWeight: null,
       prevReps: null,
-      modifier: set.modifier,
-      weightModifier: set.weightModifier,
+      modifier: baseSet.modifier,
+      weightModifier: baseSet.weightModifier,
       restBefore: "short",
     };
     const nextSets = [...exercise.sets];
-    nextSets.splice(setIndex + 1, 0, nextSet);
+    nextSets.splice(insertAfterIndex + 1, 0, nextSet);
     onDispatch({
       type: "REPLACE_EXERCISE_SETS",
       exerciseIndex: target.exerciseIndex,
@@ -3483,31 +9002,61 @@ function SetEditorModal({
     });
     onRetarget({
       exerciseIndex: target.exerciseIndex,
-      setId: getSetTargetId(nextSet, setIndex + 1),
+      setId: getSetTargetId(nextSet, insertAfterIndex + 1),
+      field: "reps",
+    });
+    setField("reps");
+  };
+
+  const addSet = () => {
+    const baseSet =
+      [...exercise.sets]
+        .reverse()
+        .find((candidate) => candidate.modifier !== "warmup") ??
+      exercise.sets[exercise.sets.length - 1] ??
+      set;
+    const nextSetIndex = exercise.sets.length;
+    const nextSet: WorkoutSet = {
+      clientId: makeClientId(),
+      weight: baseSet.weight,
+      reps: baseSet.reps,
+      completed: false,
+      weightExplicit: baseSet.weight !== null,
+      repsExplicit: baseSet.reps !== null,
+      prevWeight: baseSet.weight,
+      prevReps: baseSet.reps,
+      weightModifier: baseSet.weightModifier,
+    };
+
+    onDispatch({
+      type: "REPLACE_EXERCISE_SETS",
+      exerciseIndex: target.exerciseIndex,
+      sets: [...exercise.sets, nextSet],
+    });
+    onRetarget({
+      exerciseIndex: target.exerciseIndex,
+      setId: getSetTargetId(nextSet, nextSetIndex),
       field: "reps",
     });
     setField("reps");
   };
 
   const deleteSet = () => {
-    Alert.alert(
-      "Delete set?",
-      formatSetInline(exercise, { set, index: setIndex }),
-      [
-        { text: "cancel", style: "cancel" },
+    presentDialog({
+      title: "Delete set?",
+      message: formatSetInline(exercise, { set, index: setIndex }),
+      actions: [
+        { label: "cancel", variant: "cancel" },
         {
-          text: "delete",
-          style: "destructive",
+          label: "delete",
+          variant: "danger",
           onPress: () => {
             const remainingSets = exercise.sets.filter(
               (_candidate, candidateIndex) => candidateIndex !== setIndex,
             );
             const nextSet =
               remainingSets[Math.min(setIndex, remainingSets.length - 1)];
-            const nextSetIndex = Math.min(
-              setIndex,
-              remainingSets.length - 1,
-            );
+            const nextSetIndex = Math.min(setIndex, remainingSets.length - 1);
             onDispatch({
               type: "DELETE_SET",
               exerciseIndex: target.exerciseIndex,
@@ -3525,7 +9074,7 @@ function SetEditorModal({
           },
         },
       ],
-    );
+    });
   };
 
   const openSetNote = () => {
@@ -3550,14 +9099,18 @@ function SetEditorModal({
       return;
     }
 
-    Alert.alert("Delete note?", `${setLabel(exercise, setIndex)} note`, [
-      { text: "cancel", style: "cancel" },
-      {
-        text: "delete",
-        style: "destructive",
-        onPress: () => saveSetNote(""),
-      },
-    ]);
+    presentDialog({
+      title: "Delete note?",
+      message: `${setLabel(exercise, setIndex)} note`,
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete",
+          variant: "danger",
+          onPress: () => saveSetNote(""),
+        },
+      ],
+    });
   };
 
   const values = getSetDisplayValues(exercise, set, setIndex);
@@ -3580,12 +9133,12 @@ function SetEditorModal({
         weightModifier: undefined,
       }),
     });
-    setEntry(
+    setEntryValue(
       field === "weight"
         ? formatNumber(suggestion.weight)
         : String(suggestion.reps),
     );
-    setFirstPress(true);
+    setFirstPressValue(true);
     setHelperMode(null);
   };
 
@@ -3602,8 +9155,12 @@ function SetEditorModal({
   };
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <DismissibleModalShade keyboardAvoiding onDismiss={onClose}>
+    <View pointerEvents="box-none" style={styles.keyboardPassthroughOverlay}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        pointerEvents="box-none"
+        style={styles.keyboardAvoidingModalContent}
+      >
         <View style={styles.keyboardDock}>
           <View
             style={[
@@ -3616,49 +9173,6 @@ function SetEditorModal({
               },
             ]}
           >
-            <View style={styles.keyboardHeader}>
-              <View style={styles.flexColumn}>
-                <Text style={styles.metaText}>{exercise.name}</Text>
-                {splitSets(exercise).warmups.length > 0 ? (
-                  <SetGroup
-                    exercise={exercise}
-                    sets={splitSets(exercise).warmups}
-                    selectedSetId={target.setId}
-                    selectedField={field}
-                    onOpenSet={(setId, nextField) =>
-                      onRetarget({
-                        exerciseIndex: target.exerciseIndex,
-                        setId,
-                        field: nextField,
-                      })
-                    }
-                  />
-                ) : null}
-                <SetGroup
-                  exercise={exercise}
-                  sets={splitSets(exercise).working}
-                  selectedSetId={target.setId}
-                  selectedField={field}
-                  onOpenSet={(setId, nextField) =>
-                    onRetarget({
-                      exerciseIndex: target.exerciseIndex,
-                      setId,
-                      field: nextField,
-                    })
-                  }
-                />
-              </View>
-              <Pressable
-                accessibilityLabel="Close set keyboard"
-                accessibilityRole="button"
-                style={styles.iconButtonSmall}
-                testID="set-keyboard-close"
-                onPress={onClose}
-              >
-                <Icon name="close-outline" size={24} />
-              </Pressable>
-            </View>
-
             {noteEditing ? (
               <>
                 <Text style={styles.subtleTitle}>
@@ -3667,6 +9181,7 @@ function SetEditorModal({
                 <TextInput
                   accessibilityLabel={`${setLabel(exercise, setIndex)} note`}
                   autoFocus
+                  blurOnSubmit={false}
                   multiline
                   style={styles.noteInput}
                   testID="set-note-input"
@@ -3708,81 +9223,6 @@ function SetEditorModal({
               </>
             ) : (
               <>
-                <Text style={styles.subtleTitle}>
-                  {setLabel(exercise, setIndex)}
-                </Text>
-                <View style={styles.editorValueRow}>
-                  <Pressable
-                    accessibilityLabel={`Toggle ${setLabel(exercise, setIndex)} warm-up`}
-                    accessibilityRole="button"
-                    style={[
-                      styles.keySmall,
-                      set.modifier === "warmup" ? styles.keyActive : null,
-                    ]}
-                    testID="set-keyboard-warmup-toggle"
-                    onPress={() =>
-                      onDispatch({
-                        type: "TOGGLE_WARMUP",
-                        exerciseIndex: target.exerciseIndex,
-                        setIndex,
-                      })
-                    }
-                  >
-                    <Text style={styles.keyText}>w</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} weight`}
-                    accessibilityRole="button"
-                    style={[
-                      styles.valueChip,
-                      field === "weight" ? styles.inlineSetChipActive : null,
-                    ]}
-                    testID="set-keyboard-weight"
-                    onPress={() => selectField("weight")}
-                  >
-                    <Text style={styles.bigValueText}>
-                      {formatKeyboardWeightLabel(
-                        values.weight,
-                        values.weightModifier,
-                      )}
-                    </Text>
-                  </Pressable>
-                  <Text style={styles.bigValueText}>x</Text>
-                  <Pressable
-                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} reps`}
-                    accessibilityRole="button"
-                    style={[
-                      styles.valueChip,
-                      field === "reps" ? styles.inlineSetChipActive : null,
-                    ]}
-                    testID="set-keyboard-reps"
-                    onPress={() => selectField("reps")}
-                  >
-                    <Text style={styles.bigValueText}>
-                      {values.reps == null ? "-" : formatNumber(values.reps)}
-                    </Text>
-                  </Pressable>
-                  <View style={styles.flexSpacer} />
-                  <Pressable
-                    accessibilityLabel={`Edit ${setLabel(exercise, setIndex)} note`}
-                    accessibilityRole="button"
-                    style={styles.iconButtonSmall}
-                    testID="set-keyboard-note"
-                    onPress={openSetNote}
-                  >
-                    <Icon name="pencil-outline" size={20} />
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel={`Delete ${setLabel(exercise, setIndex)}`}
-                    accessibilityRole="button"
-                    style={styles.iconButtonSmall}
-                    testID="set-keyboard-delete"
-                    onPress={deleteSet}
-                  >
-                    <Icon name="trash-outline" size={20} />
-                  </Pressable>
-                </View>
-
                 <View style={styles.keypad}>
                   <View style={styles.keypadRow}>
                     <KeypadButton onPress={() => handleKey("1")}>
@@ -3918,11 +9358,20 @@ function SetEditorModal({
                     />
                     <KeypadButton
                       primary
-                      onPress={() =>
-                        selectField(field === "weight" ? "reps" : "weight")
+                      accessibilityLabel={
+                        field === "reps" ? "Complete set" : "Next field"
+                      }
+                      onPress={
+                        field === "reps"
+                          ? completeAndAdvanceSetEditor
+                          : advanceSetEditor
                       }
                     >
-                      Next
+                      {field === "reps" ? (
+                        <Icon name="checkmark" size={22} color={palette.raised} />
+                      ) : (
+                        "Next"
+                      )}
                     </KeypadButton>
                   </View>
                 </View>
@@ -3947,8 +9396,8 @@ function SetEditorModal({
           onClose={() => setHelperMode(null)}
           onSettingsChange={updatePlateSettings}
         />
-      </DismissibleModalShade>
-    </Modal>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -3959,10 +9408,21 @@ function parseKeypadEntry(
   const trimmed = entry.trim();
   if (trimmed === "" || trimmed === "-") return null;
   if (trimmed === "." || trimmed === "-.") return "pending";
+  if (field === "weight" && /^-?\d+\.$/.test(trimmed)) return "pending";
 
   const numericValue = Number(trimmed);
   if (!Number.isFinite(numericValue)) return "pending";
   if (field === "reps") return Math.max(0, Math.trunc(numericValue));
+  return numericValue;
+}
+
+function parsePositiveDecimalInput(entry: string): number | "pending" | null {
+  const trimmed = entry.trim();
+  if (trimmed === "") return null;
+  if (trimmed === "." || /^\d+\.$/.test(trimmed)) return "pending";
+
+  const numericValue = Number(trimmed);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return "pending";
   return numericValue;
 }
 
@@ -3972,6 +9432,19 @@ function formatKeyboardWeightLabel(
 ) {
   if (weight == null) return weightModifier === "bodyweight" ? "BW" : "-lb";
   return formatWeightLabel(weight, weightModifier);
+}
+
+function formatKeyboardWeightEntryLabel(
+  entry: string,
+  weightModifier?: "bodyweight",
+) {
+  const trimmed = entry.trim();
+  if (!trimmed) return weightModifier === "bodyweight" ? "BW" : "-lb";
+  if (weightModifier !== "bodyweight") return `${trimmed}lb`;
+
+  const numericValue = Number(trimmed);
+  if (!Number.isFinite(numericValue) || numericValue === 0) return "BW";
+  return `BW${numericValue > 0 ? "+" : ""}${trimmed}lb`;
 }
 
 function materializeEditedExerciseSets(
@@ -4003,7 +9476,7 @@ function materializeEditedExerciseSets(
       weightExplicit:
         set.weightExplicit || nextWeight !== null || hasWeightUpdate,
       repsExplicit: set.repsExplicit || nextReps !== null || hasRepsUpdate,
-      completed: nextWeight !== null && nextReps !== null,
+      completed: set.completed,
     };
   });
 }
@@ -4104,7 +9577,7 @@ function IncreaseWeightHelperModal({
   };
 
   return (
-    <Modal
+    <AppModal
       visible={visible}
       transparent
       animationType="fade"
@@ -4243,7 +9716,7 @@ function IncreaseWeightHelperModal({
           </Pressable>
         </View>
       </DismissibleModalShade>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -4300,7 +9773,7 @@ function PlateCalculatorHelperModal({
   };
 
   return (
-    <Modal
+    <AppModal
       visible={visible}
       transparent
       animationType="fade"
@@ -4415,7 +9888,7 @@ function PlateCalculatorHelperModal({
           </Pressable>
         </View>
       </DismissibleModalShade>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -4650,124 +10123,6 @@ function getPlateColor(weight: PlateWeight) {
   return { background: "#e8dfce", border: "#a99f8e", text: "#383225" };
 }
 
-function NoteEditorModal({
-  workout,
-  target,
-  onClose,
-  onSave,
-}: {
-  workout: Workout;
-  target: NoteEditTarget | null;
-  onClose: () => void;
-  onSave: (target: NoteEditTarget, text: string) => void;
-}) {
-  const insets = useSafeAreaInsets();
-  const nativeKeyboard = useNativeKeyboardFrame();
-  const [value, setValue] = useState("");
-
-  useEffect(() => {
-    if (!target) return;
-    setValue(getNoteValue(workout, target));
-  }, [target, workout]);
-
-  if (!target) return null;
-
-  const title = getNoteTitle(workout, target);
-  const hasExisting = getNoteValue(workout, target).trim().length > 0;
-
-  return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <DismissibleModalShade keyboardAvoiding onDismiss={onClose}>
-        <View style={styles.sheetDock}>
-          <View
-            style={[
-              styles.noteSheet,
-              {
-                paddingBottom: nativeKeyboard.visible
-                  ? 8
-                  : Math.max(12, insets.bottom + 8),
-              },
-            ]}
-          >
-            <View style={styles.keyboardHeader}>
-              <Text style={styles.metaText}>{title}</Text>
-              <Pressable
-                accessibilityLabel="Close note editor"
-                accessibilityRole="button"
-                style={styles.iconButtonSmall}
-                testID="note-editor-close"
-                onPress={onClose}
-              >
-                <Icon name="close-outline" size={24} />
-              </Pressable>
-            </View>
-            <TextInput
-              accessibilityLabel={title}
-              value={value}
-              onChangeText={setValue}
-              multiline
-              autoFocus
-              style={styles.noteInput}
-            />
-            <View style={styles.noteActions}>
-              <Pressable
-                accessibilityLabel="Delete note"
-                accessibilityRole="button"
-                style={styles.iconButton}
-                testID="note-editor-delete"
-                onPress={() => {
-                  if (hasExisting) {
-                    Alert.alert("Delete note?", title, [
-                      { text: "cancel", style: "cancel" },
-                      {
-                        text: "delete",
-                        style: "destructive",
-                        onPress: () => {
-                          onSave(target, "");
-                          onClose();
-                        },
-                      },
-                    ]);
-                  } else {
-                    onSave(target, "");
-                    onClose();
-                  }
-                }}
-              >
-                <Icon name="trash-outline" size={24} />
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Save note"
-                accessibilityRole="button"
-                style={[styles.textButton, styles.sheetActionFill]}
-                testID="note-editor-save"
-                onPress={() => {
-                  onSave(target, value);
-                  onClose();
-                }}
-              >
-                <Text style={styles.textButtonText}>done</Text>
-              </Pressable>
-            </View>
-            {nativeKeyboard.visible ? (
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.nativeKeyboardBackgroundFill,
-                  {
-                    bottom: -nativeKeyboard.height,
-                    height: nativeKeyboard.height,
-                  },
-                ]}
-              />
-            ) : null}
-          </View>
-        </View>
-      </DismissibleModalShade>
-    </Modal>
-  );
-}
-
 function WorkoutStartTimeEditor({
   target,
   startTime,
@@ -4792,7 +10147,7 @@ function WorkoutStartTimeEditor({
       ? startDate
       : target === "end-time" || target === "finish-end-time"
         ? mergeDatePart(fallbackEndDate, startDate)
-      : fallbackEndDate;
+        : fallbackEndDate;
   const [value, setValue] = useState(() => baseDate);
 
   useEffect(() => {
@@ -4816,7 +10171,7 @@ function WorkoutStartTimeEditor({
   };
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+    <AppModal visible transparent animationType="none" onRequestClose={onClose}>
       <DismissibleModalShade onDismiss={onClose}>
         <View style={styles.sheetDock}>
           <View
@@ -4868,7 +10223,7 @@ function WorkoutStartTimeEditor({
           </View>
         </View>
       </DismissibleModalShade>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -4915,7 +10270,7 @@ function WorkoutDurationEditor({
   };
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+    <AppModal visible transparent animationType="none" onRequestClose={onClose}>
       <DismissibleModalShade onDismiss={onClose}>
         <View style={styles.sheetDock}>
           <View
@@ -4986,7 +10341,7 @@ function WorkoutDurationEditor({
           </View>
         </View>
       </DismissibleModalShade>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -4994,6 +10349,7 @@ function FinishPreviewModal({
   workout,
   saving,
   open,
+  saveLabel,
   onEditEndDate,
   onEditEndTime,
   onEditDuration,
@@ -5003,23 +10359,39 @@ function FinishPreviewModal({
   workout: CompletedWorkout | null;
   saving: boolean;
   open: boolean;
+  saveLabel: string;
   onEditEndDate: () => void;
   onEditEndTime: () => void;
   onEditDuration: () => void;
   onBack: () => void;
   onSave: () => void;
 }) {
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const previewMaxHeight = Math.max(
+    320,
+    height - insets.top - insets.bottom - 16,
+  );
+
   if (!workout) return null;
 
   return (
-    <Modal
+    <AppModal
       visible={open}
       transparent
       animationType="fade"
       onRequestClose={onBack}
     >
       <DismissibleModalShade onDismiss={onBack}>
-        <View style={styles.previewBox}>
+        <View
+          style={[
+            styles.previewBox,
+            {
+              maxHeight: previewMaxHeight,
+              marginBottom: Math.max(8, insets.bottom + 8),
+            },
+          ]}
+        >
           <Text style={styles.exerciseTitle}>{workout.name}</Text>
           <Text style={styles.metaText}>
             {workout.exercises.length} exercises .{" "}
@@ -5052,10 +10424,7 @@ function FinishPreviewModal({
                 {formatTime(workout.completedAt)}
               </Text>
             </Pressable>
-            <Text style={styles.metaText}>
-              {" "}
-              (
-            </Text>
+            <Text style={styles.metaText}> (</Text>
             <Pressable
               accessibilityLabel="Edit finish duration"
               accessibilityRole="button"
@@ -5067,11 +10436,13 @@ function FinishPreviewModal({
                 {formatDuration(workout.startedAt, workout.completedAt)}
               </Text>
             </Pressable>
-            <Text style={styles.metaText}>
-              )
-            </Text>
+            <Text style={styles.metaText}>)</Text>
           </View>
-          <ScrollView style={styles.previewScroll}>
+          <ScrollView
+            contentContainerStyle={styles.previewScrollContent}
+            keyboardShouldPersistTaps="handled"
+            style={styles.previewScroll}
+          >
             {workout.exercises.map((exercise) => (
               <View
                 key={`${exercise.name}-${exercise.order}`}
@@ -5105,7 +10476,7 @@ function FinishPreviewModal({
               <Icon name="arrow-back-outline" size={24} />
             </Pressable>
             <Pressable
-              accessibilityLabel="Save workout"
+              accessibilityLabel={saveLabel}
               accessibilityRole="button"
               style={[styles.textButton, styles.primaryWideButton]}
               testID="finish-preview-save"
@@ -5113,13 +10484,13 @@ function FinishPreviewModal({
               disabled={saving}
             >
               <Text style={styles.primaryWideButtonText}>
-                {saving ? "saving" : "save workout"}
+                {saving ? "saving" : saveLabel}
               </Text>
             </Pressable>
           </View>
         </View>
       </DismissibleModalShade>
-    </Modal>
+    </AppModal>
   );
 }
 
@@ -5152,12 +10523,40 @@ function findSetIndex(exercise: WorkoutExercise | undefined, setId: string) {
   return null;
 }
 
+function findWatchCommandSetTarget(
+  exercises: WorkoutExercise[],
+  currentExerciseIndex: number,
+  setId: string,
+) {
+  const currentSetIndex = findSetIndex(
+    exercises[currentExerciseIndex],
+    setId,
+  );
+  if (currentSetIndex != null) {
+    return { exerciseIndex: currentExerciseIndex, setIndex: currentSetIndex };
+  }
+
+  if (parseSetTargetId(setId) != null) return null;
+
+  for (let exerciseIndex = 0; exerciseIndex < exercises.length; exerciseIndex += 1) {
+    if (exerciseIndex === currentExerciseIndex) continue;
+    const setIndex = findSetIndex(exercises[exerciseIndex], setId);
+    if (setIndex != null) return { exerciseIndex, setIndex };
+  }
+
+  return null;
+}
+
 function getSetTargetId(set: WorkoutSet, setIndex: number) {
   return set.clientId ?? makeSetTargetId(setIndex);
 }
 
 function getInlineTextInputWidth(text: string) {
   return Math.max(34, text.length * 12 + 2);
+}
+
+function getWorkoutTitleInputWidth(text: string) {
+  return Math.max(48, text.length * 19 + 8);
 }
 
 function makeSetTargetId(setIndex: number) {
@@ -5180,6 +10579,45 @@ function formatWorkoutStartDate(date: Date) {
     .toLowerCase();
 }
 
+function formatTitleDate(date: Date) {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatElapsedClock(startedAt: Date, endedAt: Date) {
+  const seconds = Math.max(
+    0,
+    Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
+  );
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}`;
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function formatAdjustDateTime(date: Date, now: Date) {
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  if (sameDay) return `Today, ${time}`;
+  const day = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${day}, ${time}`;
+}
+
 function defaultCompletedAtForStartTime(startTime: number) {
   const startDate = new Date(startTime);
   const now = new Date();
@@ -5194,10 +10632,7 @@ function completedAtForDuration(startTime: number, durationMinutes: number) {
 }
 
 function durationMinutesBetween(startTime: number, completedAt: Date) {
-  return Math.max(
-    1,
-    Math.round((completedAt.getTime() - startTime) / 60_000),
-  );
+  return Math.max(1, Math.round((completedAt.getTime() - startTime) / 60_000));
 }
 
 function isDurationEditTarget(
@@ -5232,16 +10667,19 @@ function getNoteValue(workout: Workout, target: NoteEditTarget) {
   return setIndex == null ? "" : (exercise.sets[setIndex]?.notes ?? "");
 }
 
-function getNoteTitle(workout: Workout, target: NoteEditTarget) {
-  if (target.kind === "workout") return "workout note";
-  const exercise = workout.exercises[target.exerciseIndex];
-  if (!exercise) return "note";
-  if (target.kind === "exercise")
-    return `${exercise.name}\npinned exercise note`;
-  if (target.kind === "workout-exercise")
-    return `${exercise.name}\nthis workout note`;
-  const setIndex = findSetIndex(exercise, target.setId);
-  return `${exercise.name}\n${setIndex == null ? "set" : setLabel(exercise, setIndex)} note`;
+function getInlineNoteTargetKey(target: InlineNoteEditTarget | null) {
+  if (!target) return "";
+  if (target.kind === "set") {
+    return `${target.kind}:${target.exerciseIndex}:${target.setId}`;
+  }
+  return `${target.kind}:${target.exerciseIndex}`;
+}
+
+function isSameNoteTarget(
+  left: InlineNoteEditTarget | null,
+  right: InlineNoteEditTarget,
+) {
+  return getInlineNoteTargetKey(left) === getInlineNoteTargetKey(right);
 }
 
 function setLabel(exercise: WorkoutExercise, setIndex: number) {
@@ -5265,4 +10703,20 @@ function setLabel(exercise: WorkoutExercise, setIndex: number) {
     return `set ${Math.max(1, workingBefore.length)}`;
   }
   return `set ${sameKind.length}`;
+}
+
+function setCardKindLabel(exercise: WorkoutExercise, setIndex: number) {
+  const set = exercise.sets[setIndex];
+  if (!set) return "";
+  const sameKind = exercise.sets
+    .slice(0, setIndex + 1)
+    .filter((candidate) =>
+      set.modifier === "warmup"
+        ? candidate.modifier === "warmup" && candidate.restBefore !== "short"
+        : candidate.modifier !== "warmup" && candidate.restBefore !== "short",
+    );
+
+  return set.modifier === "warmup"
+    ? `W${sameKind.length}`
+    : String(sameKind.length);
 }

@@ -11,17 +11,21 @@ import {
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
   ListExercisesResultSchema,
+  ExerciseUpdateResultSchema,
   GetWorkoutDetailsInputSchema,
   GetWorkoutDetailsResultSchema,
   PrepareInitialWorkoutInputSchema,
   PrepareInitialWorkoutResultSchema,
   SaveWorkoutInputSchema,
   SaveWorkoutResultSchema,
+  UpdateExerciseNoteInputSchema,
+  UpdateExercisePlateDefaultsInputSchema,
   UpdateWorkoutInputSchema,
   type ListRecentWorkoutsInput,
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
   type ExerciseListItem,
+  type ExerciseUpdateResult,
   type GetWorkoutDetailsInput,
   type GetWorkoutDetailsResult,
   type PrepareInitialWorkoutInput,
@@ -29,6 +33,8 @@ import {
   type RecentWorkoutSummary,
   type SaveWorkoutInput,
   type SaveWorkoutResult,
+  type UpdateExerciseNoteInput,
+  type UpdateExercisePlateDefaultsInput,
   type UpdateWorkoutInput,
 } from "./contracts";
 
@@ -92,6 +98,25 @@ export const createWorkoutApiClient = ({
     async listExercises(): Promise<ExerciseListItem[]> {
       const result = await client.query("exercise.list");
       return ListExercisesResultSchema.parse(result);
+    },
+
+    async updateExerciseNote(
+      input: UpdateExerciseNoteInput,
+    ): Promise<ExerciseUpdateResult> {
+      const parsedInput = UpdateExerciseNoteInputSchema.parse(input);
+      const result = await client.mutation("exercise.updateNote", parsedInput);
+      return ExerciseUpdateResultSchema.parse(result);
+    },
+
+    async updateExercisePlateDefaults(
+      input: UpdateExercisePlateDefaultsInput,
+    ): Promise<ExerciseUpdateResult> {
+      const parsedInput = UpdateExercisePlateDefaultsInputSchema.parse(input);
+      const result = await client.mutation(
+        "exercise.updatePlateDefaults",
+        parsedInput,
+      );
+      return ExerciseUpdateResultSchema.parse(result);
     },
 
     async saveWorkout(input: SaveWorkoutInput): Promise<SaveWorkoutResult> {
