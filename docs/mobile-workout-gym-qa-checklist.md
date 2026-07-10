@@ -10,8 +10,6 @@ Running list of changes requested after the last iPhone Release deploy during th
 - Canceling a running rest timer should also cancel its pending push notification.
 - Tapping the visible completed checkmark should toggle that set back to incomplete.
 - Incomplete sets should show no empty check button or outline.
-- When a Health workout is running, show a small heart-rate readout in the workout header.
-- Heart-rate readout should show `--` until a live HealthKit heart-rate sample arrives, then show BPM.
 - Keyboard `Next` should move from weight to reps on the same set.
 - Keyboard `Next` should move from reps to the next set weight.
 - Keyboard `Next` should update the selected/highlighted field in the main workout UI.

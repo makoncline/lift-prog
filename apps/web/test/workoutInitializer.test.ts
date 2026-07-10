@@ -230,11 +230,19 @@ describe("buildInitialExercisesForNames", () => {
   it("includes set notes, rest, rir, and exercise notes from history", async () => {
     const { prisma, mocks } = createPrismaMock();
     mocks.userExercise.findMany.mockResolvedValue([
-      { id: 2, name: "Pull Up", notes: "Hold dumbbell in thighs" },
+      {
+        id: 2,
+        name: "Pull Up",
+        notes: "Hold dumbbell in thighs",
+        restWarmupSeconds: 45,
+        restWorkingSeconds: 150,
+      },
     ]);
     mocks.workoutExercise.findMany.mockResolvedValue([
       {
         userExerciseId: 2,
+        restWarmupSeconds: 30,
+        restWorkingSeconds: 120,
         sets: [
           {
             weight: 0,
@@ -242,6 +250,7 @@ describe("buildInitialExercisesForNames", () => {
             modifier: "warmup",
             weightModifier: "bodyweight",
             restBefore: null,
+            restSeconds: 30,
             notes: "Foot assist",
             rir: 2,
             completed: true,
@@ -252,6 +261,7 @@ describe("buildInitialExercisesForNames", () => {
             modifier: null,
             weightModifier: null,
             restBefore: "short",
+            restSeconds: null,
             notes: "solid first set",
             rir: 1,
             completed: true,
@@ -278,12 +288,14 @@ describe("buildInitialExercisesForNames", () => {
         name: "Pull Up",
         exerciseNotes: "Hold dumbbell in thighs",
         exerciseNotesSnapshot: "Old machine setup",
+        restTimes: { warmupSeconds: 45, workingSeconds: 150 },
         sets: [
           {
             weight: 0,
             reps: 15,
             modifier: "warmup",
             weightModifier: "bodyweight",
+            restSeconds: 30,
             notes: "Foot assist",
             rir: 2,
           },
@@ -312,6 +324,7 @@ describe("buildInitialExercisesForNames", () => {
                 reps: 15,
                 modifier: "warmup",
                 weightModifier: "bodyweight",
+                restSeconds: 30,
                 notes: "Foot assist",
                 rir: 2,
               },

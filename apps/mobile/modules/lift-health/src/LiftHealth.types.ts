@@ -9,9 +9,15 @@ export type LatestBodyWeight = {
   date: string;
 } | null;
 
-export type HeartRateSample = {
-  bpm: number;
-  date: string;
+export type WatchWorkoutItemSnapshot = {
+  exerciseName: string;
+  setId?: string | null;
+  setLabel: string;
+  setText: string;
+  setWeight?: number | null;
+  setReps?: number | null;
+  setWeightModifier?: "bodyweight" | null;
+  setCompleted?: boolean;
 };
 
 export type WatchWorkoutSnapshot = {
@@ -28,6 +34,11 @@ export type WatchWorkoutSnapshot = {
   restTimerRunning?: boolean;
   restTimerRemainingSeconds?: number | null;
   restTimerDurationSeconds?: number;
+  restTimerEndsAt?: string | null;
+  previousSet?: WatchWorkoutItemSnapshot | null;
+  nextSet?: WatchWorkoutItemSnapshot | null;
+  previousExercise?: WatchWorkoutItemSnapshot | null;
+  nextExercise?: WatchWorkoutItemSnapshot | null;
   isActive: boolean;
   updatedAt: string;
 };
@@ -73,15 +84,8 @@ export type WatchWorkoutSnapshotResult = {
 };
 
 export type LiftHealthEvents = {
-  onHeartRateSample: (sample: HeartRateSample) => void;
   onUnfinishedWorkoutReminder: () => void;
   onWatchWorkoutCommand: (command: WatchWorkoutCommand) => void;
-};
-
-export type StartStrengthWorkoutResult = {
-  started: boolean;
-  live: boolean;
-  message?: string | null;
 };
 
 export type FinishStrengthWorkoutResult = {
@@ -89,10 +93,6 @@ export type FinishStrengthWorkoutResult = {
   live: boolean;
   workoutId?: string;
   message?: string | null;
-};
-
-export type CancelStrengthWorkoutResult = {
-  cancelled: boolean;
 };
 
 export type TimerNotificationResult = {

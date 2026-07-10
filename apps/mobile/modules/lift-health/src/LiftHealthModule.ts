@@ -1,7 +1,6 @@
 import { NativeModule, requireNativeModule } from "expo";
 
 import type {
-  CancelStrengthWorkoutResult,
   CancelTimerNotificationResult,
   CancelUnfinishedWorkoutNotificationResult,
   EndRestTimerLiveActivityResult,
@@ -10,7 +9,6 @@ import type {
   LiftHealthEvents,
   LatestBodyWeight,
   RestTimerLiveActivityResult,
-  StartStrengthWorkoutResult,
   TimerNotificationResult,
   UnfinishedWorkoutNotificationResult,
   WatchWorkoutSnapshot,
@@ -22,14 +20,10 @@ declare class LiftHealthModule extends NativeModule<LiftHealthEvents> {
   getHealthAuthorizationStatus(): Promise<HealthAuthorizationResult>;
   requestHealthAuthorization(): Promise<HealthAuthorizationResult>;
   getLatestBodyWeight(): Promise<LatestBodyWeight>;
-  startStrengthWorkout(
-    startedAtMs?: number | null,
-  ): Promise<StartStrengthWorkoutResult>;
   finishStrengthWorkout(
     startedAtMs: number,
     endedAtMs: number,
   ): Promise<FinishStrengthWorkoutResult>;
-  cancelStrengthWorkout(): Promise<CancelStrengthWorkoutResult>;
   scheduleWorkoutTimerNotification(
     seconds: number,
   ): Promise<TimerNotificationResult>;

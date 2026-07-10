@@ -77,6 +77,10 @@ export const auth = betterAuth({
   verification: {
     modelName: "authVerification",
   },
+  rateLimit: {
+    enabled: true,
+    storage: "database",
+  },
   databaseHooks: {
     user: {
       create: {

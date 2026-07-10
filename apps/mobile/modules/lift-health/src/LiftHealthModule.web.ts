@@ -19,24 +19,12 @@ class LiftHealthModule extends NativeModule<LiftHealthEvents> {
     return null;
   }
 
-  async startStrengthWorkout() {
-    return {
-      started: false,
-      live: false,
-      message: "HealthKit is only available on iOS.",
-    };
-  }
-
   async finishStrengthWorkout() {
     return {
       saved: false,
       live: false,
       message: "HealthKit is only available on iOS.",
     };
-  }
-
-  async cancelStrengthWorkout() {
-    return { cancelled: true };
   }
 
   async scheduleWorkoutTimerNotification() {

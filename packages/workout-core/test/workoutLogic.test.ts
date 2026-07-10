@@ -320,6 +320,67 @@ describe("current exercise reducer state", () => {
 });
 
 describe("set completion reducer state", () => {
+  it("can update set values without auto-completing the set", () => {
+    const state: Workout = {
+      currentExerciseIndex: 0,
+      exercises: initialiseExercises([
+        {
+          name: "Rows",
+          sets: [{ weight: 75, reps: 10 }],
+        },
+      ]),
+      activeField: { exerciseIndex: null, setIndex: null, field: null },
+      inputValue: "",
+      isFirstInteraction: false,
+      notes: [],
+      startTime: 0,
+      name: "Workout",
+      isInProgress: true,
+    };
+
+    const incompleteState: Workout = {
+      ...state,
+      exercises: [
+        {
+          ...state.exercises[0]!,
+          sets: [
+            {
+              ...state.exercises[0]!.sets[0]!,
+              completed: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    const updatedReps = workoutReducer(incompleteState, {
+      type: "UPDATE_SET_REPS",
+      exerciseIndex: 0,
+      setIndex: 0,
+      reps: 12,
+      preserveCompleted: true,
+    });
+
+    expect(updatedReps.exercises[0]!.sets[0]).toMatchObject({
+      reps: 12,
+      completed: false,
+    });
+
+    const updatedWeight = workoutReducer(updatedReps, {
+      type: "UPDATE_SET_WEIGHT",
+      exerciseIndex: 0,
+      setIndex: 0,
+      weight: 80,
+      preserveCompleted: true,
+    });
+
+    expect(updatedWeight.exercises[0]!.sets[0]).toMatchObject({
+      weight: 80,
+      reps: 12,
+      completed: false,
+    });
+  });
+
   it("toggles completion without filling missing values from estimates", () => {
     const state: Workout = {
       currentExerciseIndex: 0,

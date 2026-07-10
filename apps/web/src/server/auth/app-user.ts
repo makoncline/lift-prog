@@ -19,38 +19,6 @@ export async function assertAuthEmailCanSignIn(email: string) {
   if (!authEmail) {
     throw new Error("Email is required.");
   }
-
-  const existingAuthUser = await db.authUser.findUnique({
-    where: { email: authEmail },
-    select: { id: true },
-  });
-
-  if (existingAuthUser) {
-    return;
-  }
-
-  const matchingAppUser = await db.user.findFirst({
-    where: {
-      OR: [{ email: authEmail }, { authUserId: authEmail }],
-    },
-    select: { id: true },
-  });
-
-  if (matchingAppUser) {
-    return;
-  }
-
-  const ownerEmail = normalizeEmail(env.AUTH_OWNER_EMAIL);
-  if (ownerEmail && ownerEmail === authEmail) {
-    return;
-  }
-
-  const existingUserCount = await db.user.count();
-  if (existingUserCount === 0) {
-    return;
-  }
-
-  throw new Error("This email is not linked to an app user.");
 }
 
 const updateAppUserAuthIdentity = async ({
@@ -129,14 +97,6 @@ export async function resolveAppUserIdForAuthUser(authUser: BetterAuthUser) {
       await updateAppUserAuthIdentity({ appUserId: owner.id, authUser });
       return owner.id;
     }
-  }
-
-  const existingUserCount = await db.user.count();
-
-  if (existingUserCount > 0) {
-    throw new Error(
-      "Authenticated user is not linked to an app user. Set AUTH_OWNER_EMAIL to the legacy account email before signing in, or backfill User.authUserId.",
-    );
   }
 
   const created = await db.user.create({

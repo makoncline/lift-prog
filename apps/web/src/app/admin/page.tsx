@@ -253,7 +253,7 @@ function UserManager() {
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (newUserAuthId.trim()) {
-      addUserMutation.mutate({ clerkUserId: newUserAuthId.trim() });
+      addUserMutation.mutate({ authUserId: newUserAuthId.trim() });
     }
   };
 

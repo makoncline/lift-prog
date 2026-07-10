@@ -51,18 +51,21 @@ const config: ExpoConfig = {
   version: "1.0.0",
   orientation: "portrait",
   userInterfaceStyle: "light",
+  icon: "./ios/LiftProg/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png",
   assetBundlePatterns: ["**/*"],
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.makon.liftprog",
+    buildNumber: "2",
     entitlements: {
       "com.apple.developer.healthkit": true,
     },
     infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
       NSHealthShareUsageDescription:
         "Lift Prog reads your latest body weight so bodyweight workouts can start with the right value.",
       NSHealthUpdateUsageDescription:
-        "Lift Prog saves strength training workouts to Apple Health when you choose to start a Health workout.",
+        "Lift Prog saves completed strength training workouts to Apple Health.",
     },
   },
   plugins: ["expo-secure-store", "@react-native-community/datetimepicker"],

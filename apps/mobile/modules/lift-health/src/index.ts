@@ -1,13 +1,11 @@
 import LiftHealthModule from "./LiftHealthModule";
 
 import type {
-  HeartRateSample,
   WatchWorkoutCommand,
   WatchWorkoutSnapshot,
 } from "./LiftHealth.types";
 
 export type {
-  CancelStrengthWorkoutResult,
   CancelTimerNotificationResult,
   CancelUnfinishedWorkoutNotificationResult,
   EndRestTimerLiveActivityResult,
@@ -15,10 +13,10 @@ export type {
   HealthAuthorizationResult,
   LatestBodyWeight,
   RestTimerLiveActivityResult,
-  StartStrengthWorkoutResult,
   TimerNotificationResult,
   UnfinishedWorkoutNotificationResult,
   WatchWorkoutCommand,
+  WatchWorkoutItemSnapshot,
   WatchWorkoutSnapshot,
   WatchWorkoutSnapshotResult,
 } from "./LiftHealth.types";
@@ -39,12 +37,6 @@ export function getLatestBodyWeight() {
   return LiftHealthModule.getLatestBodyWeight();
 }
 
-export function addHeartRateSampleListener(
-  listener: (sample: HeartRateSample) => void,
-) {
-  return LiftHealthModule.addListener("onHeartRateSample", listener);
-}
-
 export function addUnfinishedWorkoutReminderListener(listener: () => void) {
   return LiftHealthModule.addListener("onUnfinishedWorkoutReminder", listener);
 }
@@ -55,16 +47,8 @@ export function addWatchWorkoutCommandListener(
   return LiftHealthModule.addListener("onWatchWorkoutCommand", listener);
 }
 
-export function startStrengthWorkout(startedAtMs?: number | null) {
-  return LiftHealthModule.startStrengthWorkout(startedAtMs);
-}
-
 export function finishStrengthWorkout(startedAtMs: number, endedAtMs: number) {
   return LiftHealthModule.finishStrengthWorkout(startedAtMs, endedAtMs);
-}
-
-export function cancelStrengthWorkout() {
-  return LiftHealthModule.cancelStrengthWorkout();
 }
 
 export function scheduleWorkoutTimerNotification(seconds: number) {

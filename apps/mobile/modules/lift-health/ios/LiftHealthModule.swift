@@ -4,11 +4,12 @@ import HealthKit
 import UserNotifications
 import WatchConnectivity
 
-private let onHeartRateSample = "onHeartRateSample"
 private let onUnfinishedWorkoutReminder = "onUnfinishedWorkoutReminder"
 private let onWatchWorkoutCommand = "onWatchWorkoutCommand"
 private let restTimerNotificationPrefix = "lift-prog-rest-"
+private let restTimerNotificationIdentifier = "lift-prog-rest-current"
 private let unfinishedWorkoutNotificationPrefix = "lift-prog-unfinished-"
+private let unfinishedWorkoutNotificationIdentifier = "lift-prog-unfinished-current"
 
 @available(iOS 16.2, *)
 private struct LiftRestTimerAttributes: ActivityAttributes {
@@ -56,6 +57,7 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
 
   private var session: WCSession?
   private var latestContext: [String: Any]?
+  private var lastQueuedSnapshotSignature: String?
   var onCommand: (([String: Any]) -> Void)?
 
   private override init() {
@@ -105,7 +107,11 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
     do {
       try session.updateApplicationContext(context)
       if session.isReachable {
-        session.sendMessage(context, replyHandler: nil, errorHandler: nil)
+        session.sendMessage(context, replyHandler: nil) { [weak self] _ in
+          self?.queueSnapshotContextIfNeeded(context, session: session)
+        }
+      } else {
+        queueSnapshotContextIfNeeded(context, session: session)
       }
 
       return [
@@ -120,6 +126,41 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
         "message": error.localizedDescription
       ]
     }
+  }
+
+  private func queueSnapshotContextIfNeeded(_ context: [String: Any], session: WCSession) {
+    let signature = snapshotQueueSignature(context)
+    guard signature != lastQueuedSnapshotSignature else {
+      return
+    }
+
+    lastQueuedSnapshotSignature = signature
+    session.transferUserInfo(context)
+  }
+
+  private func snapshotQueueSignature(_ context: [String: Any]) -> String {
+    let keys = [
+      "isActive",
+      "workoutName",
+      "exerciseName",
+      "setId",
+      "setLabel",
+      "setText",
+      "setWeight",
+      "setReps",
+      "setWeightModifier",
+      "setCompleted",
+      "restTimerRunning",
+      "restTimerDurationSeconds",
+      "previousSet",
+      "nextSet",
+      "previousExercise",
+      "nextExercise"
+    ]
+
+    return keys
+      .map { key in "\(key)=\(context[key] ?? NSNull())" }
+      .joined(separator: "|")
   }
 
   private func activeSession() -> WCSession? {
@@ -172,8 +213,42 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
     if let durationSeconds = numericPayloadValue(snapshot["restTimerDurationSeconds"]) {
       context["restTimerDurationSeconds"] = durationSeconds
     }
+    if let restTimerEndsAt = snapshot["restTimerEndsAt"] as? String, !restTimerEndsAt.isEmpty {
+      context["restTimerEndsAt"] = restTimerEndsAt
+    }
+    for key in ["previousSet", "nextSet", "previousExercise", "nextExercise"] {
+      if let item = sanitizedWatchWorkoutItem(from: snapshot[key]) {
+        context[key] = item
+      }
+    }
 
     return context
+  }
+
+  private func sanitizedWatchWorkoutItem(from value: Any?) -> [String: Any]? {
+    guard let snapshot = value as? [String: Any] else { return nil }
+
+    var item: [String: Any] = [
+      "exerciseName": snapshot["exerciseName"] as? String ?? "",
+      "setLabel": snapshot["setLabel"] as? String ?? "",
+      "setText": snapshot["setText"] as? String ?? "",
+      "setCompleted": boolPayloadValue(snapshot["setCompleted"])
+    ]
+
+    if let setId = snapshot["setId"] as? String, !setId.isEmpty {
+      item["setId"] = setId
+    }
+    if let modifier = snapshot["setWeightModifier"] as? String, !modifier.isEmpty {
+      item["setWeightModifier"] = modifier
+    }
+    if let weight = numericPayloadValue(snapshot["setWeight"]) {
+      item["setWeight"] = weight
+    }
+    if let reps = numericPayloadValue(snapshot["setReps"]) {
+      item["setReps"] = reps
+    }
+
+    return item
   }
 
   private func boolPayloadValue(_ value: Any?) -> Bool {
@@ -255,6 +330,13 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
       return
     }
 
+    if command["type"] as? String == "requestSnapshot",
+      let latestContext,
+      let session = activeSession(),
+      session.activationState == .activated {
+      send(context: latestContext, session: session)
+    }
+
     DispatchQueue.main.async { [weak self] in
       self?.onCommand?(command)
     }
@@ -286,52 +368,16 @@ private final class LiftWatchConnectivityBridge: NSObject, WCSessionDelegate {
   }
 }
 
-@available(iOS 26.0, *)
-private final class LiftHealthWorkoutDelegate: NSObject, HKLiveWorkoutBuilderDelegate, HKWorkoutSessionDelegate {
-  var onHeartRateSample: ((Double) -> Void)?
-
-  func workoutBuilder(
-    _ workoutBuilder: HKLiveWorkoutBuilder,
-    didCollectDataOf collectedTypes: Set<HKSampleType>
-  ) {
-    guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate),
-      collectedTypes.contains(heartRateType) else {
-      return
-    }
-
-    guard let statistics = workoutBuilder.statistics(for: heartRateType),
-      let quantity = statistics.mostRecentQuantity() else {
-      return
-    }
-
-    let bpm = quantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
-    onHeartRateSample?(bpm)
-  }
-
-  func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
-
-  func workoutSession(
-    _ workoutSession: HKWorkoutSession,
-    didChangeTo toState: HKWorkoutSessionState,
-    from fromState: HKWorkoutSessionState,
-    date: Date
-  ) {}
-
-  func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {}
-}
-
 public class LiftHealthModule: Module {
   private let healthStore = HKHealthStore()
   private static let notificationDelegate = LiftHealthNotificationDelegate()
-  private var activeSession: AnyObject?
-  private var activeBuilder: AnyObject?
-  private var activeDelegate: AnyObject?
-  private var activeStartDate: Date?
+  private var restTimerScheduleGeneration = 0
+  private var unfinishedWorkoutScheduleGeneration = 0
 
   public func definition() -> ModuleDefinition {
     Name("LiftHealth")
 
-    Events(onHeartRateSample, onUnfinishedWorkoutReminder, onWatchWorkoutCommand)
+    Events(onUnfinishedWorkoutReminder, onWatchWorkoutCommand)
 
     OnCreate {
       Self.notificationDelegate.onUnfinishedWorkoutReminder = { [weak self] in
@@ -358,21 +404,13 @@ public class LiftHealthModule: Module {
       self.getLatestBodyWeight(promise: promise)
     }
 
-    AsyncFunction("startStrengthWorkout") { (startedAtMs: Double?, promise: Promise) in
-      self.startStrengthWorkout(startedAtMs: startedAtMs, promise: promise)
-    }.runOnQueue(.main)
-
     AsyncFunction("finishStrengthWorkout") { (startedAtMs: Double, endedAtMs: Double, promise: Promise) in
       self.finishStrengthWorkout(startedAtMs: startedAtMs, endedAtMs: endedAtMs, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("cancelStrengthWorkout") { (promise: Promise) in
-      self.cancelStrengthWorkout(promise: promise)
-    }.runOnQueue(.main)
-
     AsyncFunction("scheduleWorkoutTimerNotification") { (seconds: Double, promise: Promise) in
       self.scheduleWorkoutTimerNotification(seconds: seconds, promise: promise)
-    }
+    }.runOnQueue(.main)
 
     AsyncFunction("startOrUpdateRestTimerLiveActivity") { (durationSeconds: Double, endsAtMs: Double, title: String?, promise: Promise) in
       self.startOrUpdateRestTimerLiveActivity(durationSeconds: durationSeconds, endsAtMs: endsAtMs, title: title, promise: promise)
@@ -384,15 +422,15 @@ public class LiftHealthModule: Module {
 
     AsyncFunction("cancelWorkoutTimerNotification") { (identifier: String?, promise: Promise) in
       self.cancelWorkoutTimerNotification(identifier: identifier, promise: promise)
-    }
+    }.runOnQueue(.main)
 
     AsyncFunction("scheduleUnfinishedWorkoutNotification") { (workoutName: String, seconds: Double, promise: Promise) in
       self.scheduleUnfinishedWorkoutNotification(workoutName: workoutName, seconds: seconds, promise: promise)
-    }
+    }.runOnQueue(.main)
 
     AsyncFunction("cancelUnfinishedWorkoutNotification") { (promise: Promise) in
       self.cancelUnfinishedWorkoutNotification(promise: promise)
-    }
+    }.runOnQueue(.main)
 
     AsyncFunction("updateWatchWorkoutSnapshot") { (snapshot: [String: Any], promise: Promise) in
       promise.resolve(LiftWatchConnectivityBridge.shared.update(snapshot: snapshot))
@@ -405,14 +443,6 @@ public class LiftHealthModule: Module {
 
   private var bodyMassType: HKQuantityType? {
     HKQuantityType.quantityType(forIdentifier: .bodyMass)
-  }
-
-  private var heartRateType: HKQuantityType? {
-    HKQuantityType.quantityType(forIdentifier: .heartRate)
-  }
-
-  private var activeEnergyType: HKQuantityType? {
-    HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)
   }
 
   private func requestHealthAuthorization(promise: Promise) {
@@ -430,12 +460,6 @@ public class LiftHealthModule: Module {
 
     if let bodyMassType {
       typesToRead.insert(bodyMassType)
-    }
-    if let heartRateType {
-      typesToRead.insert(heartRateType)
-    }
-    if let activeEnergyType {
-      typesToRead.insert(activeEnergyType)
     }
 
     healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
@@ -501,97 +525,6 @@ public class LiftHealthModule: Module {
     healthStore.execute(query)
   }
 
-  private func startStrengthWorkout(startedAtMs: Double?, promise: Promise) {
-    guard HKHealthStore.isHealthDataAvailable() else {
-      promise.resolve([
-        "started": false,
-        "live": false,
-        "message": "Health data is not available on this device."
-      ])
-      return
-    }
-
-    guard healthStore.authorizationStatus(for: HKObjectType.workoutType()) == .sharingAuthorized else {
-      promise.resolve([
-        "started": false,
-        "live": false,
-        "message": "Workout write permission is not enabled."
-      ])
-      return
-    }
-
-    guard #available(iOS 26.0, *) else {
-      promise.resolve([
-        "started": true,
-        "live": false,
-        "message": "Live HealthKit workout sessions require iOS 26. The workout will be saved to Health when finished."
-      ])
-      return
-    }
-
-    if activeSession != nil || activeBuilder != nil {
-      promise.resolve([
-        "started": true,
-        "live": true,
-        "message": "A Health workout is already running."
-      ])
-      return
-    }
-
-    let startDate = dateFromMilliseconds(startedAtMs) ?? Date()
-    let configuration = strengthConfiguration()
-
-    do {
-      let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
-      let builder = session.associatedWorkoutBuilder()
-      let delegate = LiftHealthWorkoutDelegate()
-
-      builder.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore, workoutConfiguration: configuration)
-      delegate.onHeartRateSample = { [weak self] bpm in
-        DispatchQueue.main.async {
-          self?.sendEvent(onHeartRateSample, [
-            "bpm": bpm,
-            "date": ISO8601DateFormatter().string(from: Date())
-          ])
-        }
-      }
-      session.delegate = delegate
-      builder.delegate = delegate
-
-      activeSession = session
-      activeBuilder = builder
-      activeDelegate = delegate
-      activeStartDate = startDate
-
-      builder.beginCollection(withStart: startDate) { success, error in
-        if let error {
-          self.activeSession = nil
-          self.activeBuilder = nil
-          self.activeStartDate = nil
-          promise.reject("ERR_WORKOUT_START", error.localizedDescription)
-          return
-        }
-
-        if !success {
-          self.activeSession = nil
-          self.activeBuilder = nil
-          self.activeStartDate = nil
-          promise.reject("ERR_WORKOUT_START", "HealthKit did not start workout collection.")
-          return
-        }
-
-        session.startActivity(with: startDate)
-        promise.resolve([
-          "started": true,
-          "live": true,
-          "message": NSNull()
-        ])
-      }
-    } catch {
-      promise.reject("ERR_WORKOUT_START", error.localizedDescription)
-    }
-  }
-
   private func finishStrengthWorkout(startedAtMs: Double, endedAtMs: Double, promise: Promise) {
     guard HKHealthStore.isHealthDataAvailable() else {
       promise.resolve([
@@ -613,41 +546,6 @@ public class LiftHealthModule: Module {
 
     let startDate = dateFromMilliseconds(startedAtMs) ?? Date(timeIntervalSince1970: startedAtMs / 1000)
     let endDate = maxDate(dateFromMilliseconds(endedAtMs) ?? Date(), after: startDate)
-
-    if #available(iOS 26.0, *),
-      let session = activeSession as? HKWorkoutSession,
-      let builder = activeBuilder as? HKLiveWorkoutBuilder {
-      session.stopActivity(with: endDate)
-      builder.endCollection(withEnd: endDate) { success, error in
-        if let error {
-          self.clearActiveWorkout()
-          promise.reject("ERR_WORKOUT_FINISH", error.localizedDescription)
-          return
-        }
-        if !success {
-          self.clearActiveWorkout()
-          promise.reject("ERR_WORKOUT_FINISH", "HealthKit did not stop workout collection.")
-          return
-        }
-
-        builder.finishWorkout { workout, error in
-          session.end()
-          self.clearActiveWorkout()
-
-          if let error {
-            promise.reject("ERR_WORKOUT_FINISH", error.localizedDescription)
-            return
-          }
-
-          promise.resolve([
-            "saved": true,
-            "live": true,
-            "workoutId": workout?.uuid.uuidString ?? ""
-          ])
-        }
-      }
-      return
-    }
 
     saveCompletedWorkout(startDate: startDate, endDate: endDate, promise: promise)
   }
@@ -692,56 +590,64 @@ public class LiftHealthModule: Module {
     }
   }
 
-  private func cancelStrengthWorkout(promise: Promise) {
-    if #available(iOS 26.0, *), let session = activeSession as? HKWorkoutSession {
-      session.end()
-    }
-    if #available(iOS 26.0, *), let builder = activeBuilder as? HKLiveWorkoutBuilder {
-      builder.discardWorkout()
-    }
-    clearActiveWorkout()
-    promise.resolve(["cancelled": true])
-  }
-
   private func scheduleWorkoutTimerNotification(seconds: Double, promise: Promise) {
     let duration = max(1, seconds)
     let center = UNUserNotificationCenter.current()
     center.delegate = Self.notificationDelegate
+    restTimerScheduleGeneration += 1
+    let scheduleGeneration = restTimerScheduleGeneration
 
     center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-      if let error {
-        promise.reject("ERR_TIMER_NOTIFICATION", error.localizedDescription)
-        return
-      }
+      DispatchQueue.main.async {
+        guard scheduleGeneration == self.restTimerScheduleGeneration else {
+          promise.resolve([
+            "scheduled": false,
+            "message": "Rest timer was replaced."
+          ])
+          return
+        }
 
-      guard granted else {
-        promise.resolve([
-          "scheduled": false,
-          "message": "Notifications are not enabled."
-        ])
-        return
-      }
-
-      let content = UNMutableNotificationContent()
-      content.title = "Rest timer"
-      content.body = "Three minutes is up."
-      content.sound = .default
-
-      let identifier = "\(restTimerNotificationPrefix)\(UUID().uuidString)"
-      let trigger = UNTimeIntervalNotificationTrigger(timeInterval: duration, repeats: false)
-      let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-
-      center.add(request) { error in
         if let error {
           promise.reject("ERR_TIMER_NOTIFICATION", error.localizedDescription)
           return
         }
 
-        promise.resolve([
-          "scheduled": true,
-          "identifier": identifier,
-          "seconds": duration
-        ])
+        guard granted else {
+          promise.resolve([
+            "scheduled": false,
+            "message": "Notifications are not enabled."
+          ])
+          return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Rest timer"
+        content.body = "Your rest is over."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: duration, repeats: false)
+        let request = UNNotificationRequest(
+          identifier: restTimerNotificationIdentifier,
+          content: content,
+          trigger: trigger
+        )
+
+        center.removePendingNotificationRequests(withIdentifiers: [restTimerNotificationIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [restTimerNotificationIdentifier])
+        self.removeLegacyRestTimerNotifications(center: center)
+
+        center.add(request) { error in
+          if let error {
+            promise.reject("ERR_TIMER_NOTIFICATION", error.localizedDescription)
+            return
+          }
+
+          promise.resolve([
+            "scheduled": true,
+            "identifier": restTimerNotificationIdentifier,
+            "seconds": duration
+          ])
+        }
       }
     }
   }
@@ -840,21 +746,35 @@ public class LiftHealthModule: Module {
     }
   }
 
-  private func cancelWorkoutTimerNotification(identifier: String?, promise: Promise) {
+  private func cancelWorkoutTimerNotification(identifier _: String?, promise: Promise) {
     let center = UNUserNotificationCenter.current()
+    restTimerScheduleGeneration += 1
+    center.removePendingNotificationRequests(withIdentifiers: [restTimerNotificationIdentifier])
+    center.removeDeliveredNotifications(withIdentifiers: [restTimerNotificationIdentifier])
+    removeLegacyRestTimerNotifications(center: center)
+    promise.resolve(["cancelled": true])
+  }
 
-    if let identifier, !identifier.isEmpty {
-      center.removePendingNotificationRequests(withIdentifiers: [identifier])
-      promise.resolve(["cancelled": true])
-      return
-    }
-
+  private func removeLegacyRestTimerNotifications(center: UNUserNotificationCenter) {
     center.getPendingNotificationRequests { requests in
-      let identifiers = requests
+      let pendingIdentifiers = requests
         .map(\.identifier)
-        .filter { $0.hasPrefix(restTimerNotificationPrefix) }
-      center.removePendingNotificationRequests(withIdentifiers: identifiers)
-      promise.resolve(["cancelled": true])
+        .filter {
+          $0.hasPrefix(restTimerNotificationPrefix) &&
+            $0 != restTimerNotificationIdentifier
+        }
+
+      center.getDeliveredNotifications { notifications in
+        let deliveredIdentifiers = notifications
+          .map(\.request.identifier)
+          .filter {
+            $0.hasPrefix(restTimerNotificationPrefix) &&
+              $0 != restTimerNotificationIdentifier
+          }
+
+        center.removePendingNotificationRequests(withIdentifiers: pendingIdentifiers)
+        center.removeDeliveredNotifications(withIdentifiers: deliveredIdentifiers)
+      }
     }
   }
 
@@ -862,26 +782,35 @@ public class LiftHealthModule: Module {
     let duration = max(1, seconds)
     let center = UNUserNotificationCenter.current()
     center.delegate = Self.notificationDelegate
+    unfinishedWorkoutScheduleGeneration += 1
+    let scheduleGeneration = unfinishedWorkoutScheduleGeneration
 
     center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-      if let error {
-        promise.reject("ERR_UNFINISHED_WORKOUT_NOTIFICATION", error.localizedDescription)
-        return
-      }
+      DispatchQueue.main.async {
+        guard scheduleGeneration == self.unfinishedWorkoutScheduleGeneration else {
+          promise.resolve([
+            "scheduled": false,
+            "message": "Unfinished workout reminder was replaced."
+          ])
+          return
+        }
 
-      guard granted else {
-        promise.resolve([
-          "scheduled": false,
-          "message": "Notifications are not enabled."
-        ])
-        return
-      }
+        if let error {
+          promise.reject("ERR_UNFINISHED_WORKOUT_NOTIFICATION", error.localizedDescription)
+          return
+        }
 
-      center.getPendingNotificationRequests { requests in
-        let existingIdentifiers = requests
-          .map(\.identifier)
-          .filter { $0.hasPrefix(unfinishedWorkoutNotificationPrefix) }
-        center.removePendingNotificationRequests(withIdentifiers: existingIdentifiers)
+        guard granted else {
+          promise.resolve([
+            "scheduled": false,
+            "message": "Notifications are not enabled."
+          ])
+          return
+        }
+
+        center.removePendingNotificationRequests(withIdentifiers: [unfinishedWorkoutNotificationIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [unfinishedWorkoutNotificationIdentifier])
+        self.removeLegacyUnfinishedWorkoutNotifications(center: center)
 
         let content = UNMutableNotificationContent()
         content.title = "Unfinished Workout"
@@ -892,9 +821,12 @@ public class LiftHealthModule: Module {
           "workoutName": workoutName
         ]
 
-        let identifier = "\(unfinishedWorkoutNotificationPrefix)\(UUID().uuidString)"
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: duration, repeats: false)
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        let request = UNNotificationRequest(
+          identifier: unfinishedWorkoutNotificationIdentifier,
+          content: content,
+          trigger: trigger
+        )
 
         center.add(request) { error in
           if let error {
@@ -904,7 +836,7 @@ public class LiftHealthModule: Module {
 
           promise.resolve([
             "scheduled": true,
-            "identifier": identifier,
+            "identifier": unfinishedWorkoutNotificationIdentifier,
             "seconds": duration
           ])
         }
@@ -914,13 +846,33 @@ public class LiftHealthModule: Module {
 
   private func cancelUnfinishedWorkoutNotification(promise: Promise) {
     let center = UNUserNotificationCenter.current()
+    unfinishedWorkoutScheduleGeneration += 1
+    center.removePendingNotificationRequests(withIdentifiers: [unfinishedWorkoutNotificationIdentifier])
+    center.removeDeliveredNotifications(withIdentifiers: [unfinishedWorkoutNotificationIdentifier])
+    removeLegacyUnfinishedWorkoutNotifications(center: center)
+    promise.resolve(["cancelled": true])
+  }
 
+  private func removeLegacyUnfinishedWorkoutNotifications(center: UNUserNotificationCenter) {
     center.getPendingNotificationRequests { requests in
-      let identifiers = requests
+      let pendingIdentifiers = requests
         .map(\.identifier)
-        .filter { $0.hasPrefix(unfinishedWorkoutNotificationPrefix) }
-      center.removePendingNotificationRequests(withIdentifiers: identifiers)
-      promise.resolve(["cancelled": true])
+        .filter {
+          $0.hasPrefix(unfinishedWorkoutNotificationPrefix) &&
+            $0 != unfinishedWorkoutNotificationIdentifier
+        }
+
+      center.getDeliveredNotifications { notifications in
+        let deliveredIdentifiers = notifications
+          .map(\.request.identifier)
+          .filter {
+            $0.hasPrefix(unfinishedWorkoutNotificationPrefix) &&
+              $0 != unfinishedWorkoutNotificationIdentifier
+          }
+
+        center.removePendingNotificationRequests(withIdentifiers: pendingIdentifiers)
+        center.removeDeliveredNotifications(withIdentifiers: deliveredIdentifiers)
+      }
     }
   }
 
@@ -943,12 +895,5 @@ public class LiftHealthModule: Module {
       return date
     }
     return startDate.addingTimeInterval(1)
-  }
-
-  private func clearActiveWorkout() {
-    activeSession = nil
-    activeBuilder = nil
-    activeDelegate = nil
-    activeStartDate = nil
   }
 }

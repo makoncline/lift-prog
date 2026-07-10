@@ -10,6 +10,7 @@ import {
   ListRecentWorkoutsResultSchema,
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
+  DeleteCurrentUserResultSchema,
   ListExercisesResultSchema,
   ExerciseUpdateResultSchema,
   GetWorkoutDetailsInputSchema,
@@ -24,6 +25,7 @@ import {
   type ListRecentWorkoutsInput,
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
+  type DeleteCurrentUserResult,
   type ExerciseListItem,
   type ExerciseUpdateResult,
   type GetWorkoutDetailsInput,
@@ -42,27 +44,22 @@ type HeadersShape = Record<string, string>;
 
 export type WorkoutApiClientOptions = {
   baseUrl: string;
-  getToken?: () => Promise<string | null>;
   getHeaders?: () => Promise<HeadersShape>;
 };
 
 const buildHeaders = async ({
   getHeaders,
-  getToken,
-}: Pick<WorkoutApiClientOptions, "getHeaders" | "getToken">) => {
+}: Pick<WorkoutApiClientOptions, "getHeaders">) => {
   const headers = (await getHeaders?.()) ?? {};
-  const token = await getToken?.();
 
   return {
     ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     "x-trpc-source": "expo-mobile",
   } satisfies HeadersShape;
 };
 
 export const createWorkoutApiClient = ({
   baseUrl,
-  getToken,
   getHeaders,
 }: WorkoutApiClientOptions) => {
   const client = createTRPCUntypedClient({
@@ -70,7 +67,7 @@ export const createWorkoutApiClient = ({
       httpBatchLink({
         transformer: SuperJSON,
         url: new URL("/api/trpc", baseUrl).toString(),
-        headers: async () => buildHeaders({ getHeaders, getToken }),
+        headers: async () => buildHeaders({ getHeaders }),
       }),
     ],
   });
@@ -145,6 +142,11 @@ export const createWorkoutApiClient = ({
       const parsedInput = DeleteWorkoutInputSchema.parse(input);
       const result = await client.mutation("workout.deleteWorkout", parsedInput);
       return DeleteWorkoutResultSchema.parse(result);
+    },
+
+    async deleteCurrentUser(): Promise<DeleteCurrentUserResult> {
+      const result = await client.mutation("user.deleteCurrent");
+      return DeleteCurrentUserResultSchema.parse(result);
     },
   };
 };

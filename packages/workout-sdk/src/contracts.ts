@@ -5,6 +5,10 @@ const setModifierSchema = z.enum(["warmup"]);
 const weightModifierSchema = z.enum(["bodyweight"]);
 const restTypeSchema = z.enum(["standard", "short"]);
 const plateLoadModeSchema = z.enum(["equal-sides", "total"]);
+const restTimesSchema = z.object({
+  warmupSeconds: z.number().int().positive().nullable(),
+  workingSeconds: z.number().int().positive().nullable(),
+});
 
 export const PreviousExerciseSetSchema = z.object({
   weight: z.number().nullable(),
@@ -13,6 +17,7 @@ export const PreviousExerciseSetSchema = z.object({
   modifier: setModifierSchema.optional(),
   weightModifier: weightModifierSchema.optional(),
   restBefore: restTypeSchema.optional(),
+  restSeconds: z.number().int().positive().nullable().optional(),
   notes: z.string().nullable().optional(),
   rir: z.number().int().min(0).max(10).nullable().optional(),
 });
@@ -37,6 +42,7 @@ export const PreviousExerciseDataSchema = z.object({
   exerciseNotesSnapshot: z.string().nullable().optional(),
   plateStartingWeight: z.number().nullable().optional(),
   plateLoadMode: plateLoadModeSchema.nullable().optional(),
+  restTimes: restTimesSchema.optional(),
   history: z.array(ExerciseHistoryEntrySchema).optional(),
 });
 
@@ -55,6 +61,7 @@ export const PrepareInitialWorkoutInputSchema = z.discriminatedUnion("mode", [
 export const PrepareInitialWorkoutResultSchema = z.object({
   workoutName: z.string(),
   bodyWeightLb: z.number().positive().nullable().optional(),
+  restTimes: restTimesSchema.optional(),
   exercises: z.array(PreviousExerciseDataSchema),
 });
 
@@ -150,6 +157,10 @@ export const DeleteWorkoutResultSchema = z.object({
   success: z.boolean(),
 });
 
+export const DeleteCurrentUserResultSchema = z.object({
+  success: z.boolean(),
+});
+
 export type PreviousExerciseDataDto = z.infer<
   typeof PreviousExerciseDataSchema
 >;
@@ -182,3 +193,6 @@ export type GetWorkoutDetailsResult = z.infer<
 export type UpdateWorkoutInput = z.infer<typeof UpdateWorkoutInputSchema>;
 export type DeleteWorkoutInput = z.infer<typeof DeleteWorkoutInputSchema>;
 export type DeleteWorkoutResult = z.infer<typeof DeleteWorkoutResultSchema>;
+export type DeleteCurrentUserResult = z.infer<
+  typeof DeleteCurrentUserResultSchema
+>;

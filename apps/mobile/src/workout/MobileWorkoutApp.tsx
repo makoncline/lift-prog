@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import * as Haptics from "expo-haptics";
+import * as Network from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import {
   createWorkoutApiClient,
@@ -16,6 +17,7 @@ import {
   type CompletedWorkout,
   type PlateLoadMode,
   type PreviousExerciseData,
+  type RestTimes,
   type SetRestType,
   type Workout,
   type WorkoutExercise,
@@ -31,10 +33,12 @@ import React, {
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   ActionSheetIOS,
   findNodeHandle,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   type ModalProps,
   PanResponder,
@@ -59,10 +63,8 @@ import { mobileWorkoutApiBaseUrl } from "../lib/config";
 import {
   addWatchWorkoutCommandListener,
   addUnfinishedWorkoutReminderListener,
-  addHeartRateSampleListener,
   cancelUnfinishedWorkoutNotification,
   cancelWorkoutTimerNotification,
-  cancelStrengthWorkout,
   endRestTimerLiveActivity,
   finishStrengthWorkout,
   getHealthAuthorizationStatus,
@@ -75,8 +77,16 @@ import {
   updateWatchWorkoutSnapshot,
   clearWatchWorkoutSnapshot,
 } from "../../modules/lift-health/src";
-import type { WatchWorkoutCommand } from "../../modules/lift-health/src";
+import type {
+  WatchWorkoutCommand,
+  WatchWorkoutItemSnapshot,
+  WatchWorkoutSnapshot,
+} from "../../modules/lift-health/src";
 import { MobileErrorBoundary } from "./MobileErrorBoundary";
+import {
+  enqueueCompletedWorkoutSave,
+  flushCompletedWorkoutOutbox,
+} from "./completed-workout-outbox";
 import {
   countCompletedExerciseWorkingSets,
   countWorkoutWorkingSets,
@@ -211,6 +221,10 @@ type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
 const REST_TIMER_SECONDS = 180;
+const DEFAULT_WORKOUT_REST_TIMES: RestTimes = {
+  warmupSeconds: null,
+  workingSeconds: REST_TIMER_SECONDS,
+};
 const UNFINISHED_WORKOUT_REMINDER_SECONDS = 15 * 60;
 const REST_TIMER_PRESET_SECONDS = [30, 60, 90, 120, 150, 180, 240, 300];
 const REST_TIMER_STEP_SECONDS = 10;
@@ -244,6 +258,51 @@ function formatRestTimerDurationLabel(seconds: number) {
   return formatCountdown(safeSeconds);
 }
 
+function formatRestTimeSetting(seconds: number | null | undefined) {
+  if (seconds == null) return "none";
+  return formatCountdown(seconds);
+}
+
+function normalizeRestTimes(restTimes: RestTimes | undefined): RestTimes {
+  return {
+    warmupSeconds: restTimes?.warmupSeconds ?? null,
+    workingSeconds: restTimes?.workingSeconds ?? REST_TIMER_SECONDS,
+  };
+}
+
+function getEffectiveExerciseRestTimes(
+  workout: Workout,
+  exercise: WorkoutExercise,
+): RestTimes {
+  const workoutRestTimes = normalizeRestTimes(workout.restTimes);
+  return {
+    warmupSeconds:
+      exercise.restTimes?.warmupSeconds ?? workoutRestTimes.warmupSeconds,
+    workingSeconds:
+      exercise.restTimes?.workingSeconds ?? workoutRestTimes.workingSeconds,
+  };
+}
+
+function getRestSecondsForSet(set: WorkoutSet, restTimes: RestTimes) {
+  if (set.restBefore === "short") return null;
+  if (set.modifier === "warmup") return restTimes.warmupSeconds;
+  return restTimes.workingSeconds;
+}
+
+function applyRestTimesToExerciseSets(
+  exercise: WorkoutExercise,
+  restTimes: RestTimes,
+) {
+  return exercise.sets.map((set, index) => {
+    if (index === 0 || set.restBefore === "short") return set;
+    return {
+      ...set,
+      restBefore: set.restBefore ?? "standard",
+      restSeconds: getRestSecondsForSet(set, restTimes),
+    };
+  });
+}
+
 function closestRestTimerOption(seconds: number, options: number[]) {
   const normalized = normalizeRestTimerSeconds(seconds);
   return options.reduce((closest, option) =>
@@ -274,8 +333,6 @@ type WorkoutDispatchOptions = {
 };
 
 type HealthWorkoutState = {
-  live: boolean;
-  starting: boolean;
   saving: boolean;
   message: string | null;
 };
@@ -387,6 +444,7 @@ function createWorkoutState(
 
         return {
           ...exercise,
+          restTimes: preparedExercise.restTimes,
           notes: preparedExercise.notes?.trim()
             ? [{ text: preparedExercise.notes.trim() }]
             : [],
@@ -409,6 +467,7 @@ function createWorkoutState(
               modifier,
               weightModifier: preparedSet.weightModifier,
               restBefore: preparedSet.restBefore,
+              restSeconds: preparedSet.restSeconds,
               notes: preparedSet.notes ?? undefined,
               rir: preparedSet.rir,
             };
@@ -427,6 +486,7 @@ function createWorkoutState(
     startTime: options.startedAt?.getTime() ?? Date.now(),
     name: prepared.workoutName || "Workout",
     bodyWeightLb: normalizeBodyWeightLb(prepared.bodyWeightLb),
+    restTimes: prepared.restTimes ?? DEFAULT_WORKOUT_REST_TIMES,
     isInProgress: options.isInProgress ?? true,
   });
 }
@@ -437,6 +497,7 @@ function blankPreparedWorkout(
   return {
     workoutName: "Custom Workout",
     bodyWeightLb,
+    restTimes: DEFAULT_WORKOUT_REST_TIMES,
     exercises: [],
   };
 }
@@ -898,6 +959,11 @@ function createLocalWorkoutApiClient(
       }
       return { success: true };
     },
+    async deleteCurrentUser() {
+      recent.splice(0, recent.length);
+      preparedByWorkoutId.clear();
+      return { success: true };
+    },
   };
 }
 
@@ -978,11 +1044,20 @@ function AppDialogModal({
   if (!dialog) return null;
 
   return (
-    <AppModal visible transparent animationType="fade" onRequestClose={onDismiss}>
-      <DismissibleModalShade onDismiss={onDismiss} style={styles.confirmDialogShade}>
+    <AppModal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={onDismiss}
+    >
+      <DismissibleModalShade
+        onDismiss={onDismiss}
+        style={styles.confirmDialogShade}
+      >
         <View
           accessibilityRole="alert"
-          accessible
+          accessible={false}
+          accessibilityViewIsModal
           style={styles.confirmDialog}
         >
           <View style={styles.confirmDialogCopy}>
@@ -1064,7 +1139,9 @@ export function LiftMobileApp({
   const [pendingDraft, setPendingDraft] = useState<PendingWorkoutDraft | null>(
     null,
   );
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const checkedDraftRef = useRef(false);
+  const flushingOutboxRef = useRef(false);
   const returnHome = useCallback(() => {
     setScreen((current) => ({
       name: "home",
@@ -1100,6 +1177,50 @@ export function LiftMobileApp({
     };
   }, []);
 
+  const flushWorkoutOutbox = useCallback(async () => {
+    if (flushingOutboxRef.current) return;
+    flushingOutboxRef.current = true;
+    try {
+      const { flushedCount, pendingCount } =
+        await flushCompletedWorkoutOutbox(api);
+      setPendingSyncCount(pendingCount);
+      if (flushedCount > 0) {
+        setScreen((current) =>
+          current.name === "home"
+            ? { ...current, refreshKey: current.refreshKey + 1 }
+            : current,
+        );
+      }
+    } catch {
+      // The queued payload remains durable and will retry at the next trigger.
+    } finally {
+      flushingOutboxRef.current = false;
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (screen.name === "home") void flushWorkoutOutbox();
+  }, [flushWorkoutOutbox, screen.name]);
+
+  useEffect(() => {
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (state) => {
+        if (state === "active") void flushWorkoutOutbox();
+      },
+    );
+    const networkSubscription = Network.addNetworkStateListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        void flushWorkoutOutbox();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+      networkSubscription.remove();
+    };
+  }, [flushWorkoutOutbox]);
+
   useEffect(() => {
     if (Platform.OS !== "ios") return undefined;
 
@@ -1112,6 +1233,36 @@ export function LiftMobileApp({
 
     return () => subscription.remove();
   }, [restoreDraft]);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios" || screen.name === "workout") {
+      return;
+    }
+
+    if (!pendingDraft || pendingDraft.completedAt) {
+      void clearWatchWorkoutSnapshot().catch(() => undefined);
+      return;
+    }
+
+    const snapshot = buildWatchWorkoutSnapshot({
+      workout: pendingDraft.workout,
+      currentExerciseIndex: clampIndex(
+        pendingDraft.workout.currentExerciseIndex,
+        pendingDraft.workout.exercises.length,
+      ),
+      selectedSetId: null,
+      restTimerIdleLabel: formatRestTimerDurationLabel(REST_TIMER_SECONDS),
+      restTimerEndsAt: null,
+      restTimerDurationSeconds: REST_TIMER_SECONDS,
+    });
+
+    if (!snapshot) {
+      void clearWatchWorkoutSnapshot().catch(() => undefined);
+      return;
+    }
+
+    void updateWatchWorkoutSnapshot(snapshot).catch(() => undefined);
+  }, [pendingDraft, screen.name]);
 
   const content =
     screen.name === "workout" ? (
@@ -1143,6 +1294,7 @@ export function LiftMobileApp({
         api={api}
         refreshKey={screen.refreshKey}
         pendingDraft={pendingDraft}
+        pendingSyncCount={pendingSyncCount}
         onSignOut={onSignOut}
         onContinueDraft={restoreDraft}
         onStartBlank={(bodyWeightLb) =>
@@ -1188,6 +1340,7 @@ function HomeScreen({
   api,
   refreshKey,
   pendingDraft,
+  pendingSyncCount,
   onSignOut,
   onContinueDraft,
   onStartBlank,
@@ -1197,6 +1350,7 @@ function HomeScreen({
   api: WorkoutApiClient;
   refreshKey: number;
   pendingDraft: PendingWorkoutDraft | null;
+  pendingSyncCount: number;
   onSignOut?: () => void;
   onContinueDraft: (draft: StoredWorkoutDraft) => void;
   onStartBlank: (bodyWeightLb: number | null) => void;
@@ -1215,6 +1369,8 @@ function HomeScreen({
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(
     null,
   );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadRequestIdRef = useRef(0);
   const navigationRequestIdRef = useRef(0);
@@ -1357,6 +1513,43 @@ function HomeScreen({
     });
   };
 
+  const openExternalUrl = (url: string) => {
+    void Linking.openURL(url).catch((linkError) => {
+      setError(getWorkoutApiErrorMessage(linkError));
+    });
+  };
+
+  const deleteCurrentAccount = async () => {
+    setDeletingAccount(true);
+    setError(null);
+    try {
+      await api.deleteCurrentUser();
+      await clearActiveWorkoutDraft();
+      onSignOut?.();
+    } catch (deleteError) {
+      setError(getWorkoutApiErrorMessage(deleteError));
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    setSettingsOpen(false);
+    presentDialog({
+      title: "Delete account?",
+      message:
+        "This permanently deletes your Lift Prog account, workouts, exercises, and saved notes.",
+      actions: [
+        { label: "cancel", variant: "cancel" },
+        {
+          label: "delete account",
+          variant: "danger",
+          onPress: () => void deleteCurrentAccount(),
+        },
+      ],
+    });
+  };
+
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <View style={styles.topActions}>
@@ -1371,13 +1564,13 @@ function HomeScreen({
         </Pressable>
         {onSignOut ? (
           <Pressable
-            accessibilityLabel="Sign out"
+            accessibilityLabel="Open settings"
             accessibilityRole="button"
             style={styles.iconButton}
-            testID="home-sign-out"
-            onPress={onSignOut}
+            testID="home-settings"
+            onPress={() => setSettingsOpen(true)}
           >
-            <Icon name="log-out-outline" />
+            <Icon name="settings-outline" />
           </Pressable>
         ) : null}
       </View>
@@ -1400,6 +1593,12 @@ function HomeScreen({
       >
         <Text style={styles.title}>Lift Prog</Text>
         <Text style={styles.subtleTitle}>workouts</Text>
+        {pendingSyncCount > 0 ? (
+          <Text style={styles.mutedText}>
+            {pendingSyncCount} workout{pendingSyncCount === 1 ? "" : "s"} saved
+            locally, waiting to sync
+          </Text>
+        ) : null}
 
         {loading && workouts.length === 0 ? (
           <View style={styles.centerRow}>
@@ -1409,6 +1608,25 @@ function HomeScreen({
         ) : null}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        {!loading && workouts.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.historyTitle}>no workouts yet</Text>
+            <Text style={styles.mutedText}>
+              start your first workout, add exercises, then finish to build your
+              history
+            </Text>
+            <Pressable
+              accessibilityLabel="Start first workout"
+              accessibilityRole="button"
+              style={styles.textButton}
+              testID="home-empty-start-workout"
+              onPress={() => onStartBlank(latestBodyWeightLb)}
+            >
+              <Text style={styles.textButtonText}>+ start workout</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {workouts.map((workout) => (
           <WorkoutHistoryRow
@@ -1450,7 +1668,82 @@ function HomeScreen({
           />
         </View>
       ) : null}
+      <HomeSettingsModal
+        visible={settingsOpen}
+        deletingAccount={deletingAccount}
+        onClose={() => setSettingsOpen(false)}
+        onDeleteAccount={confirmDeleteAccount}
+        onOpenPrivacy={() => openExternalUrl("https://lift.makon.dev/privacy")}
+        onOpenSupport={() => openExternalUrl("https://lift.makon.dev/support")}
+        onSignOut={() => {
+          setSettingsOpen(false);
+          onSignOut?.();
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+function HomeSettingsModal({
+  visible,
+  deletingAccount,
+  onClose,
+  onDeleteAccount,
+  onOpenPrivacy,
+  onOpenSupport,
+  onSignOut,
+}: {
+  visible: boolean;
+  deletingAccount: boolean;
+  onClose: () => void;
+  onDeleteAccount: () => void;
+  onOpenPrivacy: () => void;
+  onOpenSupport: () => void;
+  onSignOut?: () => void;
+}) {
+  return (
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.commandMenuShade}
+      >
+        <View style={[styles.commandMenuPanel, styles.homeSettingsPanel]}>
+          <Text style={styles.commandMenuTitle}>settings</Text>
+          <CommandMenuItem
+            icon="mail-outline"
+            label="Support"
+            onPress={onOpenSupport}
+            testID="home-settings-support"
+          />
+          <CommandMenuItem
+            icon="document-text-outline"
+            label="Privacy Policy"
+            onPress={onOpenPrivacy}
+            testID="home-settings-privacy"
+          />
+          {onSignOut ? (
+            <CommandMenuItem
+              icon="log-out-outline"
+              label="Sign Out"
+              onPress={onSignOut}
+              testID="home-settings-sign-out"
+            />
+          ) : null}
+          <CommandMenuItem
+            danger
+            icon="trash-outline"
+            label={deletingAccount ? "Deleting Account" : "Delete Account"}
+            onPress={deletingAccount ? () => undefined : onDeleteAccount}
+            testID="home-settings-delete-account"
+          />
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
   );
 }
 
@@ -1470,7 +1763,9 @@ function ActiveWorkoutDraftBanner({
   if (!draft) return null;
 
   const startedAt = new Date(draft.workout.startTime);
-  const endedAt = draft.completedAt ? new Date(draft.completedAt) : new Date(now);
+  const endedAt = draft.completedAt
+    ? new Date(draft.completedAt)
+    : new Date(now);
   const restoreDraftFromBanner = () => {
     if (restoringRef.current) return;
     restoringRef.current = true;
@@ -1776,17 +2071,21 @@ function WorkoutScreen({
   const [inlineNoteDraft, setInlineNoteDraft] = useState<string | null>(null);
   const [exercisePlanOpen, setExercisePlanOpen] = useState(false);
   const [workoutMenuOpen, setWorkoutMenuOpen] = useState(false);
-  const [workoutMenuAnchor, setWorkoutMenuAnchor] =
-    useState<MenuAnchor | null>(null);
+  const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<MenuAnchor | null>(
+    null,
+  );
   const [workoutNameEditing, setWorkoutNameEditing] = useState(false);
   const [workoutNameDraft, setWorkoutNameDraft] = useState<string | null>(null);
   const [workoutNoteEditing, setWorkoutNoteEditing] = useState(false);
   const [workoutNoteDraft, setWorkoutNoteDraft] = useState<string | null>(null);
   const [workoutTimeAdjustOpen, setWorkoutTimeAdjustOpen] = useState(false);
+  const [workoutRestTimesOpen, setWorkoutRestTimesOpen] = useState(false);
+  const [exerciseRestTimesTarget, setExerciseRestTimesTarget] = useState<
+    number | null
+  >(null);
   const [timeEditor, setTimeEditor] = useState<TimeEditTarget | null>(null);
   const [finishPreviewOpen, setFinishPreviewOpen] = useState(false);
-  const [watchSnapshotRequestNonce, setWatchSnapshotRequestNonce] =
-    useState(0);
+  const [watchSnapshotRequestNonce, setWatchSnapshotRequestNonce] = useState(0);
   const [bodyWeightEntry, setBodyWeightEntry] = useState<string | null>(null);
   const [bodyWeightDialogOpen, setBodyWeightDialogOpen] = useState(false);
   const [bodyWeightDialogError, setBodyWeightDialogError] = useState<
@@ -1794,12 +2093,9 @@ function WorkoutScreen({
   >(null);
   const [bodyWeightHealthLoading, setBodyWeightHealthLoading] = useState(false);
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
-    live: false,
-    starting: false,
     saving: false,
     message: null,
   });
-  const [heartRateBpm, setHeartRateBpm] = useState<number | null>(null);
   const [timerStatus, setTimerStatus] = useState<string | null>(null);
   const [restTimerDurationSeconds, setRestTimerDurationSeconds] =
     useState(REST_TIMER_SECONDS);
@@ -1816,21 +2112,26 @@ function WorkoutScreen({
   const restTimerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const restTimerNotificationIdRef = useRef<string | null>(null);
-  const workoutNameInputRef =
-    useRef<React.ComponentRef<typeof TextInput> | null>(null);
-  const workoutNoteInputRef =
-    useRef<React.ComponentRef<typeof TextInput> | null>(null);
-  const inlineNoteInputRef =
-    useRef<React.ComponentRef<typeof TextInput> | null>(null);
+  const restTimerGenerationRef = useRef(0);
+  const workoutNameInputRef = useRef<React.ComponentRef<
+    typeof TextInput
+  > | null>(null);
+  const workoutNoteInputRef = useRef<React.ComponentRef<
+    typeof TextInput
+  > | null>(null);
+  const inlineNoteInputRef = useRef<React.ComponentRef<
+    typeof TextInput
+  > | null>(null);
   const workoutNameDraftRef = useRef<string | null>(null);
   const workoutNoteDraftRef = useRef<string | null>(null);
   const inlineNoteDraftRef = useRef<string | null>(null);
-  const exercisePagerRef =
-    useRef<React.ComponentRef<typeof ScrollView> | null>(null);
+  const exercisePagerRef = useRef<React.ComponentRef<typeof ScrollView> | null>(
+    null,
+  );
   const [exercisePagerContentTop, setExercisePagerContentTop] = useState<
     number | null
   >(null);
+  const [setEditorCoveredHeight, setSetEditorCoveredHeight] = useState(0);
 
   useEffect(() => {
     const tickMs = restTimerEndsAt == null && completedAt ? 30_000 : 1_000;
@@ -1929,46 +2230,23 @@ function WorkoutScreen({
     await cancelUnfinishedWorkoutNotification().catch(() => undefined);
   }, []);
 
-  const applyLatestHealthBodyWeight = useCallback(
-    async (options: { requestAuthorization?: boolean } = {}) => {
-      if (Platform.OS !== "ios") return;
-      if (options.requestAuthorization) {
-        await requestHealthAuthorization();
-      }
-      const latest = await getLatestBodyWeight();
-      const latestBodyWeight = normalizeBodyWeightLb(latest?.valueLb);
-      if (latestBodyWeight == null || bodyWeightEditedRef.current) return;
-      dispatch({
-        type: "UPDATE_BODY_WEIGHT",
-        bodyWeightLb: latestBodyWeight,
-      });
-    },
-    [dispatch],
-  );
+  const applyLatestHealthBodyWeight = useCallback(async () => {
+    if (Platform.OS !== "ios") return;
+    const latest = await getLatestBodyWeight();
+    const latestBodyWeight = normalizeBodyWeightLb(latest?.valueLb);
+    if (latestBodyWeight == null || bodyWeightEditedRef.current) return;
+    dispatch({
+      type: "UPDATE_BODY_WEIGHT",
+      bodyWeightLb: latestBodyWeight,
+    });
+  }, [dispatch]);
 
   useEffect(() => {
     if (isEditingPastWorkout) return;
     if (Platform.OS !== "ios" || !isHealthAvailable()) return;
 
-    void applyLatestHealthBodyWeight({ requestAuthorization: true }).catch(
-      () => undefined,
-    );
+    void applyLatestHealthBodyWeight().catch(() => undefined);
   }, [applyLatestHealthBodyWeight, isEditingPastWorkout]);
-
-  useEffect(() => {
-    if (Platform.OS !== "ios" || !healthWorkout.live) {
-      setHeartRateBpm(null);
-      return;
-    }
-
-    const subscription = addHeartRateSampleListener((sample) => {
-      if (Number.isFinite(sample.bpm)) {
-        setHeartRateBpm(Math.round(sample.bpm));
-      }
-    });
-
-    return () => subscription.remove();
-  }, [healthWorkout.live]);
 
   const moveExerciseTo = useCallback(
     (exerciseIndex: number, targetIndex: number) => {
@@ -2146,10 +2424,7 @@ function WorkoutScreen({
     }
   };
 
-  const saveInlineNoteTarget = (
-    target: InlineNoteEditTarget,
-    text: string,
-  ) => {
+  const saveInlineNoteTarget = (target: InlineNoteEditTarget, text: string) => {
     if (target.kind === "exercise") {
       dispatch({
         type: "UPDATE_USER_EXERCISE_NOTE",
@@ -2284,10 +2559,31 @@ function WorkoutScreen({
     );
   };
 
+  const stopRestTimer = (cancelNativeSurfaces = true) => {
+    restTimerGenerationRef.current += 1;
+    if (restTimerTimeoutRef.current) {
+      clearTimeout(restTimerTimeoutRef.current);
+      restTimerTimeoutRef.current = null;
+    }
+    if (cancelNativeSurfaces) {
+      void cancelWorkoutTimerNotification().catch(() => undefined);
+      void endRestTimerLiveActivity().catch(() => undefined);
+    }
+    setRestTimerEndsAt(null);
+    setTimerStatus(null);
+  };
+
+  const stopWorkoutEndSurfaces = () => {
+    stopRestTimer();
+    void cancelUnfinishedWorkoutNotification().catch(() => undefined);
+    void clearWatchWorkoutSnapshot().catch(() => undefined);
+  };
+
   const showFinishPreview = () => {
     if (!completedAt) {
       setCompletedAt(defaultCompletedAtForStartTime(workout.startTime));
     }
+    stopWorkoutEndSurfaces();
     setFinishPreviewOpen(true);
   };
 
@@ -2303,7 +2599,9 @@ function WorkoutScreen({
           .filter((group) => !group[0]?.set.completed)
           .map((group) => {
             const leadingSet = group[0];
-            return leadingSet ? getLedgerSetIndexLabel(exercise, leadingSet) : "";
+            return leadingSet
+              ? getLedgerSetIndexLabel(exercise, leadingSet)
+              : "";
           })
           .filter(Boolean);
 
@@ -2419,6 +2717,42 @@ function WorkoutScreen({
     }
   };
 
+  const saveWorkoutRestTimes = (restTimes: RestTimes) => {
+    dispatch({ type: "UPDATE_WORKOUT_REST_TIMES", restTimes });
+    setWorkoutRestTimesOpen(false);
+  };
+
+  const saveExerciseRestTimes = (
+    exerciseIndex: number,
+    restTimes: RestTimes,
+    options: { resetCurrentSets?: boolean } = {},
+  ) => {
+    const exercise = workout.exercises[exerciseIndex];
+    if (!exercise) return;
+
+    dispatch({
+      type: "UPDATE_EXERCISE_REST_TIMES",
+      exerciseIndex,
+      restTimes,
+    });
+
+    if (options.resetCurrentSets) {
+      dispatch({
+        type: "REPLACE_EXERCISE_SETS",
+        exerciseIndex,
+        sets: applyRestTimesToExerciseSets(
+          {
+            ...exercise,
+            restTimes,
+          },
+          restTimes,
+        ),
+      });
+    }
+
+    setExerciseRestTimesTarget(null);
+  };
+
   const closeActiveWorkoutToHome = () => {
     const draft: StoredWorkoutDraft = {
       workout,
@@ -2444,15 +2778,16 @@ function WorkoutScreen({
       message: "This workout draft will stay saved on this device.",
       actions: [
         { label: "keep editing", variant: "cancel" },
-        { label: "close", variant: "primary", onPress: closeActiveWorkoutToHome },
+        {
+          label: "close",
+          variant: "primary",
+          onPress: closeActiveWorkoutToHome,
+        },
         {
           label: "discard",
           variant: "danger",
           onPress: () => {
-            void Promise.allSettled([
-              clearPersistedActiveWorkout(),
-              cancelStrengthWorkout(),
-            ]).finally(onBack);
+            void clearPersistedActiveWorkout().finally(onBack);
           },
         },
       ],
@@ -2477,10 +2812,22 @@ function WorkoutScreen({
     setError(null);
     try {
       if (isEditingPastWorkout && workoutId) {
-        await api.updateWorkout({
-          workoutId,
-          workout: finishedWorkout,
-        });
+        try {
+          await api.updateWorkout({
+            workoutId,
+            workout: finishedWorkout,
+          });
+        } catch (saveError) {
+          try {
+            await enqueueCompletedWorkoutSave({
+              action: "update",
+              workoutId,
+              workout: finishedWorkout,
+            });
+          } catch {
+            throw saveError;
+          }
+        }
         setFinishPreviewOpen(false);
         onBack();
         return;
@@ -2509,7 +2856,6 @@ function WorkoutScreen({
           );
           setHealthWorkout((current) => ({
             ...current,
-            live: false,
             saving: false,
             message: healthResult.saved
               ? "health workout saved"
@@ -2518,13 +2864,24 @@ function WorkoutScreen({
         } catch (healthError) {
           setHealthWorkout((current) => ({
             ...current,
-            live: false,
             saving: false,
             message: `health save failed: ${getUnknownErrorMessage(healthError)}`,
           }));
         }
       }
-      await api.saveWorkout(finishedWorkout);
+      try {
+        await api.saveWorkout(finishedWorkout);
+      } catch (saveError) {
+        try {
+          await enqueueCompletedWorkoutSave({
+            action: "create",
+            workout: finishedWorkout,
+          });
+        } catch {
+          throw saveError;
+        }
+      }
+      stopWorkoutEndSurfaces();
       await clearPersistedActiveWorkout();
       setFinishPreviewOpen(false);
       onBack();
@@ -2579,58 +2936,40 @@ function WorkoutScreen({
     });
   };
 
-  const stopRestTimer = () => {
-    if (restTimerTimeoutRef.current) {
-      clearTimeout(restTimerTimeoutRef.current);
-      restTimerTimeoutRef.current = null;
-    }
-    const notificationId = restTimerNotificationIdRef.current;
-    restTimerNotificationIdRef.current = null;
-    void cancelWorkoutTimerNotification(notificationId).catch(() => undefined);
-    void endRestTimerLiveActivity().catch(() => undefined);
-    setRestTimerEndsAt(null);
-    setTimerStatus(null);
-  };
-
-  const startRestTimer = async (durationSeconds?: number) => {
+  const startRestTimer = (durationSeconds?: number) => {
     const timerSeconds = normalizeRestTimerSeconds(
       durationSeconds ?? restTimerDurationSeconds,
     );
-    stopRestTimer();
+    stopRestTimer(false);
+    const generation = restTimerGenerationRef.current + 1;
+    restTimerGenerationRef.current = generation;
+    const endsAt = Date.now() + timerSeconds * 1000;
 
     setRestTimerDurationSeconds(timerSeconds);
-    setTimerStatus(`starting ${formatRestTimerDurationLabel(timerSeconds)} timer`);
-    try {
-      const result = await withTimeout(
-        scheduleWorkoutTimerNotification(timerSeconds),
-        60_000,
-        "Notification permission did not respond.",
+    setNow(Date.now());
+    setRestTimerEndsAt(endsAt);
+    setTimerStatus(null);
+    void startOrUpdateRestTimerLiveActivity(
+      timerSeconds,
+      endsAt,
+      `${formatRestTimerDurationLabel(timerSeconds)} rest`,
+    ).catch(() => undefined);
+    restTimerTimeoutRef.current = setTimeout(() => {
+      if (restTimerGenerationRef.current !== generation) return;
+      restTimerGenerationRef.current += 1;
+      setRestTimerEndsAt(null);
+      setTimerStatus(
+        `${formatRestTimerDurationLabel(timerSeconds)} timer done`,
       );
-      if (result.scheduled) {
-        const endsAt = Date.now() + timerSeconds * 1000;
-        restTimerNotificationIdRef.current = result.identifier ?? null;
-        void startOrUpdateRestTimerLiveActivity(
-          timerSeconds,
-          endsAt,
-          `${formatRestTimerDurationLabel(timerSeconds)} rest`,
-        ).catch(() => undefined);
-        setNow(Date.now());
-        setRestTimerEndsAt(endsAt);
-        setTimerStatus(null);
-        restTimerTimeoutRef.current = setTimeout(() => {
-          setRestTimerEndsAt(null);
-          setTimerStatus(`${formatRestTimerDurationLabel(timerSeconds)} timer done`);
-          restTimerTimeoutRef.current = null;
-          restTimerNotificationIdRef.current = null;
-          void endRestTimerLiveActivity().catch(() => undefined);
-        }, timerSeconds * 1000);
-        return;
-      }
+      restTimerTimeoutRef.current = null;
+      void endRestTimerLiveActivity().catch(() => undefined);
+    }, timerSeconds * 1000);
 
-      setTimerStatus(result.message ?? "timer was not scheduled");
-    } catch (timerError) {
-      setTimerStatus(getUnknownErrorMessage(timerError));
-    }
+    void withTimeout(
+      scheduleWorkoutTimerNotification(timerSeconds),
+      10_000,
+      "Notification permission did not respond.",
+    ).catch(() => undefined);
   };
 
   const chooseRestTimerDuration = (durationSeconds: number) => {
@@ -2647,13 +2986,13 @@ function WorkoutScreen({
     void startRestTimer(timerSeconds);
   };
 
-  const toggleRestTimer = async () => {
+  const toggleRestTimer = () => {
     if (restTimerEndsAt != null || restTimerTimeoutRef.current) {
       stopRestTimer();
       return;
     }
 
-    await startRestTimer();
+    startRestTimer();
   };
   const startRestTimerRef = useRef(startRestTimer);
 
@@ -2674,19 +3013,13 @@ function WorkoutScreen({
           0,
           Math.min(1, restTimerRemainingSeconds / restTimerDurationSeconds),
         );
-  const timerStatusText = restTimerCountdown
-    ? `rest ${restTimerCountdown}`
-    : timerStatus;
+  const timerStatusText = restTimerCountdown ? null : timerStatus;
   const restTimerIdleLabel = formatRestTimerDurationLabel(
     restTimerDurationSeconds,
   );
-  const healthStatusText = healthWorkout.starting
-    ? "health starting"
-    : healthWorkout.saving
-      ? "health saving"
-      : healthWorkout.live
-        ? "health running"
-        : healthWorkout.message;
+  const healthStatusText = healthWorkout.saving
+    ? "health saving"
+    : healthWorkout.message;
   const bodyWeightText =
     workout.bodyWeightLb == null ? "" : formatNumber(workout.bodyWeightLb);
   const bodyWeightInputText = bodyWeightEntry ?? bodyWeightText;
@@ -2716,7 +3049,10 @@ function WorkoutScreen({
             workout.exercises.length,
             command.direction,
           );
-          if (nextExerciseIndex == null || nextExerciseIndex === currentExerciseIndex) {
+          if (
+            nextExerciseIndex == null ||
+            nextExerciseIndex === currentExerciseIndex
+          ) {
             setWatchSnapshotRequestNonce((value) => value + 1);
             return;
           }
@@ -2795,6 +3131,7 @@ function WorkoutScreen({
               exerciseIndex: target.exerciseIndex,
               setIndex,
               weight: value,
+              preserveCompleted: true,
             });
           } else {
             dispatch({
@@ -2802,10 +3139,13 @@ function WorkoutScreen({
               exerciseIndex: target.exerciseIndex,
               setIndex,
               reps: value,
+              preserveCompleted: true,
             });
           }
           return;
         }
+
+        if (command.type !== "toggleSetCompleted") return;
 
         const wasCompleted = Boolean(set.completed);
         triggerSelectionHaptic();
@@ -2815,7 +3155,35 @@ function WorkoutScreen({
           setIndex,
         });
         if (!wasCompleted) {
-          void startRestTimerRef.current();
+          const restSeconds = getRestTimerSecondsAfterSet(
+            exercise,
+            setIndex,
+            getEffectiveExerciseRestTimes(workout, exercise),
+          );
+          if (restSeconds != null) {
+            startRestTimerRef.current(restSeconds);
+          }
+          const nextTarget = getNextWatchSetTargetAfterCompletion(
+            workout.exercises,
+            target.exerciseIndex,
+            getSetTargetId(set, setIndex),
+          );
+          if (nextTarget) {
+            if (nextTarget.exerciseIndex !== currentExerciseIndex) {
+              dispatch({
+                type: "SELECT_EXERCISE",
+                exerciseIndex: nextTarget.exerciseIndex,
+              });
+            }
+            setSetEditor({
+              exerciseIndex: nextTarget.exerciseIndex,
+              setId: getSetTargetId(
+                nextTarget.indexedSet.set,
+                nextTarget.indexedSet.index,
+              ),
+              field: "reps",
+            });
+          }
         }
       },
     );
@@ -2831,55 +3199,31 @@ function WorkoutScreen({
     restTimerDurationSeconds,
     restTimerEndsAt,
     workout.exercises,
+    workout.restTimes,
   ]);
   const watchWorkoutSnapshot = useMemo(() => {
-    if (
-      isEditingPastWorkout ||
-      completedAt ||
-      workout.exercises.length === 0
-    ) {
+    if (isEditingPastWorkout || completedAt) {
       return null;
     }
 
-    const currentExercise = workout.exercises[currentExerciseIndex];
-    if (!currentExercise) return null;
-    const selectedSetId =
-      setEditor?.exerciseIndex === currentExerciseIndex
-        ? setEditor.setId
-        : null;
-    const currentSet = buildWatchCurrentSetSnapshot(
-      currentExercise,
-      selectedSetId,
-    );
-
-    return {
-      workoutName: workout.name,
-      exerciseName: currentExercise.name,
-      setId: currentSet.setId,
-      setLabel: currentSet.label,
-      setText: currentSet.text,
-      setWeight: currentSet.weight,
-      setReps: currentSet.reps,
-      setWeightModifier: currentSet.weightModifier,
-      setCompleted: currentSet.completed,
-      restText: restTimerCountdown
-        ? `rest ${restTimerCountdown}`
-        : `rest ${restTimerIdleLabel}`,
-      restTimerRunning: restTimerRemainingSeconds != null,
-      restTimerRemainingSeconds,
+    return buildWatchWorkoutSnapshot({
+      workout,
+      currentExerciseIndex,
+      selectedSetId:
+        setEditor?.exerciseIndex === currentExerciseIndex
+          ? setEditor.setId
+          : null,
+      restTimerIdleLabel,
+      restTimerEndsAt,
       restTimerDurationSeconds,
-      isActive: true,
-      updatedAt: new Date(now).toISOString(),
-    };
+    });
   }, [
     completedAt,
     currentExerciseIndex,
     isEditingPastWorkout,
-    now,
-    restTimerCountdown,
     restTimerDurationSeconds,
+    restTimerEndsAt,
     restTimerIdleLabel,
-    restTimerRemainingSeconds,
     setEditor?.exerciseIndex,
     setEditor?.setId,
     workout,
@@ -2899,6 +3243,8 @@ function WorkoutScreen({
   }, [watchSnapshotRequestNonce, watchWorkoutSnapshot]);
 
   const showExerciseTabs = workout.exercises.length > 0;
+  const setKeyboardOpen = canEditWorkout && Boolean(setEditor);
+  const setKeyboardBottomPadding = setKeyboardOpen ? setEditorCoveredHeight : 0;
   const exercisePagerHeight = Math.max(
     360,
     windowHeight -
@@ -2908,6 +3254,12 @@ function WorkoutScreen({
       12,
   );
   const exerciseNavigationLocked = appModalLayerOpen;
+  const updateSetEditorCoveredHeight = useCallback((height: number) => {
+    const nextHeight = Math.max(0, Math.ceil(height));
+    setSetEditorCoveredHeight((previousHeight) =>
+      Math.abs(previousHeight - nextHeight) > 1 ? nextHeight : previousHeight,
+    );
+  }, []);
   const selectExerciseFromPagerOffset = useCallback(
     (offsetY: number) => {
       if (exerciseNavigationLocked) return;
@@ -2985,6 +3337,7 @@ function WorkoutScreen({
                 : null
             }
             viewMode={viewMode}
+            restTimes={getEffectiveExerciseRestTimes(workout, exercise)}
             onDispatch={dispatch}
             onChangeInlineNote={changeInlineNoteDraft}
             onEndInlineNoteEdit={finishInlineNoteEdit}
@@ -3001,8 +3354,11 @@ function WorkoutScreen({
             onOpenNoteEditor={openNoteEditor}
             onStartInlineNoteEdit={startInlineNoteEdit}
             onStartTextEdit={beginTextEditing}
-            onStartRestTimer={() => {
-              void startRestTimer();
+            onStartRestTimer={(durationSeconds) => {
+              startRestTimer(durationSeconds);
+            }}
+            onOpenRestTimes={(targetExerciseIndex) => {
+              setExerciseRestTimesTarget(targetExerciseIndex);
             }}
             onDeleteExercise={deleteExercise}
             onSaveUserExerciseSettings={(targetExerciseIndex, settings) => {
@@ -3019,13 +3375,19 @@ function WorkoutScreen({
       </View>
     );
   };
+  const exerciseRestTimesExercise =
+    exerciseRestTimesTarget == null
+      ? null
+      : (workout.exercises[exerciseRestTimesTarget] ?? null);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <ScrollView
         contentContainerStyle={[
           styles.workoutPage,
-          { paddingBottom: insets.bottom + 24 },
+          {
+            paddingBottom: insets.bottom + 24 + setKeyboardBottomPadding,
+          },
         ]}
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="always"
@@ -3035,7 +3397,7 @@ function WorkoutScreen({
         onTouchStart={(event) => {
           handleInlineTextEditTouchCapture(event.nativeEvent.target);
         }}
-        scrollEnabled={!planDragging && !showExerciseTabs}
+        scrollEnabled={!planDragging && (!showExerciseTabs || setKeyboardOpen)}
       >
         {isPastReview ? (
           <PastReviewWorkoutHeader
@@ -3058,15 +3420,14 @@ function WorkoutScreen({
           <ActiveWorkoutHeader
             canRedo={canRedo}
             canUndo={canUndo}
-            heartRateBpm={healthWorkout.live ? heartRateBpm : null}
-            showHeartRate={healthWorkout.live}
             restTimerCountdown={restTimerCountdown}
             restTimerIdleLabel={restTimerIdleLabel}
             restTimerProgress={restTimerProgress}
             saving={saving}
             onBack={closeWorkout}
             onOpenRestTimerDuration={(anchor) => {
-              if (restTimerEndsAt != null || restTimerTimeoutRef.current) return;
+              if (restTimerEndsAt != null || restTimerTimeoutRef.current)
+                return;
               setRestTimerDurationAnchor(anchor);
               setRestTimerDurationOpen(true);
             }}
@@ -3121,7 +3482,10 @@ function WorkoutScreen({
 
         {showExerciseTabs ? (
           <View
-            style={[styles.exercisePagerViewport, { height: exercisePagerHeight }]}
+            style={[
+              styles.exercisePagerViewport,
+              { height: exercisePagerHeight },
+            ]}
             onLayout={(event) => {
               const nextTop = Math.round(event.nativeEvent.layout.y);
               setExercisePagerContentTop((previousTop) =>
@@ -3138,7 +3502,7 @@ function WorkoutScreen({
               keyboardShouldPersistTaps="always"
               nestedScrollEnabled
               pagingEnabled
-              scrollEnabled={!exerciseNavigationLocked}
+              scrollEnabled={!exerciseNavigationLocked && !setKeyboardOpen}
               showsVerticalScrollIndicator={false}
               snapToAlignment="start"
               snapToInterval={exercisePagerHeight}
@@ -3168,16 +3532,18 @@ function WorkoutScreen({
           target={setEditor}
           onClose={() => {
             commitPendingHistory();
+            updateSetEditorCoveredHeight(0);
             setSetEditor(null);
           }}
           onRetarget={(nextTarget) => {
             commitPendingHistory();
             setSetEditor(nextTarget);
           }}
-          onStartRestTimer={() => {
-            void startRestTimer();
+          onStartRestTimer={(durationSeconds) => {
+            startRestTimer(durationSeconds);
           }}
           onDispatch={dispatch}
+          onKeyboardHeightChange={updateSetEditorCoveredHeight}
         />
       ) : null}
       <WorkoutTitleCommandMenu
@@ -3197,6 +3563,10 @@ function WorkoutScreen({
           setBodyWeightDialogError(null);
           setBodyWeightEntry(bodyWeightText);
           setBodyWeightDialogOpen(true);
+        }}
+        onRestTimes={() => {
+          setWorkoutMenuOpen(false);
+          setWorkoutRestTimesOpen(true);
         }}
         onClose={() => {
           setWorkoutMenuOpen(false);
@@ -3230,6 +3600,37 @@ function WorkoutScreen({
         onResetToHealth={() => void resetBodyWeightFromHealth()}
         onSave={saveBodyWeightDialog}
       />
+      <RestTimesEditorModal
+        visible={canEditWorkout && workoutRestTimesOpen}
+        title="workout rest times"
+        restTimes={normalizeRestTimes(workout.restTimes)}
+        onClose={() => setWorkoutRestTimesOpen(false)}
+        onSave={saveWorkoutRestTimes}
+      />
+      {exerciseRestTimesTarget != null ? (
+        <RestTimesEditorModal
+          visible={canEditWorkout && Boolean(exerciseRestTimesExercise)}
+          title={`${exerciseRestTimesExercise?.name ?? "exercise"} rest times`}
+          restTimes={
+            exerciseRestTimesExercise
+              ? getEffectiveExerciseRestTimes(
+                  workout,
+                  exerciseRestTimesExercise,
+                )
+              : normalizeRestTimes(workout.restTimes)
+          }
+          resetLabel="save + reset sets"
+          onClose={() => setExerciseRestTimesTarget(null)}
+          onSave={(restTimes) =>
+            saveExerciseRestTimes(exerciseRestTimesTarget, restTimes)
+          }
+          onSaveAndReset={(restTimes) =>
+            saveExerciseRestTimes(exerciseRestTimesTarget, restTimes, {
+              resetCurrentSets: true,
+            })
+          }
+        />
+      ) : null}
       {isActiveWorkout && restTimerDurationOpen ? (
         <RestTimerDurationSheet
           durationSeconds={restTimerDurationSeconds}
@@ -3313,8 +3714,6 @@ function WorkoutScreen({
 function ActiveWorkoutHeader({
   canRedo,
   canUndo,
-  heartRateBpm,
-  showHeartRate,
   restTimerCountdown,
   restTimerIdleLabel,
   restTimerProgress,
@@ -3328,8 +3727,6 @@ function ActiveWorkoutHeader({
 }: {
   canRedo: boolean;
   canUndo: boolean;
-  heartRateBpm: number | null;
-  showHeartRate: boolean;
   restTimerCountdown: string | null;
   restTimerIdleLabel: string;
   restTimerProgress: number;
@@ -3434,19 +3831,6 @@ function ActiveWorkoutHeader({
             </Text>
           </View>
         </Pressable>
-        {showHeartRate ? (
-          <View
-            accessibilityLabel={
-              heartRateBpm == null
-                ? "Heart rate waiting for sample"
-                : `Heart rate ${heartRateBpm} beats per minute`
-            }
-            style={styles.heartRateIndicator}
-          >
-            <Icon name="heart" size={14} color={palette.danger} />
-            <Text style={styles.heartRateText}>{heartRateBpm ?? "--"}</Text>
-          </View>
-        ) : null}
       </View>
 
       <WorkoutHeaderActions
@@ -3621,7 +4005,9 @@ function RestTimerDurationSheet({
               />
             ) : null}
             <Text style={styles.restTimerUseCustomText}>
-              {timerRunning ? restTimerCountdown : `start ${formatCountdown(selectedSeconds)}`}
+              {timerRunning
+                ? restTimerCountdown
+                : `start ${formatCountdown(selectedSeconds)}`}
             </Text>
           </Pressable>
         </View>
@@ -3671,24 +4057,11 @@ function WorkoutTitleSection({
   onStartNameEdit: () => void;
   onStartNoteEdit: () => void;
 }) {
-  const presentDialog = useAppDialog();
-  const { width } = useWindowDimensions();
   const menuButtonRef = useRef<View | null>(null);
   const startedAt = new Date(startTime);
   const timingEnd = completedAt ?? new Date(now);
   const titleEditValue = workoutNameDraft ?? workoutName;
   const noteValue = workoutNoteDraft ?? workoutNote;
-  const titleInputWidth = Math.min(
-    getWorkoutTitleInputWidth(titleEditValue),
-    Math.max(80, width - 96),
-  );
-
-  useEffect(() => {
-    if (!editingName) return;
-
-    const frame = requestAnimationFrame(() => nameInputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [editingName, nameInputRef]);
 
   useEffect(() => {
     if (!editingNote) return;
@@ -3718,27 +4091,11 @@ function WorkoutTitleSection({
     <View style={styles.workoutTitleBlock}>
       <View style={styles.workoutTitleHeader}>
         {editingName ? (
-          <TextInput
-            key={titleEditValue}
-            ref={nameInputRef}
-            accessibilityLabel="Edit workout name"
-            autoComplete="off"
-            autoCapitalize="words"
-            autoCorrect={false}
-            importantForAutofill="no"
-            inputMode="text"
-            keyboardType="default"
-            multiline={false}
-            returnKeyType="done"
-            selectTextOnFocus
-            style={[styles.workoutTitleEditingInput, { width: titleInputWidth }]}
-            testID="workout-title-inline-input"
-            textContentType="none"
-            defaultValue={titleEditValue}
-            onBlur={onEndNameEdit}
-            onChangeText={onChangeName}
-            onTouchStart={(event) => event.stopPropagation()}
-            onSubmitEditing={onEndNameEdit}
+          <WorkoutNameInlineInput
+            initialValue={titleEditValue}
+            inputRef={nameInputRef}
+            onChange={onChangeName}
+            onEnd={onEndNameEdit}
           />
         ) : canEditWorkout ? (
           <Pressable
@@ -3764,12 +4121,12 @@ function WorkoutTitleSection({
             accessibilityLabel="Workout title options"
             accessibilityRole="button"
             hitSlop={8}
-          style={styles.workoutTitleMenuButton}
-          testID="workout-title-menu"
-          onPress={openMenu}
-        >
-          <Icon name="ellipsis-horizontal" size={20} color={palette.ink} />
-        </Pressable>
+            style={styles.workoutTitleMenuButton}
+            testID="workout-title-menu"
+            onPress={openMenu}
+          >
+            <Icon name="ellipsis-horizontal" size={20} color={palette.ink} />
+          </Pressable>
         ) : null}
       </View>
       <View style={styles.workoutTitleMetaRow}>
@@ -3826,6 +4183,56 @@ function WorkoutTitleSection({
         )
       ) : null}
     </View>
+  );
+}
+
+function WorkoutNameInlineInput({
+  initialValue,
+  inputRef,
+  onChange,
+  onEnd,
+}: {
+  initialValue: string;
+  inputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  onChange: (name: string) => void;
+  onEnd: () => void;
+}) {
+  const { width } = useWindowDimensions();
+  const [value, setValue] = useState(initialValue);
+  const maxWidth = Math.max(80, width - 96);
+
+  return (
+    <TextInput
+      ref={inputRef}
+      accessibilityLabel="Edit workout name"
+      autoCapitalize="words"
+      autoComplete="off"
+      autoCorrect={false}
+      autoFocus
+      importantForAutofill="no"
+      inputMode="text"
+      keyboardType="default"
+      multiline={false}
+      returnKeyType="done"
+      selectTextOnFocus
+      style={[
+        styles.workoutTitleEditingInput,
+        {
+          maxWidth,
+          width: Math.min(getWorkoutTitleInputWidth(value), maxWidth),
+        },
+      ]}
+      testID="workout-title-inline-input"
+      textContentType="none"
+      value={value}
+      onBlur={onEnd}
+      onChangeText={(nextValue) => {
+        setValue(nextValue);
+        onChange(nextValue);
+      }}
+      onSubmitEditing={onEnd}
+      onTouchStart={(event) => event.stopPropagation()}
+    />
   );
 }
 
@@ -3903,6 +4310,7 @@ function WorkoutTitleCommandMenu({
   onEditBodyWeight,
   onEditName,
   onRemoveNote,
+  onRestTimes,
 }: {
   visible: boolean;
   anchor: MenuAnchor | null;
@@ -3913,6 +4321,7 @@ function WorkoutTitleCommandMenu({
   onEditBodyWeight: () => void;
   onEditName: () => void;
   onRemoveNote: () => void;
+  onRestTimes: () => void;
 }) {
   const menuTop = Math.max(8, Math.round(anchor?.y ?? 132));
 
@@ -3923,7 +4332,10 @@ function WorkoutTitleCommandMenu({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <DismissibleModalShade onDismiss={onClose} style={styles.commandMenuShade}>
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.commandMenuShade}
+      >
         <View style={[styles.commandMenuPanel, { top: menuTop }]}>
           <CommandMenuItem
             icon="pencil-outline"
@@ -3942,6 +4354,12 @@ function WorkoutTitleCommandMenu({
             label="Body Weight"
             onPress={onEditBodyWeight}
             testID="workout-menu-body-weight"
+          />
+          <CommandMenuItem
+            icon="timer-outline"
+            label="Rest Times"
+            onPress={onRestTimes}
+            testID="workout-menu-rest-times"
           />
           {hasWorkoutNote ? (
             <CommandMenuItem
@@ -3991,7 +4409,10 @@ function BodyWeightEditorModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <DismissibleModalShade onDismiss={onClose} style={styles.confirmDialogShade}>
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.confirmDialogShade}
+      >
         <View style={styles.bodyWeightDialog}>
           <View style={styles.confirmDialogCopy}>
             <Text style={styles.confirmDialogTitle}>Body Weight</Text>
@@ -4071,6 +4492,161 @@ function BodyWeightEditorModal({
   );
 }
 
+function RestTimesEditorModal({
+  visible,
+  title,
+  restTimes,
+  resetLabel,
+  onClose,
+  onSave,
+  onSaveAndReset,
+}: {
+  visible: boolean;
+  title: string;
+  restTimes: RestTimes;
+  resetLabel?: string;
+  onClose: () => void;
+  onSave: (restTimes: RestTimes) => void;
+  onSaveAndReset?: (restTimes: RestTimes) => void;
+}) {
+  const [draft, setDraft] = useState(() => normalizeRestTimes(restTimes));
+
+  useEffect(() => {
+    if (!visible) return;
+    setDraft(normalizeRestTimes(restTimes));
+  }, [visible, restTimes.warmupSeconds, restTimes.workingSeconds]);
+
+  const changeValue = (key: keyof RestTimes, direction: 1 | -1 = 1) => {
+    const options = [null, ...REST_TIMER_PRESET_SECONDS] as Array<
+      number | null
+    >;
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      [key]:
+        options[
+          (Math.max(
+            0,
+            options.findIndex(
+              (option) => option === (currentDraft[key] ?? null),
+            ),
+          ) +
+            direction +
+            options.length) %
+            options.length
+        ],
+    }));
+  };
+
+  return (
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.confirmDialogShade}
+      >
+        <View style={styles.restTimesDialog}>
+          <Text style={styles.restTimesDialogTitle}>{title}</Text>
+          <Text style={styles.restTimesDialogHelp}>
+            completed timers will not be affected. durations are saved for next
+            time.
+          </Text>
+          <RestTimesEditorRow
+            label="work set"
+            value={draft.workingSeconds}
+            onPrevious={() => changeValue("workingSeconds", -1)}
+            onNext={() => changeValue("workingSeconds", 1)}
+          />
+          <RestTimesEditorRow
+            label="warm-up set"
+            value={draft.warmupSeconds}
+            onPrevious={() => changeValue("warmupSeconds", -1)}
+            onNext={() => changeValue("warmupSeconds", 1)}
+          />
+          <Pressable
+            accessibilityLabel="Update rest timers"
+            accessibilityRole="button"
+            style={[
+              styles.confirmDialogAction,
+              styles.confirmDialogActionPrimary,
+            ]}
+            testID="rest-times-save"
+            onPress={() => onSave(draft)}
+          >
+            <Text style={styles.confirmDialogActionText}>
+              update rest timers
+            </Text>
+          </Pressable>
+          {onSaveAndReset ? (
+            <Pressable
+              accessibilityLabel="Update rest timers and reset current sets"
+              accessibilityRole="button"
+              style={styles.confirmDialogAction}
+              testID="rest-times-save-reset"
+              onPress={() => onSaveAndReset(draft)}
+            >
+              <Text style={styles.confirmDialogActionText}>
+                {resetLabel ?? "update + reset sets"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </DismissibleModalShade>
+    </AppModal>
+  );
+}
+
+function RestTimesEditorRow({
+  label,
+  value,
+  onPrevious,
+  onNext,
+}: {
+  label: string;
+  value: number | null | undefined;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <View style={styles.restTimesEditorRow}>
+      <Text style={styles.restTimesEditorLabel}>{label}</Text>
+      <View style={styles.restTimesEditorValueControls}>
+        <Pressable
+          accessibilityLabel={`Decrease ${label} rest time`}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.restTimesEditorStepper}
+          onPress={onPrevious}
+        >
+          <Text style={styles.restTimesEditorStepperText}>-</Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel={`${label} rest time ${formatRestTimeSetting(value)}`}
+          accessibilityRole="button"
+          style={styles.restTimesEditorValue}
+          onPress={onNext}
+        >
+          <Text style={styles.restTimesEditorValueText}>
+            {formatRestTimeSetting(value)}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel={`Increase ${label} rest time`}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.restTimesEditorStepper}
+          onPress={onNext}
+        >
+          <Text style={styles.restTimesEditorStepperText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function ExerciseCommandMenu({
   visible,
   anchor,
@@ -4079,6 +4655,7 @@ function ExerciseCommandMenu({
   onClose,
   onOpenPreferences,
   onRemoveExercise,
+  onRestTimes,
 }: {
   visible: boolean;
   anchor: MenuAnchor | null;
@@ -4087,6 +4664,7 @@ function ExerciseCommandMenu({
   onClose: () => void;
   onOpenPreferences: () => void;
   onRemoveExercise: () => void;
+  onRestTimes: () => void;
 }) {
   const menuTop = Math.max(8, Math.round(anchor?.y ?? 312));
 
@@ -4097,7 +4675,10 @@ function ExerciseCommandMenu({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <DismissibleModalShade onDismiss={onClose} style={styles.commandMenuShade}>
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.commandMenuShade}
+      >
         <View style={[styles.commandMenuPanel, { top: menuTop }]}>
           <CommandMenuItem
             icon="document-outline"
@@ -4116,6 +4697,12 @@ function ExerciseCommandMenu({
             label="Preferences"
             onPress={onOpenPreferences}
             testID="exercise-menu-preferences"
+          />
+          <CommandMenuItem
+            icon="timer-outline"
+            label="Rest Times"
+            onPress={onRestTimes}
+            testID="exercise-menu-rest-times"
           />
           <CommandMenuItem
             danger
@@ -4151,7 +4738,11 @@ function CommandMenuItem({
       testID={testID}
       onPress={onPress}
     >
-      <Icon name={icon} size={21} color={danger ? palette.danger : palette.muted} />
+      <Icon
+        name={icon}
+        size={21}
+        color={danger ? palette.danger : palette.muted}
+      />
       <Text
         style={[
           styles.commandMenuItemText,
@@ -4200,7 +4791,8 @@ function WorkoutTimingEditorModal({
   const selectedPickerValue =
     selectedField === "start"
       ? draftStart
-      : (draftCompleted ?? defaultCompletedAtForStartTime(draftStart.getTime()));
+      : (draftCompleted ??
+        defaultCompletedAtForStartTime(draftStart.getTime()));
 
   const toggleAutomaticTiming = () => {
     if (automaticTiming) {
@@ -4230,7 +4822,12 @@ function WorkoutTimingEditorModal({
   };
 
   return (
-    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <DismissibleModalShade
         onDismiss={onClose}
         style={[
@@ -4318,7 +4915,9 @@ function WorkoutTimingEditorModal({
                   ? "Currently Active"
                   : formatAdjustDateTime(durationEnd, new Date(now))
               }
-              onPress={automaticTiming ? undefined : () => setSelectedField("end")}
+              onPress={
+                automaticTiming ? undefined : () => setSelectedField("end")
+              }
             />
           </View>
 
@@ -4792,8 +5391,16 @@ function ExercisePlanModal({
   onDelete: (exerciseIndex: number) => void;
 }) {
   return (
-    <AppModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <DismissibleModalShade onDismiss={onClose} style={styles.exercisePlanShade}>
+    <AppModal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <DismissibleModalShade
+        onDismiss={onClose}
+        style={styles.exercisePlanShade}
+      >
         <View style={styles.exercisePlanSheet}>
           <View style={styles.exercisePlanHeader}>
             <Pressable
@@ -5022,6 +5629,7 @@ function ExerciseSection({
   selectedField,
   selectedSetId,
   viewMode,
+  restTimes,
   onDispatch,
   onChangeInlineNote,
   onEndInlineNoteEdit,
@@ -5031,17 +5639,21 @@ function ExerciseSection({
   onStartInlineNoteEdit,
   onStartTextEdit,
   onStartRestTimer,
+  onOpenRestTimes,
   onDeleteExercise,
   onSaveUserExerciseSettings,
 }: {
   exercise: WorkoutExercise;
   exerciseIndex: number;
   inlineNoteDraft: string | null;
-  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<
+    typeof TextInput
+  > | null>;
   inlineNoteTarget: InlineNoteEditTarget | null;
   selectedField: SetEditField | null;
   selectedSetId: string | null;
   viewMode: WorkoutViewMode;
+  restTimes: RestTimes;
   onDispatch: (action: Action) => void;
   onChangeInlineNote: (note: string) => void;
   onEndInlineNoteEdit: () => void;
@@ -5050,7 +5662,8 @@ function ExerciseSection({
   onOpenNoteEditor: (target: NoteEditTarget) => void;
   onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
   onStartTextEdit: () => void;
-  onStartRestTimer: () => void;
+  onStartRestTimer: (durationSeconds?: number) => void;
+  onOpenRestTimes: (exerciseIndex: number) => void;
   onDeleteExercise: (exerciseIndex: number) => void;
   onSaveUserExerciseSettings: (
     exerciseIndex: number,
@@ -5066,6 +5679,7 @@ function ExerciseSection({
   const exerciseMenuButtonRef = useRef<View | null>(null);
   const { warmups, working } = splitSets(exercise);
   const editable = viewMode !== "past-review";
+  const effectiveRestTimes = restTimes;
   const pinnedNoteTarget: InlineNoteEditTarget = {
     kind: "exercise",
     exerciseIndex,
@@ -5172,6 +5786,11 @@ function ExerciseSection({
           setExerciseMenuAnchor(null);
         }}
         onOpenPreferences={openExercisePreferences}
+        onRestTimes={() => {
+          setExerciseMenuOpen(false);
+          setExerciseMenuAnchor(null);
+          onOpenRestTimes(exerciseIndex);
+        }}
         onRemoveExercise={() => {
           setExerciseMenuOpen(false);
           setExerciseMenuAnchor(null);
@@ -5268,6 +5887,7 @@ function ExerciseSection({
         <ExerciseSetCards
           exercise={exercise}
           exerciseIndex={exerciseIndex}
+          restTimes={effectiveRestTimes}
           inlineNoteDraft={inlineNoteDraft}
           inlineNoteInputRef={inlineNoteInputRef}
           inlineNoteTarget={inlineNoteTarget}
@@ -5297,6 +5917,7 @@ function ExerciseSection({
           onSelectExercise={onSelectExercise}
           onStartRestTimer={onStartRestTimer}
           onStartInlineNoteEdit={onStartInlineNoteEdit}
+          restTimes={effectiveRestTimes}
         />
       ) : (
         <>
@@ -5325,6 +5946,7 @@ function ExerciseSection({
 function ExerciseSetLedgerView({
   exercise,
   exerciseIndex,
+  restTimes,
   inlineNoteDraft,
   inlineNoteInputRef,
   inlineNoteTarget,
@@ -5340,8 +5962,11 @@ function ExerciseSetLedgerView({
 }: {
   exercise: WorkoutExercise;
   exerciseIndex: number;
+  restTimes: RestTimes;
   inlineNoteDraft: string | null;
-  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<
+    typeof TextInput
+  > | null>;
   inlineNoteTarget: InlineNoteEditTarget | null;
   selectedField: SetEditField | null;
   selectedSetId: string | null;
@@ -5350,7 +5975,7 @@ function ExerciseSetLedgerView({
   onEndInlineNoteEdit: () => void;
   onOpenSet: (setId: string, field?: SetEditField) => void;
   onSelectExercise: () => void;
-  onStartRestTimer: () => void;
+  onStartRestTimer: (durationSeconds?: number) => void;
   onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
 }) {
   const split = splitSets(exercise);
@@ -5379,6 +6004,7 @@ function ExerciseSetLedgerView({
       inlineNoteTarget={inlineNoteTarget}
       previousExercise={previousExercise}
       previousGroups={previousGroups}
+      restTimes={restTimes}
       selectedField={selectedField}
       selectedSetId={selectedSetId}
       onChangeInlineNote={onChangeInlineNote}
@@ -5396,6 +6022,7 @@ function NotebookSetLedger({
   exercise,
   exerciseIndex,
   groups,
+  restTimes,
   inlineNoteDraft,
   inlineNoteInputRef,
   inlineNoteTarget,
@@ -5414,8 +6041,11 @@ function NotebookSetLedger({
   exercise: WorkoutExercise;
   exerciseIndex: number;
   groups: IndexedWorkoutSet[][];
+  restTimes: RestTimes;
   inlineNoteDraft: string | null;
-  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<
+    typeof TextInput
+  > | null>;
   inlineNoteTarget: InlineNoteEditTarget | null;
   previousExercise: WorkoutExercise | null;
   previousGroups: IndexedWorkoutSet[][];
@@ -5426,12 +6056,13 @@ function NotebookSetLedger({
   onEndInlineNoteEdit: () => void;
   onOpenSet: (setId: string, field?: SetEditField) => void;
   onSelectExercise: () => void;
-  onStartRestTimer: () => void;
+  onStartRestTimer: (durationSeconds?: number) => void;
   onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
 }) {
   const presentDialog = useAppDialog();
-  const [revealedPreviousGroupIndex, setRevealedPreviousGroupIndex] =
-    useState<number | null>(null);
+  const [revealedPreviousGroupIndex, setRevealedPreviousGroupIndex] = useState<
+    number | null
+  >(null);
 
   const addSet = () => {
     onSelectExercise();
@@ -5452,6 +6083,7 @@ function NotebookSetLedger({
       prevReps: baseSet?.reps ?? null,
       weightModifier: baseSet?.weightModifier,
       restBefore: groups.length > 0 ? "standard" : undefined,
+      restSeconds: groups.length > 0 ? restTimes.workingSeconds : undefined,
     };
     onDispatch({
       type: "REPLACE_EXERCISE_SETS",
@@ -5572,7 +6204,10 @@ function NotebookSetLedger({
     presentDialog({
       title: logicalLabel,
       actions: [
-        { label: "edit note", onPress: () => onStartInlineNoteEdit(noteTarget) },
+        {
+          label: "edit note",
+          onPress: () => onStartInlineNoteEdit(noteTarget),
+        },
         { label: "extend set", onPress: () => appendShortRestSegment(group) },
         {
           label: "delete set",
@@ -5617,6 +6252,71 @@ function NotebookSetLedger({
     });
   };
 
+  const applyRestChoice = (
+    setIndex: number,
+    restBefore: SetRestType | undefined,
+  ) => {
+    const set = exercise.sets[setIndex];
+    if (!set) return;
+    const nextSet = { ...set, restBefore };
+    onDispatch({
+      type: "SET_REST_BEFORE",
+      exerciseIndex,
+      setIndex,
+      restBefore,
+      restSeconds:
+        restBefore === "standard"
+          ? getRestSecondsForSet(nextSet, restTimes)
+          : null,
+    });
+  };
+
+  const openRestChoicePicker = (
+    setIndex: number,
+    label: string,
+    set: WorkoutSet,
+  ) => {
+    onSelectExercise();
+    triggerSelectionHaptic();
+    const standardSet = { ...set, restBefore: "standard" as const };
+    const standardRestLabel = formatRestTimeSetting(
+      getRestSecondsForSet(standardSet, restTimes),
+    );
+    const standardLabel =
+      standardRestLabel === "none"
+        ? "standard"
+        : `standard ${standardRestLabel}`;
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          cancelButtonIndex: 3,
+          options: [standardLabel, "short", "none", "cancel"],
+          title: `rest before ${label}`,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) applyRestChoice(setIndex, "standard");
+          if (buttonIndex === 1) applyRestChoice(setIndex, "short");
+          if (buttonIndex === 2) applyRestChoice(setIndex, undefined);
+        },
+      );
+      return;
+    }
+
+    presentDialog({
+      title: `rest before ${label}`,
+      actions: [
+        {
+          label: standardLabel,
+          onPress: () => applyRestChoice(setIndex, "standard"),
+        },
+        { label: "short", onPress: () => applyRestChoice(setIndex, "short") },
+        { label: "none", onPress: () => applyRestChoice(setIndex, undefined) },
+        { label: "cancel", variant: "cancel" },
+      ],
+    });
+  };
+
   if (groups.length === 0) {
     return (
       <View style={styles.notebookLedger}>
@@ -5641,15 +6341,24 @@ function NotebookSetLedger({
           >
             {groupIndex > 0 ? (
               <NotebookRestSeparator
-                label={
-                  leadingSet.set.restBefore === "short"
-                    ? "short"
-                    : formatRestDurationLabel(leadingSet.set)
-                }
+                label={formatRestSeparatorLabel(leadingSet.set, restTimes)}
                 onPress={() => {
                   onSelectExercise();
-                  toggleRest(onDispatch, exerciseIndex, exercise, leadingSet.index);
+                  toggleRest(
+                    onDispatch,
+                    exerciseIndex,
+                    exercise,
+                    leadingSet.index,
+                    restTimes,
+                  );
                 }}
+                onLongPress={() =>
+                  openRestChoicePicker(
+                    leadingSet.index,
+                    logicalLabel,
+                    leadingSet.set,
+                  )
+                }
               />
             ) : null}
             {group.map((indexedSet, segmentIndex) => {
@@ -5680,7 +6389,10 @@ function NotebookSetLedger({
                 <View key={`${setId}-${indexedSet.index}`}>
                   {segmentIndex > 0 ? (
                     <NotebookRestSeparator
-                      label="short"
+                      label={formatRestSeparatorLabel(
+                        indexedSet.set,
+                        restTimes,
+                      )}
                       onPress={() => {
                         onSelectExercise();
                         toggleRest(
@@ -5688,8 +6400,16 @@ function NotebookSetLedger({
                           exerciseIndex,
                           exercise,
                           indexedSet.index,
+                          restTimes,
                         );
                       }}
+                      onLongPress={() =>
+                        openRestChoicePicker(
+                          indexedSet.index,
+                          segmentLabel,
+                          indexedSet.set,
+                        )
+                      }
                     />
                   ) : null}
                   <SwipeActionSetRow
@@ -5706,7 +6426,16 @@ function NotebookSetLedger({
                         exerciseIndex,
                         setIndex: indexedSet.index,
                       });
-                      if (!wasCompleted) onStartRestTimer();
+                      if (!wasCompleted) {
+                        const restSeconds = getRestTimerSecondsAfterSet(
+                          exercise,
+                          indexedSet.index,
+                          restTimes,
+                        );
+                        if (restSeconds != null) {
+                          onStartRestTimer(restSeconds);
+                        }
+                      }
                     }}
                     onDelete={() => {
                       if (segmentIndex === 0) {
@@ -5970,12 +6699,15 @@ function SwipeActionSetRow({
   const touchSwipingRef = useRef(false);
   const suppressPressUntilRef = useRef(0);
 
-  const animateTo = useCallback((toValue: number) => {
-    Animated.spring(translateX, {
-      toValue,
-      useNativeDriver: true,
-    }).start();
-  }, [translateX]);
+  const animateTo = useCallback(
+    (toValue: number) => {
+      Animated.spring(translateX, {
+        toValue,
+        useNativeDriver: true,
+      }).start();
+    },
+    [translateX],
+  );
 
   const resetPosition = useCallback(() => {
     openSideRef.current = null;
@@ -6110,12 +6842,15 @@ function SwipeActionSetRow({
     [settleSwipe],
   );
 
-  const cancelTouch = useCallback((_event: GestureResponderEvent) => {
-    touchStartRef.current = null;
-    touchDeltaXRef.current = 0;
-    touchSwipingRef.current = false;
-    resetPosition();
-  }, [resetPosition]);
+  const cancelTouch = useCallback(
+    (_event: GestureResponderEvent) => {
+      touchStartRef.current = null;
+      touchDeltaXRef.current = 0;
+      touchSwipingRef.current = false;
+      resetPosition();
+    },
+    [resetPosition],
+  );
 
   const isPressSuppressed = useCallback(
     () => touchSwipingRef.current || Date.now() < suppressPressUntilRef.current,
@@ -6152,13 +6887,7 @@ function SwipeActionSetRow({
         onPanResponderTerminate: resetPosition,
         onPanResponderTerminationRequest: () => false,
       }),
-    [
-      canComplete,
-      onSwipeStart,
-      resetPosition,
-      settleSwipe,
-      translateX,
-    ],
+    [canComplete, onSwipeStart, resetPosition, settleSwipe, translateX],
   );
 
   return (
@@ -6166,7 +6895,9 @@ function SwipeActionSetRow({
       <View style={styles.notebookSwipeCompleteAction}>
         {canComplete ? (
           <Pressable
-            accessibilityLabel={completed ? "Mark set incomplete" : "Complete set"}
+            accessibilityLabel={
+              completed ? "Mark set incomplete" : "Complete set"
+            }
             accessibilityRole="button"
             style={[
               styles.notebookSwipeActionButton,
@@ -6228,17 +6959,32 @@ function SwipeActionSetRow({
 function NotebookRestSeparator({
   label,
   onPress,
+  onLongPress,
 }: {
   label: string;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
+  const longPressHandledRef = useRef(false);
+
   return (
     <Pressable
       accessibilityLabel={`Edit rest ${label}`}
       accessibilityRole="button"
       hitSlop={8}
       style={styles.notebookRestSeparator}
-      onPress={onPress}
+      onLongPress={() => {
+        if (!onLongPress) return;
+        longPressHandledRef.current = true;
+        onLongPress();
+      }}
+      onPress={() => {
+        if (longPressHandledRef.current) {
+          longPressHandledRef.current = false;
+          return;
+        }
+        onPress();
+      }}
     >
       <View style={styles.notebookRestLine} />
       <Text style={styles.notebookRestText}>{label}</Text>
@@ -6260,14 +7006,21 @@ function NotebookAddSetButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-function formatRestDurationLabel(set: WorkoutSet) {
-  if (set.modifier === "warmup") return "none";
-  return "3:00";
+function formatRestDurationLabel(set: WorkoutSet, restTimes: RestTimes) {
+  if (set.restSeconds != null) return formatRestTimeSetting(set.restSeconds);
+  return formatRestTimeSetting(getRestSecondsForSet(set, restTimes));
+}
+
+function formatRestSeparatorLabel(set: WorkoutSet, restTimes: RestTimes) {
+  if (set.restBefore === "short") return "short";
+  if (!set.restBefore) return "none";
+  return formatRestDurationLabel(set, restTimes);
 }
 
 function LegacyExerciseSetLedgerView({
   exercise,
   exerciseIndex,
+  restTimes,
   selectedField,
   selectedSetId,
   onDispatch,
@@ -6276,6 +7029,7 @@ function LegacyExerciseSetLedgerView({
 }: {
   exercise: WorkoutExercise;
   exerciseIndex: number;
+  restTimes: RestTimes;
   selectedField: SetEditField | null;
   selectedSetId: string | null;
   onDispatch: (action: Action) => void;
@@ -6291,6 +7045,7 @@ function LegacyExerciseSetLedgerView({
           title="warm-up"
           exercise={exercise}
           sets={warmups}
+          restTimes={restTimes}
           selectedField={selectedField}
           selectedSetId={selectedSetId}
           onOpenSet={onOpenSet}
@@ -6304,7 +7059,13 @@ function LegacyExerciseSetLedgerView({
           }}
           onToggleRest={(setIndex) => {
             onSelectExercise();
-            toggleRest(onDispatch, exerciseIndex, exercise, setIndex);
+            toggleRest(
+              onDispatch,
+              exerciseIndex,
+              exercise,
+              setIndex,
+              restTimes,
+            );
           }}
         />
       ) : null}
@@ -6316,12 +7077,14 @@ function LegacyExerciseSetLedgerView({
           exerciseIndex={exerciseIndex}
           onDispatch={onDispatch}
           onOpenSet={onOpenSet}
+          restTimes={restTimes}
           onSelectExercise={onSelectExercise}
         />
       </View>
       <SetLedger
         exercise={exercise}
         sets={working}
+        restTimes={restTimes}
         selectedField={selectedField}
         selectedSetId={selectedSetId}
         onOpenSet={onOpenSet}
@@ -6335,7 +7098,7 @@ function LegacyExerciseSetLedgerView({
         }}
         onToggleRest={(setIndex) => {
           onSelectExercise();
-          toggleRest(onDispatch, exerciseIndex, exercise, setIndex);
+          toggleRest(onDispatch, exerciseIndex, exercise, setIndex, restTimes);
         }}
       />
     </>
@@ -6347,12 +7110,14 @@ function AddExerciseSetButton({
   exerciseIndex,
   onDispatch,
   onOpenSet,
+  restTimes,
   onSelectExercise,
 }: {
   exercise: WorkoutExercise;
   exerciseIndex: number;
   onDispatch: (action: Action) => void;
   onOpenSet: (setId: string, field?: SetEditField) => void;
+  restTimes: RestTimes;
   onSelectExercise: () => void;
 }) {
   return (
@@ -6376,6 +7141,9 @@ function AddExerciseSetButton({
           prevReps: null,
           weightModifier:
             exercise.sets[exercise.sets.length - 1]?.weightModifier,
+          restBefore: exercise.sets.length > 0 ? "standard" : undefined,
+          restSeconds:
+            exercise.sets.length > 0 ? restTimes.workingSeconds : undefined,
         };
         onDispatch({
           type: "REPLACE_EXERCISE_SETS",
@@ -6393,6 +7161,7 @@ function AddExerciseSetButton({
 function ExerciseSetCards({
   exercise,
   exerciseIndex,
+  restTimes,
   inlineNoteDraft,
   inlineNoteInputRef,
   inlineNoteTarget,
@@ -6408,8 +7177,11 @@ function ExerciseSetCards({
 }: {
   exercise: WorkoutExercise;
   exerciseIndex: number;
+  restTimes: RestTimes;
   inlineNoteDraft: string | null;
-  inlineNoteInputRef: React.RefObject<React.ComponentRef<typeof TextInput> | null>;
+  inlineNoteInputRef: React.RefObject<React.ComponentRef<
+    typeof TextInput
+  > | null>;
   inlineNoteTarget: InlineNoteEditTarget | null;
   selectedField: SetEditField | null;
   selectedSetId: string | null;
@@ -6418,7 +7190,7 @@ function ExerciseSetCards({
   onEndInlineNoteEdit: () => void;
   onOpenSet: (setId: string, field?: SetEditField) => void;
   onSelectExercise: () => void;
-  onStartRestTimer: () => void;
+  onStartRestTimer: (durationSeconds?: number) => void;
   onStartInlineNoteEdit: (target: InlineNoteEditTarget) => void;
 }) {
   const presentDialog = useAppDialog();
@@ -6515,6 +7287,8 @@ function ExerciseSetCards({
       prevWeight: null,
       prevReps: null,
       weightModifier: exercise.sets[exercise.sets.length - 1]?.weightModifier,
+      restBefore: groups.length > 0 ? "standard" : undefined,
+      restSeconds: groups.length > 0 ? restTimes.workingSeconds : undefined,
     };
     onDispatch({
       type: "REPLACE_EXERCISE_SETS",
@@ -6726,10 +7500,7 @@ function ExerciseSetCards({
         {groups.map((group, groupIndex) => {
           const leadingSet = group[0]!;
           const previousGroup = previousGroups[groupIndex] ?? null;
-          const leadingSetId = getSetTargetId(
-            leadingSet.set,
-            leadingSet.index,
-          );
+          const leadingSetId = getSetTargetId(leadingSet.set, leadingSet.index);
           const logicalLabel = setLabel(exercise, leadingSet.index);
           const cardLabel = setCardKindLabel(exercise, leadingSet.index);
           const cardIsWarmup = leadingSet.set.modifier === "warmup";
@@ -6808,206 +7579,225 @@ function ExerciseSetCards({
                     group={previousGroup}
                   />
                   {group.map((indexedSet, segmentIndex) => {
-                  const setId = getSetTargetId(
-                    indexedSet.set,
-                    indexedSet.index,
-                  );
-                  const values = getSetDisplayValues(
-                    exercise,
-                    indexedSet.set,
-                    indexedSet.index,
-                  );
-                  const loadLabel = formatLedgerLoadLabel(exercise, indexedSet);
-                  const repsLabel = formatLedgerRepsLabel(exercise, indexedSet);
-                  const segmentLabel = setLabel(exercise, indexedSet.index);
-                  const setNoteTarget: InlineNoteEditTarget = {
-                    kind: "set",
-                    exerciseIndex,
-                    setId,
-                  };
-                  const editingSetNote = isSameNoteTarget(
-                    inlineNoteTarget,
-                    setNoteTarget,
-                  );
-                  const isWeightSelected =
-                    selectedSetId === setId && selectedField === "weight";
-                  const isRepsSelected =
-                    selectedSetId === setId && selectedField === "reps";
+                    const setId = getSetTargetId(
+                      indexedSet.set,
+                      indexedSet.index,
+                    );
+                    const values = getSetDisplayValues(
+                      exercise,
+                      indexedSet.set,
+                      indexedSet.index,
+                    );
+                    const loadLabel = formatLedgerLoadLabel(
+                      exercise,
+                      indexedSet,
+                    );
+                    const repsLabel = formatLedgerRepsLabel(
+                      exercise,
+                      indexedSet,
+                    );
+                    const segmentLabel = setLabel(exercise, indexedSet.index);
+                    const setNoteTarget: InlineNoteEditTarget = {
+                      kind: "set",
+                      exerciseIndex,
+                      setId,
+                    };
+                    const editingSetNote = isSameNoteTarget(
+                      inlineNoteTarget,
+                      setNoteTarget,
+                    );
+                    const isWeightSelected =
+                      selectedSetId === setId && selectedField === "weight";
+                    const isRepsSelected =
+                      selectedSetId === setId && selectedField === "reps";
 
-                  return (
-                    <View
-                      key={`${setId}-${indexedSet.index}`}
-                      style={styles.exerciseSetCardSegmentBlock}
-                    >
-                      {segmentIndex > 0 ? (
-                        <Pressable
-                          accessibilityLabel={`Toggle rest before ${segmentLabel}`}
-                          accessibilityRole="button"
-                          hitSlop={8}
-                          style={styles.exerciseSetCardRestLabel}
-                          onPress={() => {
-                            onSelectExercise();
-                            toggleRest(
-                              onDispatch,
-                              exerciseIndex,
-                              exercise,
-                              indexedSet.index,
-                            );
-                          }}
-                        >
-                          <Text style={styles.exerciseSetCardRestLabelText}>
-                            short rest
-                          </Text>
-                        </Pressable>
-                      ) : null}
+                    return (
                       <View
-                        style={[
-                          styles.exerciseSetCardSegment,
-                          segmentIndex > 0
-                            ? styles.exerciseSetCardContinuation
-                            : null,
-                        ]}
+                        key={`${setId}-${indexedSet.index}`}
+                        style={styles.exerciseSetCardSegmentBlock}
                       >
-                        <Pressable
-                          accessibilityLabel={`Edit ${segmentLabel} weight ${loadLabel}`}
-                          accessibilityRole="button"
-                          hitSlop={8}
-                          style={[
-                            styles.exerciseSetCardChip,
-                            isWeightSelected
-                              ? styles.inlineSetChipActive
-                              : null,
-                          ]}
-                          onPress={() => {
-                            onSelectExercise();
-                            onOpenSet(setId, "weight");
-                          }}
-                          onLongPress={() =>
-                            openSetCommandMenu(
-                              group,
-                              segmentLabel,
-                              indexedSet,
-                            )
-                          }
-                        >
-                          <Text style={styles.exerciseSetCardText}>
-                            {loadLabel}
-                          </Text>
-                        </Pressable>
-                        <Text style={styles.exerciseSetCardText}>x</Text>
-                        <Pressable
-                          accessibilityLabel={`Edit ${segmentLabel} reps ${repsLabel}`}
-                          accessibilityRole="button"
-                          hitSlop={8}
-                          style={[
-                            styles.exerciseSetCardChip,
-                            isRepsSelected ? styles.inlineSetChipActive : null,
-                          ]}
-                          onLongPress={() =>
-                            openSetCommandMenu(
-                              group,
-                              segmentLabel,
-                              indexedSet,
-                            )
-                          }
-                          onPress={() => {
-                            onSelectExercise();
-                            onOpenSet(setId, "reps");
-                          }}
-                        >
-                          <Text style={styles.exerciseSetCardText}>
-                            {values.reps == null
-                              ? "-"
-                              : formatNumber(Number(values.reps))}
-                          </Text>
-                        </Pressable>
-                        {segmentIndex === 0 ? (
-                          <View style={styles.flexSpacer} />
-                        ) : null}
                         {segmentIndex > 0 ? (
                           <Pressable
-                            accessibilityLabel={`Delete ${segmentLabel} short-rest reps`}
+                            accessibilityLabel={`Toggle rest before ${segmentLabel}`}
                             accessibilityRole="button"
                             hitSlop={8}
-                            style={styles.exerciseSetCardDelete}
-                            onPress={() => deleteShortRestSegment(indexedSet)}
+                            style={styles.exerciseSetCardRestLabel}
+                            onPress={() => {
+                              onSelectExercise();
+                              toggleRest(
+                                onDispatch,
+                                exerciseIndex,
+                                exercise,
+                                indexedSet.index,
+                                restTimes,
+                              );
+                            }}
                           >
-                            <Icon
-                              name="trash-outline"
-                              size={15}
-                              color={palette.muted}
-                            />
+                            <Text style={styles.exerciseSetCardRestLabelText}>
+                              short rest
+                            </Text>
                           </Pressable>
                         ) : null}
-                        {segmentIndex === 0 ? (
+                        <View
+                          style={[
+                            styles.exerciseSetCardSegment,
+                            segmentIndex > 0
+                              ? styles.exerciseSetCardContinuation
+                              : null,
+                          ]}
+                        >
                           <Pressable
-                            accessibilityLabel={`${indexedSet.set.completed ? "Mark incomplete" : "Complete"} ${segmentLabel}`}
+                            accessibilityLabel={`Edit ${segmentLabel} weight ${loadLabel}`}
                             accessibilityRole="button"
                             hitSlop={8}
                             style={[
-                              styles.exerciseSetCardCompleteButton,
-                              indexedSet.set.completed
-                                ? styles.exerciseSetCardCompleteButtonActive
+                              styles.exerciseSetCardChip,
+                              isWeightSelected
+                                ? styles.inlineSetChipActive
                                 : null,
                             ]}
                             onPress={() => {
-                              const wasCompleted = Boolean(
-                                indexedSet.set.completed,
-                              );
                               onSelectExercise();
-                              triggerSelectionHaptic();
-                              onDispatch({
-                                type: "TOGGLE_SET_COMPLETED",
-                                exerciseIndex,
-                                setIndex: indexedSet.index,
-                              });
-                              if (!wasCompleted) onStartRestTimer();
+                              onOpenSet(setId, "weight");
+                            }}
+                            onLongPress={() =>
+                              openSetCommandMenu(
+                                group,
+                                segmentLabel,
+                                indexedSet,
+                              )
+                            }
+                          >
+                            <Text style={styles.exerciseSetCardText}>
+                              {loadLabel}
+                            </Text>
+                          </Pressable>
+                          <Text style={styles.exerciseSetCardText}>x</Text>
+                          <Pressable
+                            accessibilityLabel={`Edit ${segmentLabel} reps ${repsLabel}`}
+                            accessibilityRole="button"
+                            hitSlop={8}
+                            style={[
+                              styles.exerciseSetCardChip,
+                              isRepsSelected
+                                ? styles.inlineSetChipActive
+                                : null,
+                            ]}
+                            onLongPress={() =>
+                              openSetCommandMenu(
+                                group,
+                                segmentLabel,
+                                indexedSet,
+                              )
+                            }
+                            onPress={() => {
+                              onSelectExercise();
+                              onOpenSet(setId, "reps");
                             }}
                           >
-                            <Icon
-                              name={
+                            <Text style={styles.exerciseSetCardText}>
+                              {values.reps == null
+                                ? "-"
+                                : formatNumber(Number(values.reps))}
+                            </Text>
+                          </Pressable>
+                          {segmentIndex === 0 ? (
+                            <View style={styles.flexSpacer} />
+                          ) : null}
+                          {segmentIndex > 0 ? (
+                            <Pressable
+                              accessibilityLabel={`Delete ${segmentLabel} short-rest reps`}
+                              accessibilityRole="button"
+                              hitSlop={8}
+                              style={styles.exerciseSetCardDelete}
+                              onPress={() => deleteShortRestSegment(indexedSet)}
+                            >
+                              <Icon
+                                name="trash-outline"
+                                size={15}
+                                color={palette.muted}
+                              />
+                            </Pressable>
+                          ) : null}
+                          {segmentIndex === 0 ? (
+                            <Pressable
+                              accessibilityLabel={`${indexedSet.set.completed ? "Mark incomplete" : "Complete"} ${segmentLabel}`}
+                              accessibilityRole="button"
+                              hitSlop={8}
+                              style={[
+                                styles.exerciseSetCardCompleteButton,
                                 indexedSet.set.completed
-                                  ? "checkmark-outline"
-                                  : "checkmark"
-                              }
-                              size={15}
-                              color={
-                                indexedSet.set.completed
-                                  ? palette.ink
-                                  : palette.muted
-                              }
-                            />
+                                  ? styles.exerciseSetCardCompleteButtonActive
+                                  : null,
+                              ]}
+                              onPress={() => {
+                                const wasCompleted = Boolean(
+                                  indexedSet.set.completed,
+                                );
+                                onSelectExercise();
+                                triggerSelectionHaptic();
+                                onDispatch({
+                                  type: "TOGGLE_SET_COMPLETED",
+                                  exerciseIndex,
+                                  setIndex: indexedSet.index,
+                                });
+                                if (!wasCompleted) {
+                                  const restSeconds =
+                                    getRestTimerSecondsAfterSet(
+                                      exercise,
+                                      indexedSet.index,
+                                      restTimes,
+                                    );
+                                  if (restSeconds != null) {
+                                    onStartRestTimer(restSeconds);
+                                  }
+                                }
+                              }}
+                            >
+                              <Icon
+                                name={
+                                  indexedSet.set.completed
+                                    ? "checkmark-outline"
+                                    : "checkmark"
+                                }
+                                size={15}
+                                color={
+                                  indexedSet.set.completed
+                                    ? palette.ink
+                                    : palette.muted
+                                }
+                              />
+                            </Pressable>
+                          ) : null}
+                        </View>
+                        {editingSetNote ? (
+                          <InlineNoteEditor
+                            inputRef={inlineNoteInputRef}
+                            note={inlineNoteDraft ?? indexedSet.set.notes ?? ""}
+                            placeholder={`${segmentLabel} note`}
+                            testID={`set-note-inline-input-${exerciseIndex}-${indexedSet.index}`}
+                            onBlur={onEndInlineNoteEdit}
+                            onChangeText={onChangeInlineNote}
+                          />
+                        ) : indexedSet.set.notes?.trim() ? (
+                          <Pressable
+                            accessibilityLabel={`Edit ${segmentLabel} note`}
+                            accessibilityRole="button"
+                            hitSlop={6}
+                            style={styles.noteBadgeSelf}
+                            testID={`set-note-inline-badge-${exerciseIndex}-${indexedSet.index}`}
+                            onPress={() => {
+                              onSelectExercise();
+                              onStartInlineNoteEdit(setNoteTarget);
+                            }}
+                          >
+                            <Text style={styles.noteBadgeText}>
+                              {indexedSet.set.notes}
+                            </Text>
                           </Pressable>
                         ) : null}
                       </View>
-                      {editingSetNote ? (
-                        <InlineNoteEditor
-                          inputRef={inlineNoteInputRef}
-                          note={inlineNoteDraft ?? indexedSet.set.notes ?? ""}
-                          placeholder={`${segmentLabel} note`}
-                          testID={`set-note-inline-input-${exerciseIndex}-${indexedSet.index}`}
-                          onBlur={onEndInlineNoteEdit}
-                          onChangeText={onChangeInlineNote}
-                        />
-                      ) : indexedSet.set.notes?.trim() ? (
-                        <Pressable
-                          accessibilityLabel={`Edit ${segmentLabel} note`}
-                          accessibilityRole="button"
-                          hitSlop={6}
-                          style={styles.noteBadgeSelf}
-                          testID={`set-note-inline-badge-${exerciseIndex}-${indexedSet.index}`}
-                          onPress={() => {
-                            onSelectExercise();
-                            onStartInlineNoteEdit(setNoteTarget);
-                          }}
-                        >
-                          <Text style={styles.noteBadgeText}>
-                            {indexedSet.set.notes}
-                          </Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  );
+                    );
                   })}
                 </View>
               </View>
@@ -7032,7 +7822,11 @@ function ExerciseSetCards({
           pointerEvents="none"
           style={[styles.setSwipeIndicator, styles.setSwipeIndicatorRight]}
         >
-          <Icon name="chevron-forward-outline" size={15} color={palette.muted} />
+          <Icon
+            name="chevron-forward-outline"
+            size={15}
+            color={palette.muted}
+          />
         </View>
       ) : null}
     </View>
@@ -7096,9 +7890,9 @@ function ExerciseDetailsSheet({
   const insets = useSafeAreaInsets();
   const [editing, setEditing] = useState(false);
   const [draftNote, setDraftNote] = useState("");
-  const [draftStartingWeight, setDraftStartingWeight] = useState<
-    number | null
-  >(null);
+  const [draftStartingWeight, setDraftStartingWeight] = useState<number | null>(
+    null,
+  );
   const [draftLoadMode, setDraftLoadMode] =
     useState<PlateLoadMode>("equal-sides");
   const [startingWeightMenuOpen, setStartingWeightMenuOpen] = useState(false);
@@ -7109,7 +7903,11 @@ function ExerciseDetailsSheet({
     setDraftLoadMode(parsePlateMode(exercise.plateLoadMode));
     setStartingWeightMenuOpen(false);
     setEditing(true);
-  }, [exercise.exerciseNotes, exercise.plateLoadMode, exercise.plateStartingWeight]);
+  }, [
+    exercise.exerciseNotes,
+    exercise.plateLoadMode,
+    exercise.plateStartingWeight,
+  ]);
 
   useEffect(() => {
     if (!open || editRequest === 0) return;
@@ -7146,7 +7944,10 @@ function ExerciseDetailsSheet({
       presentationStyle="fullScreen"
       onRequestClose={closeSheet}
     >
-      <SafeAreaView edges={["top", "left", "right"]} style={styles.exerciseDetailsShade}>
+      <SafeAreaView
+        edges={["top", "left", "right"]}
+        style={styles.exerciseDetailsShade}
+      >
         <View
           style={[
             styles.exerciseDetailsSheet,
@@ -7166,10 +7967,7 @@ function ExerciseDetailsSheet({
             >
               <Icon name="close-outline" size={25} color={palette.ink} />
             </Pressable>
-            <Text
-              numberOfLines={1}
-              style={styles.exerciseDetailsHeaderTitle}
-            >
+            <Text numberOfLines={1} style={styles.exerciseDetailsHeaderTitle}>
               {editing ? "Edit Exercise" : exercise.name}
             </Text>
             <Pressable
@@ -7264,10 +8062,7 @@ function ExerciseDetailsEditContent({
       <View style={styles.exerciseDetailsEditGroup}>
         <Text style={styles.exerciseDetailsEditLabel}>Name</Text>
         <View style={styles.exerciseDetailsLockedField}>
-          <Text
-            numberOfLines={1}
-            style={styles.exerciseDetailsLockedFieldText}
-          >
+          <Text numberOfLines={1} style={styles.exerciseDetailsLockedFieldText}>
             {exercise.name}
           </Text>
           <Icon name="lock-closed-outline" size={16} color={palette.muted} />
@@ -7404,11 +8199,13 @@ function ExerciseDetailsTabContent({
   exercise: WorkoutExercise;
   selectedTab: ExerciseDetailsTab;
 }) {
-  if (selectedTab === "about") return <ExerciseDetailsAbout exercise={exercise} />;
+  if (selectedTab === "about")
+    return <ExerciseDetailsAbout exercise={exercise} />;
   if (selectedTab === "history") {
     return <ExerciseDetailsHistory exercise={exercise} />;
   }
-  if (selectedTab === "charts") return <ExerciseDetailsCharts exercise={exercise} />;
+  if (selectedTab === "charts")
+    return <ExerciseDetailsCharts exercise={exercise} />;
   return <ExerciseDetailsRecords exercise={exercise} />;
 }
 
@@ -7537,7 +8334,9 @@ function ExerciseDetailsHistoryNote({
 
   return (
     <View style={styles.exerciseDetailsHistoryNoteBadge}>
-      {iconName ? <Icon name={iconName} size={13} color={palette.muted} /> : null}
+      {iconName ? (
+        <Icon name={iconName} size={13} color={palette.muted} />
+      ) : null}
       <Text
         style={[
           styles.noteBadgeTextInline,
@@ -7586,8 +8385,8 @@ function ExerciseDetailsHistorySetRows({
             key: `${indexedSet.index}-${groupIndex}`,
             text: indexedSet.set.notes?.trim(),
           }))
-          .filter(
-            (note): note is { key: string; text: string } => Boolean(note.text),
+          .filter((note): note is { key: string; text: string } =>
+            Boolean(note.text),
           );
 
         return (
@@ -7616,10 +8415,7 @@ function ExerciseDetailsHistorySetRows({
             {notes.length > 0 ? (
               <View style={styles.exerciseDetailsHistorySetNotes}>
                 {notes.map((note) => (
-                  <ExerciseDetailsHistoryNote
-                    key={note.key}
-                    text={note.text}
-                  />
+                  <ExerciseDetailsHistoryNote key={note.key} text={note.text} />
                 ))}
               </View>
             ) : null}
@@ -8090,6 +8886,7 @@ function SetLedger({
   title,
   exercise,
   sets,
+  restTimes,
   selectedSetId,
   selectedField,
   onOpenSet,
@@ -8099,6 +8896,7 @@ function SetLedger({
   title?: string;
   exercise: WorkoutExercise;
   sets: IndexedWorkoutSet[];
+  restTimes: RestTimes;
   selectedSetId: string | null;
   selectedField: SetEditField | null;
   onOpenSet: (setId: string, field?: SetEditField) => void;
@@ -8123,10 +8921,7 @@ function SetLedger({
       {sets.length === 0 ? <Text style={styles.metaText}>none</Text> : null}
       {groups.map((group, rowIndex) => {
         const leadingSet = group[0]!;
-        const leadingSetId = getSetTargetId(
-          leadingSet.set,
-          leadingSet.index,
-        );
+        const leadingSetId = getSetTargetId(leadingSet.set, leadingSet.index);
         const loadLabel = formatLedgerLoadLabel(exercise, leadingSet);
         const isWeightSelected =
           selectedSetId === leadingSetId && selectedField === "weight";
@@ -8149,7 +8944,7 @@ function SetLedger({
                 <Text style={styles.setLedgerRestText}>
                   {leadingSet.set.restBefore === "short"
                     ? "short rest"
-                    : "standard rest"}
+                    : formatRestDurationLabel(leadingSet.set, restTimes)}
                 </Text>
               </Pressable>
             ) : null}
@@ -8176,7 +8971,10 @@ function SetLedger({
               </Pressable>
               <View style={styles.setLedgerRepsChain}>
                 {group.map((indexedSet, segmentIndex) => {
-                  const setId = getSetTargetId(indexedSet.set, indexedSet.index);
+                  const setId = getSetTargetId(
+                    indexedSet.set,
+                    indexedSet.index,
+                  );
                   const repsLabel = formatLedgerSegmentRepsLabel(
                     exercise,
                     indexedSet,
@@ -8265,6 +9063,144 @@ function groupLedgerSets(sets: IndexedWorkoutSet[]) {
   return groups;
 }
 
+function getLogicalSetGroups(exercise: WorkoutExercise) {
+  const { warmups, working } = splitSets(exercise);
+  return [...groupLedgerSets(warmups), ...groupLedgerSets(working)];
+}
+
+function getLogicalSetGroupIndex(exercise: WorkoutExercise, setIndex: number) {
+  return getLogicalSetGroups(exercise).findIndex((group) =>
+    group.some((indexedSet) => indexedSet.index === setIndex),
+  );
+}
+
+function getRestTimerSecondsAfterSet(
+  exercise: WorkoutExercise,
+  setIndex: number,
+  restTimes: RestTimes,
+) {
+  const groups = getLogicalSetGroups(exercise);
+  const groupIndex = groups.findIndex((group) =>
+    group.some((indexedSet) => indexedSet.index === setIndex),
+  );
+  const nextSet = groupIndex < 0 ? null : groups[groupIndex + 1]?.[0]?.set;
+  if (!nextSet || nextSet.restBefore !== "standard") return null;
+
+  const seconds = getRestSecondsForSet(nextSet, restTimes);
+  return seconds != null && seconds > 0 ? seconds : null;
+}
+
+function buildWatchWorkoutSnapshot({
+  workout,
+  currentExerciseIndex,
+  selectedSetId,
+  restTimerIdleLabel,
+  restTimerEndsAt,
+  restTimerDurationSeconds,
+}: {
+  workout: Workout;
+  currentExerciseIndex: number;
+  selectedSetId: string | null;
+  restTimerIdleLabel: string;
+  restTimerEndsAt: number | null;
+  restTimerDurationSeconds: number;
+}): WatchWorkoutSnapshot | null {
+  if (workout.exercises.length === 0) {
+    return null;
+  }
+
+  const resolvedExerciseIndex = clampIndex(
+    currentExerciseIndex,
+    workout.exercises.length,
+  );
+  const currentExercise = workout.exercises[resolvedExerciseIndex];
+  if (!currentExercise) {
+    return null;
+  }
+
+  const currentSet = buildWatchWorkoutItemSnapshot(
+    currentExercise,
+    selectedSetId,
+  );
+  const previousSetTarget = getAdjacentWatchSetGroupTarget(
+    currentExercise,
+    currentSet.setId ?? null,
+    "previous",
+  );
+  const nextSetTarget = getAdjacentWatchSetGroupTarget(
+    currentExercise,
+    currentSet.setId ?? null,
+    "next",
+  );
+  const previousExercise = workout.exercises[resolvedExerciseIndex - 1];
+  const nextExercise = workout.exercises[resolvedExerciseIndex + 1];
+  const restTimerRemainingSeconds =
+    restTimerEndsAt == null
+      ? null
+      : Math.max(0, Math.ceil((restTimerEndsAt - Date.now()) / 1000));
+  const restTimerRunning =
+    restTimerRemainingSeconds != null && restTimerRemainingSeconds > 0;
+
+  return {
+    workoutName: workout.name,
+    exerciseName: currentExercise.name,
+    setId: currentSet.setId,
+    setLabel: currentSet.setLabel,
+    setText: currentSet.setText,
+    setWeight: currentSet.setWeight,
+    setReps: currentSet.setReps,
+    setWeightModifier: currentSet.setWeightModifier,
+    setCompleted: currentSet.setCompleted,
+    restText: `rest ${restTimerIdleLabel}`,
+    restTimerRunning,
+    restTimerRemainingSeconds: restTimerRunning
+      ? restTimerRemainingSeconds
+      : null,
+    restTimerDurationSeconds,
+    restTimerEndsAt:
+      restTimerRunning && restTimerEndsAt != null
+        ? new Date(restTimerEndsAt).toISOString()
+        : null,
+    previousSet: previousSetTarget
+      ? buildWatchWorkoutItemSnapshot(
+          currentExercise,
+          getSetTargetId(previousSetTarget.set, previousSetTarget.index),
+        )
+      : null,
+    nextSet: nextSetTarget
+      ? buildWatchWorkoutItemSnapshot(
+          currentExercise,
+          getSetTargetId(nextSetTarget.set, nextSetTarget.index),
+        )
+      : null,
+    previousExercise: previousExercise
+      ? buildWatchWorkoutItemSnapshot(previousExercise, null)
+      : null,
+    nextExercise: nextExercise
+      ? buildWatchWorkoutItemSnapshot(nextExercise, null)
+      : null,
+    isActive: true,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildWatchWorkoutItemSnapshot(
+  exercise: WorkoutExercise,
+  selectedSetId: string | null,
+): WatchWorkoutItemSnapshot {
+  const set = buildWatchCurrentSetSnapshot(exercise, selectedSetId);
+  return {
+    exerciseName: exercise.name,
+    setId: set.setId,
+    setLabel: set.label,
+    setText: set.text,
+    setWeight: set.weight,
+    setReps: set.reps,
+    setWeightModifier: set.weightModifier,
+    setCompleted: set.completed,
+  };
+}
+
 function buildWatchCurrentSetSnapshot(
   exercise: WorkoutExercise,
   selectedSetId: string | null,
@@ -8279,9 +9215,7 @@ function buildWatchCurrentSetSnapshot(
       : groups.find((group) =>
           group.some((indexedSet) => indexedSet.index === selectedIndex),
         );
-  const firstIncompleteGroup = groups.find(
-    (group) => !group[0]?.set.completed,
-  );
+  const firstIncompleteGroup = groups.find((group) => !group[0]?.set.completed);
   const group = selectedGroup ?? firstIncompleteGroup ?? groups[0] ?? [];
   const leadingSet = group[0];
 
@@ -8337,15 +9271,44 @@ function getAdjacentWatchSetGroupTarget(
       : groups.findIndex((group) =>
           group.some((indexedSet) => indexedSet.index === selectedIndex),
         );
-  const currentGroupIndex =
-    selectedGroupIndex >= 0 ? selectedGroupIndex : 0;
-  const nextGroupIndex = getAdjacentIndex(
-    currentGroupIndex,
-    groups.length,
-    direction,
-  );
-  if (nextGroupIndex == null) return null;
+  const currentGroupIndex = selectedGroupIndex >= 0 ? selectedGroupIndex : 0;
+  const nextGroupIndex =
+    direction === "previous" ? currentGroupIndex - 1 : currentGroupIndex + 1;
+  if (nextGroupIndex < 0 || nextGroupIndex >= groups.length) return null;
   return groups[nextGroupIndex]?.[0] ?? null;
+}
+
+function getFirstWatchSetGroupTarget(exercise: WorkoutExercise | undefined) {
+  if (!exercise) return null;
+  const { warmups, working } = splitSets(exercise);
+  const groups = [...groupLedgerSets(warmups), ...groupLedgerSets(working)];
+  return groups[0]?.[0] ?? null;
+}
+
+function getNextWatchSetTargetAfterCompletion(
+  exercises: WorkoutExercise[],
+  exerciseIndex: number,
+  selectedSetId: string | null,
+) {
+  const nextSet = getAdjacentWatchSetGroupTarget(
+    exercises[exerciseIndex],
+    selectedSetId,
+    "next",
+  );
+  if (nextSet) return { exerciseIndex, indexedSet: nextSet };
+
+  for (
+    let nextExerciseIndex = exerciseIndex + 1;
+    nextExerciseIndex < exercises.length;
+    nextExerciseIndex += 1
+  ) {
+    const firstSet = getFirstWatchSetGroupTarget(exercises[nextExerciseIndex]);
+    if (firstSet) {
+      return { exerciseIndex: nextExerciseIndex, indexedSet: firstSet };
+    }
+  }
+
+  return null;
 }
 
 function normalizeWatchSetValue(
@@ -8398,9 +9361,7 @@ function formatPreviousSetGroup(
   exercise: WorkoutExercise,
   group: IndexedWorkoutSet[],
 ) {
-  const firstLoad = group[0]
-    ? formatLedgerLoadLabel(exercise, group[0])
-    : "";
+  const firstLoad = group[0] ? formatLedgerLoadLabel(exercise, group[0]) : "";
 
   return group
     .map((indexedSet, index) => {
@@ -8845,13 +9806,15 @@ function SetEditorModal({
   onRetarget,
   onStartRestTimer,
   onDispatch,
+  onKeyboardHeightChange,
 }: {
   workout: Workout;
   target: SetEditTarget | null;
   onClose: () => void;
   onRetarget: (target: SetEditTarget | null) => void;
-  onStartRestTimer: () => void;
+  onStartRestTimer: (durationSeconds?: number) => void;
   onDispatch: (action: Action, options?: WorkoutDispatchOptions) => void;
+  onKeyboardHeightChange: (height: number) => void;
 }) {
   const insets = useSafeAreaInsets();
   const presentDialog = useAppDialog();
@@ -8865,10 +9828,23 @@ function SetEditorModal({
   );
   const [noteEditing, setNoteEditing] = useState(false);
   const [noteValue, setNoteValue] = useState("");
+  const sheetHeightRef = useRef(0);
   const exercise = target ? workout.exercises[target.exerciseIndex] : undefined;
   const setIndex =
     exercise && target ? findSetIndex(exercise, target.setId) : null;
   const set = setIndex == null ? undefined : exercise?.sets[setIndex];
+  const logicalGroups = exercise ? getLogicalSetGroups(exercise) : [];
+  const logicalGroupIndex =
+    exercise && setIndex != null
+      ? getLogicalSetGroupIndex(exercise, setIndex)
+      : -1;
+  const logicalSet =
+    logicalGroupIndex >= 0 ? logicalGroups[logicalGroupIndex]?.[0] : null;
+  const nextLogicalSet =
+    logicalGroupIndex >= 0 ? logicalGroups[logicalGroupIndex + 1]?.[0] : null;
+  const effectiveRestTimes = exercise
+    ? getEffectiveExerciseRestTimes(workout, exercise)
+    : DEFAULT_WORKOUT_REST_TIMES;
   const exerciseRef = useRef<WorkoutExercise | undefined>(undefined);
   const setIndexRef = useRef<number | null>(null);
   const targetRef = useRef<SetEditTarget | null>(null);
@@ -8882,6 +9858,30 @@ function SetEditorModal({
   exerciseRef.current = exercise;
   setIndexRef.current = setIndex;
   targetRef.current = target;
+
+  const reportCoveredHeight = useCallback(
+    (sheetHeight = sheetHeightRef.current) => {
+      if (!target) {
+        onKeyboardHeightChange(0);
+        return;
+      }
+
+      const nativeKeyboardHeight =
+        noteEditing && nativeKeyboard.visible ? nativeKeyboard.height : 0;
+      onKeyboardHeightChange(sheetHeight + nativeKeyboardHeight);
+    },
+    [
+      nativeKeyboard.height,
+      nativeKeyboard.visible,
+      noteEditing,
+      onKeyboardHeightChange,
+      target,
+    ],
+  );
+
+  useEffect(() => {
+    reportCoveredHeight();
+  }, [reportCoveredHeight]);
 
   useEffect(() => {
     if (!target?.field) return;
@@ -8964,19 +9964,24 @@ function SetEditorModal({
 
   const completeAndAdvanceSetEditor = () => {
     commitValue(entryRef.current, "reps");
-    if (!set.completed) {
+    if (logicalSet && !logicalSet.set.completed) {
       triggerSelectionHaptic();
       onDispatch({
         type: "TOGGLE_SET_COMPLETED",
         exerciseIndex: target.exerciseIndex,
-        setIndex,
+        setIndex: logicalSet.index,
       });
-      onStartRestTimer();
+      const restSeconds = getRestTimerSecondsAfterSet(
+        exercise,
+        logicalSet.index,
+        effectiveRestTimes,
+      );
+      if (restSeconds != null) {
+        onStartRestTimer(restSeconds);
+      }
     }
 
-    const nextSetIndex = setIndex + 1;
-    const nextSet = exercise.sets[nextSetIndex];
-    if (!nextSet) {
+    if (!nextLogicalSet) {
       onClose();
       return;
     }
@@ -8984,7 +9989,7 @@ function SetEditorModal({
     selectField("weight");
     onRetarget({
       exerciseIndex: target.exerciseIndex,
-      setId: getSetTargetId(nextSet, nextSetIndex),
+      setId: getSetTargetId(nextLogicalSet.set, nextLogicalSet.index),
       field: "weight",
     });
   };
@@ -9232,6 +10237,10 @@ function SetEditorModal({
                     : Math.max(6, insets.bottom + 6),
               },
             ]}
+            onLayout={(event) => {
+              sheetHeightRef.current = event.nativeEvent.layout.height;
+              reportCoveredHeight(event.nativeEvent.layout.height);
+            }}
           >
             {noteEditing ? (
               <>
@@ -9428,7 +10437,11 @@ function SetEditorModal({
                       }
                     >
                       {field === "reps" ? (
-                        <Icon name="checkmark" size={22} color={palette.raised} />
+                        <Icon
+                          name="checkmark"
+                          size={22}
+                          color={palette.raised}
+                        />
                       ) : (
                         "Next"
                       )}
@@ -10559,16 +11572,20 @@ function toggleRest(
   exerciseIndex: number,
   exercise: WorkoutExercise,
   setIndex: number,
+  restTimes: RestTimes,
 ) {
   const set = exercise.sets[setIndex];
   if (!set) return;
   const nextRest: SetRestType | undefined =
     set.restBefore === "short" ? "standard" : "short";
+  const nextSet = { ...set, restBefore: nextRest };
   dispatch({
     type: "SET_REST_BEFORE",
     exerciseIndex,
     setIndex,
     restBefore: nextRest,
+    restSeconds:
+      nextRest === "standard" ? getRestSecondsForSet(nextSet, restTimes) : null,
   });
 }
 
@@ -10588,17 +11605,18 @@ function findWatchCommandSetTarget(
   currentExerciseIndex: number,
   setId: string,
 ) {
-  const currentSetIndex = findSetIndex(
-    exercises[currentExerciseIndex],
-    setId,
-  );
+  const currentSetIndex = findSetIndex(exercises[currentExerciseIndex], setId);
   if (currentSetIndex != null) {
     return { exerciseIndex: currentExerciseIndex, setIndex: currentSetIndex };
   }
 
   if (parseSetTargetId(setId) != null) return null;
 
-  for (let exerciseIndex = 0; exerciseIndex < exercises.length; exerciseIndex += 1) {
+  for (
+    let exerciseIndex = 0;
+    exerciseIndex < exercises.length;
+    exerciseIndex += 1
+  ) {
     if (exerciseIndex === currentExerciseIndex) continue;
     const setIndex = findSetIndex(exercises[exerciseIndex], setId);
     if (setIndex != null) return { exerciseIndex, setIndex };
