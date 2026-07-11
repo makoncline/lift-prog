@@ -114,3 +114,25 @@ export async function getUserSyncCredentials(userId: string) {
     client,
   });
 }
+
+export async function deleteUserSyncDatabase(userId: string) {
+  const config = readSyncPlatformConfig();
+  if (!config) return;
+
+  const client = createClient({ org: config.org, token: config.token });
+  return deleteProvisionedUserSyncDatabase({ userId, client });
+}
+
+export async function deleteProvisionedUserSyncDatabase({
+  userId,
+  client,
+}: {
+  userId: string;
+  client: SyncPlatformClient;
+}) {
+  try {
+    await client.databases.delete(userSyncDatabaseName(userId));
+  } catch (error) {
+    if (errorStatus(error) !== 404) throw error;
+  }
+}

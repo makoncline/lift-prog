@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  deleteProvisionedUserSyncDatabase,
+  deleteUserSyncDatabase,
   getUserSyncCredentials,
   provisionUserSyncCredentials,
   userSyncDatabaseName,
@@ -83,5 +85,36 @@ describe("user sync database provisioning", () => {
       expiration: "1h",
       authorization: "full-access",
     });
+  });
+
+  it("does not require platform access when deleting with sync disabled", async () => {
+    delete process.env.TURSO_PLATFORM_ORG;
+    delete process.env.TURSO_PLATFORM_TOKEN;
+
+    await expect(deleteUserSyncDatabase("app-user-1")).resolves.toBeUndefined();
+  });
+
+  it("deletes only the stable per-user database and tolerates a retry", async () => {
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({ status: 404, message: "missing" });
+    const client = {
+      databases: { delete: remove },
+    } as unknown as Parameters<
+      typeof deleteProvisionedUserSyncDatabase
+    >[0]["client"];
+
+    await deleteProvisionedUserSyncDatabase({ userId: "app-user-1", client });
+    await deleteProvisionedUserSyncDatabase({ userId: "app-user-1", client });
+
+    expect(remove).toHaveBeenNthCalledWith(
+      1,
+      userSyncDatabaseName("app-user-1"),
+    );
+    expect(remove).toHaveBeenNthCalledWith(
+      2,
+      userSyncDatabaseName("app-user-1"),
+    );
   });
 });

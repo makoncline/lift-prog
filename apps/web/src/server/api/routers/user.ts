@@ -5,7 +5,10 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
-import { getUserSyncCredentials } from "@/server/services/user-sync-database";
+import {
+  deleteUserSyncDatabase,
+  getUserSyncCredentials,
+} from "@/server/services/user-sync-database";
 
 export const userRouter = createTRPCRouter({
   localSyncCredentials: protectedProcedure.query(({ ctx }) => {
@@ -91,6 +94,7 @@ export const userRouter = createTRPCRouter({
       }
 
       try {
+        await deleteUserSyncDatabase(input.id);
         return await ctx.db.user.delete({
           where: { id: input.id },
         });
@@ -125,6 +129,8 @@ export const userRouter = createTRPCRouter({
         message: "Current user was not found.",
       });
     }
+
+    await deleteUserSyncDatabase(appUser.id);
 
     await ctx.db.$transaction(async (tx) => {
       await tx.user.delete({

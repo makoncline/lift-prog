@@ -71,6 +71,17 @@ export const LOCAL_MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS record_tombstones (
+        record_type TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        deleted_at TEXT NOT NULL,
+        PRIMARY KEY (record_type, record_id)
+      );
+    `,
+  },
 ];
 
 export async function runLocalMigrations(database: Database) {

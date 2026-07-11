@@ -249,16 +249,27 @@ async function loadUserExercises(database: Database) {
 
 async function loadWorkouts(database: Database) {
   const rows = await database.all(`
-    SELECT * FROM workouts
-    WHERE deleted_at IS NULL AND completed_at IS NOT NULL
-    ORDER BY completed_at DESC
+    SELECT workouts.* FROM workouts
+    WHERE workouts.deleted_at IS NULL
+      AND workouts.completed_at IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM record_tombstones
+        WHERE record_type = 'workout' AND record_id = workouts.id
+      )
+    ORDER BY workouts.completed_at DESC
   `);
   return rows.map(parseWorkoutRow);
 }
 
 async function loadWorkout(database: Database, id: LocalId) {
   const row = await database.get(
-    `SELECT * FROM workouts WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT workouts.* FROM workouts
+     WHERE workouts.id = ?
+       AND workouts.deleted_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM record_tombstones
+         WHERE record_type = 'workout' AND record_id = workouts.id
+       )`,
     id,
   );
   if (!row) throw new Error("Workout not found.");
@@ -392,7 +403,10 @@ function workoutToRecent(workout: StoredWorkoutAggregate): LocalRecentWorkout {
 
 export function createLocalWorkoutDataClient(
   database: Database,
+  options?: { onLocalDataChanged?: () => void },
 ): LocalWorkoutDataClient {
+  const didChange = () => options?.onLocalDataChanged?.();
+
   return {
     async listRecent(input) {
       const workouts = await loadWorkouts(database);
@@ -481,6 +495,7 @@ export function createLocalWorkoutDataClient(
         new Date().toISOString(),
         exercise.id,
       );
+      didChange();
       return { count: 1 };
     },
 
@@ -496,6 +511,7 @@ export function createLocalWorkoutDataClient(
         new Date().toISOString(),
         exercise.id,
       );
+      didChange();
       return { count: 1 };
     },
 
@@ -505,6 +521,7 @@ export function createLocalWorkoutDataClient(
           id: input.clientId,
         }),
       );
+      didChange();
       return { success: true, workoutId };
     },
 
@@ -549,16 +566,29 @@ export function createLocalWorkoutDataClient(
           legacyServerId: existing.legacyServerId,
         }),
       );
+      didChange();
       return { success: true, workoutId: input.workoutId };
     },
 
     async deleteWorkout(input) {
-      await database.run(
-        `UPDATE workouts SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-        new Date().toISOString(),
-        new Date().toISOString(),
-        input.workoutId,
-      );
+      const deletedAt = new Date().toISOString();
+      await withLocalTransaction(database, async () => {
+        await database.run(
+          `INSERT INTO record_tombstones (record_type, record_id, deleted_at)
+           VALUES ('workout', ?, ?)
+           ON CONFLICT(record_type, record_id) DO UPDATE SET
+             deleted_at = excluded.deleted_at`,
+          input.workoutId,
+          deletedAt,
+        );
+        await database.run(
+          `UPDATE workouts SET deleted_at = ?, updated_at = ? WHERE id = ?`,
+          deletedAt,
+          deletedAt,
+          input.workoutId,
+        );
+      });
+      didChange();
       return { success: true };
     },
 
@@ -578,6 +608,7 @@ export function createLocalWorkoutDataClient(
         ACCOUNT_DELETION_REQUESTED_KEY,
         new Date().toISOString(),
       );
+      didChange();
     },
 
     async cancelAccountDeletionRequest() {
@@ -585,6 +616,7 @@ export function createLocalWorkoutDataClient(
         `DELETE FROM app_metadata WHERE key = ?`,
         ACCOUNT_DELETION_REQUESTED_KEY,
       );
+      didChange();
     },
 
     async deleteCurrentUser() {
@@ -592,8 +624,10 @@ export function createLocalWorkoutDataClient(
         await database.run(`DELETE FROM workouts`);
         await database.run(`DELETE FROM user_exercises`);
         await database.run(`DELETE FROM active_workout_draft`);
+        await database.run(`DELETE FROM record_tombstones`);
         await database.run(`DELETE FROM app_metadata`);
       });
+      didChange();
       return { success: true };
     },
   };

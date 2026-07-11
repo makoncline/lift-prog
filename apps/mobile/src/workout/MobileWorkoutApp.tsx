@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import * as Haptics from "expo-haptics";
+import * as Network from "expo-network";
 import {
   createWorkoutApiClient,
   getWorkoutApiErrorMessage,
@@ -31,6 +32,7 @@ import React, {
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   ActionSheetIOS,
   findNodeHandle,
   Keyboard,
@@ -65,6 +67,11 @@ import {
   reopenLocalDatabaseWithSync,
 } from "../local-first/database";
 import { readProductionExportFile } from "../local-first/production-import";
+import {
+  createLocalSyncCoordinator,
+  type LocalSyncCoordinator,
+  type LocalSyncStatus,
+} from "../local-first/sync-coordinator";
 import type {
   LocalExerciseListItem,
   LocalPreparedWorkout,
@@ -830,10 +837,18 @@ export function LiftMobileApp({
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
-    | { status: "ready"; api: LocalWorkoutDataClient }
+    | {
+        status: "ready";
+        api: LocalWorkoutDataClient;
+        sync: LocalSyncCoordinator | null;
+      }
     | { status: "error"; message: string }
   >({ status: "loading" });
   const [retryKey, setRetryKey] = useState(0);
+  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<LocalSyncStatus | "local">(
+    "local",
+  );
   const deleteRemoteAccount = useCallback(async () => {
     if (!getHeaders) return;
     await createWorkoutApiClient({
@@ -844,6 +859,7 @@ export function LiftMobileApp({
 
   useEffect(() => {
     let cancelled = false;
+    let syncCoordinator: LocalSyncCoordinator | null = null;
 
     void (async () => {
       try {
@@ -882,8 +898,18 @@ export function LiftMobileApp({
                   return refreshed.authToken;
                 },
               });
-              await database.push();
-              await database.pull();
+              syncCoordinator = createLocalSyncCoordinator({
+                database,
+                onStatusChange: (status) => {
+                  if (!cancelled) setSyncStatus(status);
+                },
+                onPulled: () => {
+                  if (!cancelled) setSyncRefreshKey((value) => value + 1);
+                },
+                onError: (error) =>
+                  console.error("local workout sync unavailable", error),
+              });
+              await syncCoordinator.sync();
             }
           } catch (error) {
             if (!hasData) throw error;
@@ -923,7 +949,9 @@ export function LiftMobileApp({
           }
         }
 
-        const localClient = createLocalWorkoutDataClient(database);
+        const localClient = createLocalWorkoutDataClient(database, {
+          onLocalDataChanged: () => syncCoordinator?.localDataChanged(),
+        });
         if (!getHeaders && (await localClient.isAccountDeletionRequested())) {
           await localClient.deleteCurrentUser();
           if (!cancelled) onAccountDeleted?.();
@@ -935,6 +963,7 @@ export function LiftMobileApp({
           setState({
             status: "ready",
             api: localClient,
+            sync: syncCoordinator,
           });
         }
       } catch (error) {
@@ -950,6 +979,7 @@ export function LiftMobileApp({
 
     return () => {
       cancelled = true;
+      syncCoordinator?.stop();
     };
   }, [
     accountId,
@@ -959,6 +989,29 @@ export function LiftMobileApp({
     onLocalDataReady,
     retryKey,
   ]);
+
+  useEffect(() => {
+    if (state.status !== "ready" || !state.sync) return undefined;
+
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState) => {
+        if (nextState === "active") void state.sync?.sync();
+      },
+    );
+    const networkSubscription = Network.addNetworkStateListener(
+      ({ isConnected, isInternetReachable }) => {
+        if (isConnected && isInternetReachable !== false) {
+          void state.sync?.sync();
+        }
+      },
+    );
+
+    return () => {
+      appStateSubscription.remove();
+      networkSubscription.remove();
+    };
+  }, [state]);
 
   if (state.status === "loading") {
     return (
@@ -995,6 +1048,8 @@ export function LiftMobileApp({
   return (
     <LiftMobileAppReady
       api={state.api}
+      syncRefreshKey={syncRefreshKey}
+      syncStatus={syncStatus}
       deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
       getHeaders={getHeaders}
       onAccountDeleted={onAccountDeleted}
@@ -1005,12 +1060,16 @@ export function LiftMobileApp({
 
 function LiftMobileAppReady({
   api,
+  syncRefreshKey,
+  syncStatus,
   deleteRemoteAccount,
   getHeaders,
   onAccountDeleted,
   onSignOut,
 }: {
   api: LocalWorkoutDataClient;
+  syncRefreshKey: number;
+  syncStatus: LocalSyncStatus | "local";
   deleteRemoteAccount?: () => Promise<void>;
   getHeaders?: () => Promise<Record<string, string>>;
   onAccountDeleted?: () => void;
@@ -1130,7 +1189,8 @@ function LiftMobileAppReady({
     ) : (
       <HomeScreen
         api={api}
-        refreshKey={screen.refreshKey}
+        refreshKey={screen.refreshKey + syncRefreshKey}
+        syncStatus={syncStatus}
         pendingDraft={pendingDraft}
         deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
         onAccountDeleted={onAccountDeleted}
@@ -1178,6 +1238,7 @@ function LiftMobileAppReady({
 function HomeScreen({
   api,
   refreshKey,
+  syncStatus,
   pendingDraft,
   deleteRemoteAccount,
   onAccountDeleted,
@@ -1189,6 +1250,7 @@ function HomeScreen({
 }: {
   api: WorkoutApiClient;
   refreshKey: number;
+  syncStatus: LocalSyncStatus | "local";
   pendingDraft: PendingWorkoutDraft | null;
   deleteRemoteAccount?: () => Promise<void>;
   onAccountDeleted?: () => void;
@@ -1515,6 +1577,7 @@ function HomeScreen({
       ) : null}
       <HomeSettingsModal
         visible={settingsOpen}
+        syncStatus={syncStatus}
         deletingAccount={deletingAccount}
         onClose={() => setSettingsOpen(false)}
         onDeleteAccount={confirmDeleteAccount}
@@ -1531,6 +1594,7 @@ function HomeScreen({
 
 function HomeSettingsModal({
   visible,
+  syncStatus,
   deletingAccount,
   onClose,
   onDeleteAccount,
@@ -1539,6 +1603,7 @@ function HomeSettingsModal({
   onSignOut,
 }: {
   visible: boolean;
+  syncStatus: LocalSyncStatus | "local";
   deletingAccount: boolean;
   onClose: () => void;
   onDeleteAccount: () => void;
@@ -1559,6 +1624,15 @@ function HomeSettingsModal({
       >
         <View style={[styles.commandMenuPanel, styles.homeSettingsPanel]}>
           <Text style={styles.commandMenuTitle}>settings</Text>
+          <Text style={styles.mutedText}>
+            {syncStatus === "local"
+              ? "data stored on this iPhone"
+              : syncStatus === "syncing"
+                ? "cloud backup syncing"
+                : syncStatus === "synced"
+                  ? "cloud backup up to date"
+                  : "cloud backup waiting for connection"}
+          </Text>
           <CommandMenuItem
             icon="mail-outline"
             label="Support"

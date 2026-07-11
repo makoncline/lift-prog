@@ -38,10 +38,15 @@ Before releasing a migration:
 
 When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user and returns a one-hour database-scoped token. Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without those variables, the API reports sync disabled and the app remains fully local-only.
 
+Deleting an account also deletes its deterministic per-user sync database before removing the app and authentication records. A missing sync database is treated as already deleted. This operation never targets the legacy shared database.
+
+Mobile coalesces local writes into background pushes, retries when connectivity returns or the app enters the foreground, and shows the backup state in Settings. Local reads and writes never wait for that process.
+
+Turso resolves concurrent statements with last-push-wins semantics. The app uses that rule at the workout aggregate and user-exercise row boundaries. Stable IDs let independently created workouts coexist; concurrent edits to the same workout intentionally resolve to the last pushed aggregate. Workout deletion also writes an independent tombstone, so a stale edit from another device cannot make a deleted workout visible again.
+
 The remaining cloud work is:
 
-1. Add foreground/connectivity retry state and a subtle sync-status surface.
-2. Exercise two-device conflict handling at workout aggregate and user-exercise row boundaries.
-3. Verify backup/restore from an empty second installation before enabling platform credentials in production.
+1. Exercise two-device conflict handling at workout aggregate and user-exercise row boundaries.
+2. Verify backup/restore from an empty second installation before enabling platform credentials in production.
 
 Never point this path at the legacy shared `lift-prog` database.
