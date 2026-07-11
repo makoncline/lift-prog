@@ -39,12 +39,10 @@ const makeCaller = () => {
     );
   const txUserExerciseUpdate = vi
     .fn()
-    .mockImplementation(
-      async ({ where }: { where: { id: number } }) => ({
-        id: where.id,
-        name: "Existing Exercise",
-      }),
-    );
+    .mockImplementation(async ({ where }: { where: { id: number } }) => ({
+      id: where.id,
+      name: "Existing Exercise",
+    }));
 
   const workoutCreate = vi.fn().mockResolvedValue({ id: 101 });
   const workoutFindMany = vi.fn().mockResolvedValue([]);
@@ -541,5 +539,96 @@ describe("workout.listRecent", () => {
       "Pull-ups - BWx10,10,9+1+4",
       "Tricep overhead - 40lbx15,12,8+4",
     ]);
+  });
+});
+
+describe("workout.exportCurrentUserData", () => {
+  it("exports stable IDs and zero-based ordering without merging names", async () => {
+    const { caller, spies } = makeCaller();
+    const timestamp = new Date("2026-07-10T12:00:00.000Z");
+    spies.userExerciseFindMany.mockResolvedValue([
+      {
+        id: 7,
+        exerciseId: 4,
+        name: "Wide Pull-Up",
+        notes: null,
+        plateStartingWeight: null,
+        plateLoadMode: null,
+        restWarmupSeconds: null,
+        restWorkingSeconds: 180,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+      {
+        id: 10,
+        exerciseId: 4,
+        name: "Wide Pull-up",
+        notes: "alternate grip",
+        plateStartingWeight: null,
+        plateLoadMode: null,
+        restWarmupSeconds: null,
+        restWorkingSeconds: 180,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ]);
+    spies.workoutFindMany.mockResolvedValue([
+      {
+        id: 91,
+        name: "Pull day",
+        startedAt: timestamp,
+        completedAt: new Date(timestamp.getTime() + 30 * 60_000),
+        bodyWeightLb: 173,
+        notes: null,
+        restWarmupSeconds: null,
+        restWorkingSeconds: 180,
+        updatedAt: timestamp,
+        workoutExercises: [
+          {
+            id: 100,
+            userExerciseId: 10,
+            order: 0,
+            notes: null,
+            exerciseNotesSnapshot: null,
+            restWarmupSeconds: null,
+            restWorkingSeconds: 180,
+            sets: [
+              {
+                order: 0,
+                weight: 20,
+                reps: 8,
+                modifier: null,
+                weightModifier: "bodyweight",
+                restBefore: null,
+                restSeconds: null,
+                notes: null,
+                rir: null,
+                completed: true,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const snapshot = await caller.workout.exportCurrentUserData();
+
+    expect(spies.workoutFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: "user_123",
+          completedAt: { not: null },
+        },
+      }),
+    );
+
+    expect(snapshot.userExercises.map((exercise) => exercise.id)).toEqual([
+      7, 10,
+    ]);
+    expect(snapshot.workouts[0]?.exercises[0]).toMatchObject({
+      userExerciseId: 10,
+      order: 0,
+      sets: [{ order: 0 }],
+    });
   });
 });

@@ -4,6 +4,7 @@ type MobileExpoExtra = {
   localDevUserId?: string;
   workoutApiBaseUrl?: string;
   authBaseUrl?: string;
+  productionImportUrl?: string;
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as MobileExpoExtra;
@@ -30,7 +31,7 @@ const cleanBaseUrl = (rawUrl: string | undefined): string | undefined => {
       parsed.hostname.startsWith("192.168.") ||
       parsed.hostname.startsWith("10.");
 
-    if (isLocalHost) {
+    if (isLocalHost && !__DEV__) {
       return undefined;
     }
 
@@ -41,9 +42,11 @@ const cleanBaseUrl = (rawUrl: string | undefined): string | undefined => {
 };
 
 export const mobileWorkoutApiBaseUrl =
-  cleanBaseUrl(extra.workoutApiBaseUrl) ??
-  "https://lift.makon.dev";
+  cleanBaseUrl(extra.workoutApiBaseUrl) ?? "https://lift.makon.dev";
 export const mobileAuthBaseUrl =
   cleanBaseUrl(extra.authBaseUrl) ?? mobileWorkoutApiBaseUrl;
 
 export const mobileLocalDevUserId = extra.localDevUserId ?? "";
+export const mobileProductionImportUrl = __DEV__
+  ? extra.productionImportUrl
+  : undefined;

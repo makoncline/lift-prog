@@ -61,5 +61,13 @@ target 'LiftProg' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+
+    if RbConfig::CONFIG['host_cpu'] == 'arm64'
+      installer.pods_project.targets.each do |target|
+        target.build_configurations.each do |build_configuration|
+          build_configuration.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+        end
+      end
+    end
   end
 end

@@ -5,8 +5,18 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
+import {
+  deleteUserSyncDatabase,
+  getUserSyncCredentials,
+} from "@/server/services/user-sync-database";
 
 export const userRouter = createTRPCRouter({
+  localSyncCredentials: protectedProcedure.query(({ ctx }) => {
+    const userId = ctx.session.userId;
+    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+    return getUserSyncCredentials(userId, ctx.db.userSyncDatabase);
+  }),
+
   // Procedure to list all users
   list: adminProcedure.query(async ({ ctx }) => {
     return ctx.db.user.findMany({
@@ -19,10 +29,16 @@ export const userRouter = createTRPCRouter({
     .input(
       z
         .object({
-          authUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+          authUserId: z
+            .string()
+            .min(1, "Auth user ID cannot be empty")
+            .optional(),
           // Legacy input name kept so older callers do not break while the
           // database still stores this compatibility column.
-          clerkUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+          clerkUserId: z
+            .string()
+            .min(1, "Auth user ID cannot be empty")
+            .optional(),
         })
         .refine((input) => input.authUserId ?? input.clerkUserId, {
           message: "Auth user ID cannot be empty",
@@ -40,11 +56,7 @@ export const userRouter = createTRPCRouter({
 
       const existingUser = await ctx.db.user.findFirst({
         where: {
-          OR: [
-            { id: authUserId },
-            { clerkUserId: authUserId },
-            { authUserId },
-          ],
+          OR: [{ id: authUserId }, { clerkUserId: authUserId }, { authUserId }],
         },
       });
 
@@ -82,6 +94,7 @@ export const userRouter = createTRPCRouter({
       }
 
       try {
+        await deleteUserSyncDatabase(input.id, ctx.db.userSyncDatabase);
         return await ctx.db.user.delete({
           where: { id: input.id },
         });
@@ -117,6 +130,8 @@ export const userRouter = createTRPCRouter({
       });
     }
 
+    await deleteUserSyncDatabase(appUser.id, ctx.db.userSyncDatabase);
+
     await ctx.db.$transaction(async (tx) => {
       await tx.user.delete({
         where: { id: appUser.id },
@@ -126,8 +141,7 @@ export const userRouter = createTRPCRouter({
         appUser.authUserId ? { id: appUser.authUserId } : null,
         appUser.email ? { email: appUser.email } : null,
       ].filter(
-        (match): match is { id: string } | { email: string } =>
-          match !== null,
+        (match): match is { id: string } | { email: string } => match !== null,
       );
 
       if (authUserMatches.length > 0) {

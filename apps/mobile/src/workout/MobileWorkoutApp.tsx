@@ -3,7 +3,6 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import * as Haptics from "expo-haptics";
 import * as Network from "expo-network";
-import * as SecureStore from "expo-secure-store";
 import {
   createWorkoutApiClient,
   getWorkoutApiErrorMessage,
@@ -59,7 +58,38 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-import { mobileWorkoutApiBaseUrl } from "../lib/config";
+import {
+  mobileProductionImportUrl,
+  mobileWorkoutApiBaseUrl,
+} from "../lib/config";
+import {
+  openLocalDatabase,
+  reopenLocalDatabaseWithSync,
+} from "../local-first/database";
+import { readProductionExportFile } from "../local-first/production-import";
+import {
+  createLocalSyncCoordinator,
+  type LocalSyncCoordinator,
+  type LocalSyncStatus,
+} from "../local-first/sync-coordinator";
+import type {
+  LocalExerciseListItem,
+  LocalPreparedWorkout,
+  LocalRecentWorkout,
+  LocalWorkoutDataClient,
+  LocalWorkoutDetails,
+} from "../local-first/model";
+import {
+  bindOrAssertLocalAccount,
+  createLocalWorkoutDataClient,
+  clearActiveWorkoutDraftRow,
+  hasLocalWorkoutData,
+  importProductionExport,
+  isProductionImportComplete,
+  quarantineActiveWorkoutDraftJson,
+  readActiveWorkoutDraftJson,
+  writeActiveWorkoutDraftJson,
+} from "../local-first/workout-repository";
 import {
   addWatchWorkoutCommandListener,
   addUnfinishedWorkoutReminderListener,
@@ -83,10 +113,6 @@ import type {
   WatchWorkoutSnapshot,
 } from "../../modules/lift-health/src";
 import { MobileErrorBoundary } from "./MobileErrorBoundary";
-import {
-  enqueueCompletedWorkoutSave,
-  flushCompletedWorkoutOutbox,
-} from "./completed-workout-outbox";
 import {
   countCompletedExerciseWorkingSets,
   countWorkoutWorkingSets,
@@ -114,25 +140,11 @@ import {
   type WeightSuggestion,
 } from "./weight_helper";
 
-type WorkoutApiClient = ReturnType<typeof createWorkoutApiClient>;
-type RecentWorkout = Awaited<
-  ReturnType<WorkoutApiClient["listRecent"]>
->[number];
-type PreparedWorkout = Awaited<
-  ReturnType<WorkoutApiClient["prepareInitialWorkout"]>
->;
-type WorkoutDetails = Awaited<
-  ReturnType<WorkoutApiClient["getWorkoutDetails"]>
->;
-type ExerciseSuggestion = Awaited<
-  ReturnType<WorkoutApiClient["listExercises"]>
->[number];
-
-type LocalWorkoutFixtures = {
-  pullDayPrepared: PreparedWorkout;
-  preparedByWorkoutId: Map<number, PreparedWorkout>;
-  recent: RecentWorkout[];
-};
+type WorkoutApiClient = LocalWorkoutDataClient;
+type RecentWorkout = LocalRecentWorkout;
+type PreparedWorkout = LocalPreparedWorkout;
+type WorkoutDetails = LocalWorkoutDetails;
+type ExerciseSuggestion = LocalExerciseListItem;
 
 type AppScreen =
   | { name: "home"; refreshKey: number }
@@ -142,7 +154,7 @@ type AppScreen =
       viewMode?: WorkoutViewMode;
       prepared: PreparedWorkout;
       draftWorkout?: Workout;
-      workoutId?: number;
+      workoutId?: string;
       startedAt?: Date;
       completedAt?: Date | null;
       notes?: string | null;
@@ -219,7 +231,6 @@ type DurationEditTarget = Extract<
 >;
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-const ACTIVE_WORKOUT_DRAFT_KEY = "lift-prog-active-workout-draft-v1";
 const REST_TIMER_SECONDS = 180;
 const DEFAULT_WORKOUT_REST_TIMES: RestTimes = {
   warmupSeconds: null,
@@ -353,6 +364,10 @@ function makeClientId() {
   return id;
 }
 
+function makeWorkoutClientId() {
+  return `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function normalizeBodyWeightLb(value: unknown): number | null {
   const numeric =
     typeof value === "number"
@@ -477,6 +492,7 @@ function createWorkoutState(
     : exercises.map(resetExerciseCompletion);
 
   return ensureWorkoutSetIds({
+    clientId: makeWorkoutClientId(),
     currentExerciseIndex: 0,
     exercises: hydratedExercises,
     activeField: { exerciseIndex: null, setIndex: null, field: null },
@@ -597,34 +613,34 @@ function redoWorkoutSession(session: WorkoutSession): WorkoutSession {
 
 async function readActiveWorkoutDraft(): Promise<StoredWorkoutDraft | null> {
   try {
-    const raw =
-      Platform.OS === "web"
-        ? getWebStorageItem(ACTIVE_WORKOUT_DRAFT_KEY)
-        : await SecureStore.getItemAsync(ACTIVE_WORKOUT_DRAFT_KEY);
-    return parseStoredWorkoutDraft(raw);
-  } catch {
+    const database = await openLocalDatabase();
+    const raw = await readActiveWorkoutDraftJson(database);
+    const draft = parseStoredWorkoutDraft(raw);
+    if (raw && !draft) {
+      await quarantineActiveWorkoutDraftJson(
+        database,
+        raw,
+        "Stored workout draft could not be parsed by this app version.",
+      );
+      console.error("quarantined unreadable local workout draft");
+    }
+    return draft;
+  } catch (error) {
+    console.error("could not read local workout draft", error);
     return null;
   }
 }
 
 async function writeActiveWorkoutDraft(draft: StoredWorkoutDraft) {
-  const raw = JSON.stringify(draft);
-  if (Platform.OS === "web") {
-    setWebStorageItem(ACTIVE_WORKOUT_DRAFT_KEY, raw);
-    return;
-  }
-
-  await SecureStore.setItemAsync(ACTIVE_WORKOUT_DRAFT_KEY, raw);
+  await writeActiveWorkoutDraftJson(
+    await openLocalDatabase(),
+    JSON.stringify(draft),
+  );
 }
 
 async function clearActiveWorkoutDraft() {
   try {
-    if (Platform.OS === "web") {
-      removeWebStorageItem(ACTIVE_WORKOUT_DRAFT_KEY);
-      return;
-    }
-
-    await SecureStore.deleteItemAsync(ACTIVE_WORKOUT_DRAFT_KEY);
+    await clearActiveWorkoutDraftRow(await openLocalDatabase());
   } catch {
     // Draft cleanup should never block navigation after a save or discard.
   }
@@ -660,311 +676,6 @@ function parseStoredWorkoutDraft(
   } catch {
     return null;
   }
-}
-
-function getWebStorageItem(key: string) {
-  return typeof localStorage === "undefined" ? null : localStorage.getItem(key);
-}
-
-function setWebStorageItem(key: string, value: string) {
-  if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
-}
-
-function removeWebStorageItem(key: string) {
-  if (typeof localStorage !== "undefined") localStorage.removeItem(key);
-}
-
-function createLocalWorkoutFixtures(): LocalWorkoutFixtures {
-  const now = new Date();
-  const pullDayDate = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
-  const pushDayDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-  const pullDayExercises: PreparedWorkout["exercises"] = [
-    {
-      userExerciseId: 1,
-      name: "Pull-ups",
-      exerciseNotes: "Hold dumbbell in thighs",
-      sets: [
-        {
-          weight: -95,
-          reps: 15,
-          modifier: "warmup",
-          weightModifier: "bodyweight",
-          notes: "Assisted pull machine",
-        },
-        { weight: 20, reps: 13, weightModifier: "bodyweight" },
-        { weight: null, reps: 8, restBefore: "standard" },
-        {
-          weight: 0,
-          reps: 3,
-          weightModifier: "bodyweight",
-          restBefore: "short",
-        },
-      ],
-      history: [
-        {
-          relation: "last time",
-          relativeDate: "3 days ago",
-          date: "jun 17",
-          workoutNote: "Pull day felt low energy",
-          workoutExerciseNote: "Feeling weak today",
-          sets: [
-            {
-              weight: -100,
-              reps: 15,
-              modifier: "warmup",
-              weightModifier: "bodyweight",
-              notes: "Foot assist",
-            },
-            { weight: 20, reps: 13, weightModifier: "bodyweight" },
-            {
-              weight: null,
-              reps: 8,
-              restBefore: "standard",
-              notes: "failed clean on final rep",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      userExerciseId: 2,
-      name: "Rows",
-      sets: [
-        { weight: 0, reps: 30, modifier: "warmup" },
-        { weight: 75, reps: 11, notes: "12 back only shrugs after" },
-        { weight: null, reps: 11, restBefore: "standard" },
-      ],
-      history: [
-        {
-          relation: "last time",
-          relativeDate: "3 days ago",
-          date: "jun 17",
-          sets: [
-            { weight: 0, reps: 30, modifier: "warmup" },
-            { weight: 75, reps: 11, notes: "good control" },
-          ],
-        },
-      ],
-    },
-    {
-      userExerciseId: 3,
-      name: "Bicep curl",
-      sets: [
-        { weight: 30, reps: 13 },
-        { weight: null, reps: 9, restBefore: "standard" },
-      ],
-    },
-  ];
-
-  const pushDayExercises: PreparedWorkout["exercises"] = [
-    {
-      userExerciseId: 4,
-      name: "Machine bench press",
-      sets: [
-        { weight: 45, reps: 12, modifier: "warmup" },
-        { weight: 90, reps: 10 },
-        { weight: 100, reps: 8, restBefore: "standard" },
-        { weight: null, reps: 3, restBefore: "short" },
-      ],
-    },
-    {
-      userExerciseId: 5,
-      name: "Chest fly",
-      sets: [
-        { weight: 80, reps: 12 },
-        { weight: null, reps: 10, restBefore: "standard" },
-      ],
-    },
-  ];
-
-  const recent: RecentWorkout[] = [
-    {
-      id: 2,
-      name: "Pull day",
-      startedAt: pullDayDate,
-      completedAt: new Date(pullDayDate.getTime() + 43 * 60 * 1000),
-      bodyWeightLb: 173,
-      exerciseSummaries: [
-        "Pull-ups - BW+20lbx13,8+BWx3",
-        "Rows - 75lbx11,11",
-        "Bicep curl - 30lbx13,9",
-      ],
-    },
-    {
-      id: 1,
-      name: "Push day",
-      startedAt: pushDayDate,
-      completedAt: new Date(pushDayDate.getTime() + 49 * 60 * 1000),
-      bodyWeightLb: 174,
-      exerciseSummaries: [
-        "Machine bench press - 90lbx10,100lbx8+3",
-        "Chest fly - 80lbx12,10",
-      ],
-    },
-  ];
-
-  const preparedByWorkoutId = new Map<number, PreparedWorkout>([
-    [
-      2,
-      {
-        workoutName: "Pull day",
-        bodyWeightLb: 173,
-        exercises: pullDayExercises,
-      },
-    ],
-    [
-      1,
-      {
-        workoutName: "Push day",
-        bodyWeightLb: 174,
-        exercises: pushDayExercises,
-      },
-    ],
-  ]);
-
-  return {
-    pullDayPrepared: preparedByWorkoutId.get(2)!,
-    preparedByWorkoutId,
-    recent,
-  };
-}
-
-function createLocalWorkoutApiClient(
-  fixtures: LocalWorkoutFixtures = createLocalWorkoutFixtures(),
-): WorkoutApiClient {
-  const { preparedByWorkoutId, recent } = fixtures;
-  const getLatestBodyWeightLb = () =>
-    recent.find((workout) => workout.bodyWeightLb != null)?.bodyWeightLb ??
-    null;
-
-  return {
-    async listRecent(input) {
-      return recent.slice(0, input?.limit ?? 10);
-    },
-    async prepareInitialWorkout(input) {
-      if (input.mode === "workoutReference") {
-        return (
-          preparedByWorkoutId.get(input.workoutId) ??
-          blankPreparedWorkout(getLatestBodyWeightLb())
-        );
-      }
-
-      return {
-        workoutName: input.workoutName ?? "Custom Workout",
-        bodyWeightLb: getLatestBodyWeightLb(),
-        exercises: input.exerciseNames.map((name, index) => ({
-          userExerciseId: 100 + index,
-          name,
-          sets: [],
-          history: [],
-        })),
-      };
-    },
-    async listExercises() {
-      const byName = new Map<
-        string,
-        RecentWorkout["exerciseSummaries"][number]
-      >();
-      for (const workout of recent) {
-        for (const summary of workout.exerciseSummaries) {
-          const { exerciseName } = splitExerciseSummary(summary);
-          if (exerciseName && !byName.has(exerciseName)) {
-            byName.set(exerciseName, summary);
-          }
-        }
-      }
-
-      return Array.from(byName.keys())
-        .sort((a, b) => a.localeCompare(b))
-        .map((name, index) => ({
-          id: 10_000 + index,
-          name,
-          notes: null,
-          exerciseId: null,
-          plateStartingWeight: null,
-          plateLoadMode: null,
-        }));
-    },
-    async updateExerciseNote() {
-      return { count: 1 };
-    },
-    async updateExercisePlateDefaults() {
-      return { count: 1 };
-    },
-    async saveWorkout(input) {
-      const nextId = recent.length + 1;
-      recent.unshift({
-        id: nextId,
-        name: input.name,
-        startedAt: input.startedAt,
-        completedAt: input.completedAt,
-        bodyWeightLb: input.bodyWeightLb,
-        exerciseSummaries: input.exercises.map(
-          (exercise) =>
-            `${exercise.name} - ${
-              summarizeCompletedExerciseSetGroup(
-                exercise.sets.filter((set) => set.modifier !== "warmup"),
-              ) ?? ""
-            }`,
-        ),
-      });
-      return { success: true, workoutId: nextId };
-    },
-    async getWorkoutDetails(input) {
-      const prepared =
-        preparedByWorkoutId.get(input.workoutId) ??
-        blankPreparedWorkout(getLatestBodyWeightLb());
-      const recentWorkout = recent.find(
-        (workout) => workout.id === input.workoutId,
-      );
-
-      return {
-        ...prepared,
-        bodyWeightLb: prepared.bodyWeightLb ?? getLatestBodyWeightLb(),
-        startedAt: recentWorkout?.startedAt ?? new Date(),
-        completedAt: recentWorkout?.completedAt ?? null,
-        notes: null,
-      };
-    },
-    async updateWorkout(input) {
-      const existingIndex = recent.findIndex(
-        (workout) => workout.id === input.workoutId,
-      );
-      if (existingIndex >= 0) {
-        recent[existingIndex] = {
-          id: input.workoutId,
-          name: input.workout.name,
-          startedAt: input.workout.startedAt,
-          completedAt: input.workout.completedAt,
-          bodyWeightLb: input.workout.bodyWeightLb,
-          exerciseSummaries: input.workout.exercises.map(
-            (exercise) =>
-              `${exercise.name} - ${
-                summarizeCompletedExerciseSetGroup(
-                  exercise.sets.filter((set) => set.modifier !== "warmup"),
-                ) ?? ""
-              }`,
-          ),
-        };
-      }
-      return { success: true, workoutId: input.workoutId };
-    },
-    async deleteWorkout(input) {
-      const existingIndex = recent.findIndex(
-        (workout) => workout.id === input.workoutId,
-      );
-      if (existingIndex >= 0) {
-        recent.splice(existingIndex, 1);
-      }
-      return { success: true };
-    },
-    async deleteCurrentUser() {
-      recent.splice(0, recent.length);
-      preparedByWorkoutId.clear();
-      return { success: true };
-    },
-  };
 }
 
 function useAppDialog() {
@@ -1112,26 +823,265 @@ function AppDialogModal({
 export function LiftMobileApp({
   getHeaders,
   localDevUserId,
+  accountId,
+  onAccountDeleted,
+  onLocalDataReady,
   onSignOut,
 }: {
   getHeaders?: () => Promise<Record<string, string>>;
   localDevUserId?: string;
+  accountId?: string;
+  onAccountDeleted?: () => void;
+  onLocalDataReady?: () => void;
   onSignOut?: () => void;
 }) {
-  const localFixtures = useMemo(
-    () => (localDevUserId ? createLocalWorkoutFixtures() : null),
-    [localDevUserId],
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | {
+        status: "ready";
+        api: LocalWorkoutDataClient;
+        sync: LocalSyncCoordinator | null;
+      }
+    | { status: "error"; message: string }
+  >({ status: "loading" });
+  const [retryKey, setRetryKey] = useState(0);
+  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<LocalSyncStatus | "local">(
+    "local",
   );
-  const api = useMemo(
-    () =>
-      localFixtures
-        ? createLocalWorkoutApiClient(localFixtures)
-        : createWorkoutApiClient({
-            baseUrl: mobileWorkoutApiBaseUrl,
-            getHeaders,
-          }),
-    [getHeaders, localFixtures],
+  const deleteRemoteAccount = useCallback(async () => {
+    if (!getHeaders) return;
+    await createWorkoutApiClient({
+      baseUrl: mobileWorkoutApiBaseUrl,
+      getHeaders,
+    }).deleteCurrentUser();
+  }, [getHeaders]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let syncCoordinator: LocalSyncCoordinator | null = null;
+
+    void (async () => {
+      try {
+        let database = await openLocalDatabase();
+        const authAccountId = accountId;
+        let effectiveAccountId = localDevUserId;
+        let didImportProductionData = false;
+        const hasData = await hasLocalWorkoutData(database);
+        if (!effectiveAccountId && getHeaders) {
+          try {
+            const identityClient = createWorkoutApiClient({
+              baseUrl: mobileWorkoutApiBaseUrl,
+              getHeaders,
+            });
+            let syncCredentials =
+              await identityClient.getLocalSyncCredentials();
+            effectiveAccountId = syncCredentials.userId;
+
+            if (syncCredentials.enabled) {
+              const syncUrl = syncCredentials.url;
+              database = await reopenLocalDatabaseWithSync({
+                url: syncUrl,
+                authToken: async () => {
+                  if (
+                    syncCredentials.enabled &&
+                    syncCredentials.expiresAt.getTime() > Date.now() + 60_000
+                  ) {
+                    return syncCredentials.authToken;
+                  }
+
+                  const refreshed =
+                    await identityClient.getLocalSyncCredentials();
+                  if (!refreshed.enabled || refreshed.url !== syncUrl) {
+                    throw new Error("Workout sync is no longer available.");
+                  }
+                  syncCredentials = refreshed;
+                  return refreshed.authToken;
+                },
+              });
+              syncCoordinator = createLocalSyncCoordinator({
+                database,
+                onStatusChange: (status) => {
+                  if (!cancelled) setSyncStatus(status);
+                },
+                onPulled: () => {
+                  if (!cancelled) setSyncRefreshKey((value) => value + 1);
+                },
+                onError: (error) =>
+                  console.error("local workout sync unavailable", error),
+              });
+              await syncCoordinator.sync();
+            }
+          } catch (error) {
+            if (!hasData) throw error;
+            console.error("local workout sync unavailable", error);
+          }
+        }
+        if (effectiveAccountId) {
+          await bindOrAssertLocalAccount(database, effectiveAccountId, {
+            bindIfUnbound: hasData,
+            previousAccountIds: authAccountId ? [authAccountId] : [],
+          });
+        }
+        const importComplete = await isProductionImportComplete(
+          database,
+          effectiveAccountId,
+        );
+
+        if (!importComplete && mobileProductionImportUrl) {
+          const snapshot = await readProductionExportFile(
+            mobileProductionImportUrl,
+          );
+          await importProductionExport(database, snapshot, {
+            accountId: effectiveAccountId,
+          });
+          didImportProductionData = true;
+        } else if (!importComplete && (getHeaders || localDevUserId)) {
+          try {
+            const productionClient = createWorkoutApiClient({
+              baseUrl: mobileWorkoutApiBaseUrl,
+              getHeaders,
+            });
+            const snapshot = await productionClient.exportCurrentUserData();
+            await importProductionExport(database, snapshot, {
+              accountId: effectiveAccountId,
+            });
+            didImportProductionData = true;
+          } catch (error) {
+            if (!hasData) throw error;
+          }
+        }
+
+        if (didImportProductionData) {
+          await syncCoordinator?.sync();
+        }
+
+        const localClient = createLocalWorkoutDataClient(database, {
+          onLocalDataChanged: () => syncCoordinator?.localDataChanged(),
+        });
+        if (!getHeaders && (await localClient.isAccountDeletionRequested())) {
+          await localClient.deleteCurrentUser();
+          if (!cancelled) onAccountDeleted?.();
+          return;
+        }
+
+        if (!cancelled) {
+          onLocalDataReady?.();
+          setState({
+            status: "ready",
+            api: localClient,
+            sync: syncCoordinator,
+          });
+        }
+      } catch (error) {
+        console.error("local-first bootstrap failed", error);
+        if (!cancelled) {
+          setState({
+            status: "error",
+            message: getWorkoutApiErrorMessage(error),
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      syncCoordinator?.stop();
+    };
+  }, [
+    accountId,
+    getHeaders,
+    localDevUserId,
+    onAccountDeleted,
+    onLocalDataReady,
+    retryKey,
+  ]);
+
+  useEffect(() => {
+    if (state.status !== "ready" || !state.sync) return undefined;
+
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState) => {
+        if (nextState === "active") void state.sync?.sync();
+      },
+    );
+    const networkSubscription = Network.addNetworkStateListener(
+      ({ isConnected, isInternetReachable }) => {
+        if (isConnected && isInternetReachable !== false) {
+          void state.sync?.sync();
+        }
+      },
+    );
+
+    return () => {
+      appStateSubscription.remove();
+      networkSubscription.remove();
+    };
+  }, [state]);
+
+  if (state.status === "loading") {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={[styles.page, { flex: 1, justifyContent: "center" }]}>
+          <ActivityIndicator color={palette.ink} />
+          <Text style={styles.mutedText}>opening local workout log...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={[styles.page, { flex: 1, justifyContent: "center" }]}>
+          <Text style={styles.title}>could not open workout log</Text>
+          <Text style={styles.mutedText}>{state.message}</Text>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.textButton}
+            onPress={() => {
+              setState({ status: "loading" });
+              setRetryKey((value) => value + 1);
+            }}
+          >
+            <Text style={styles.textButtonText}>try again</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <LiftMobileAppReady
+      api={state.api}
+      syncRefreshKey={syncRefreshKey}
+      syncStatus={syncStatus}
+      deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
+      getHeaders={getHeaders}
+      onAccountDeleted={onAccountDeleted}
+      onSignOut={onSignOut}
+    />
   );
+}
+
+function LiftMobileAppReady({
+  api,
+  syncRefreshKey,
+  syncStatus,
+  deleteRemoteAccount,
+  getHeaders,
+  onAccountDeleted,
+  onSignOut,
+}: {
+  api: LocalWorkoutDataClient;
+  syncRefreshKey: number;
+  syncStatus: LocalSyncStatus | "local";
+  deleteRemoteAccount?: () => Promise<void>;
+  getHeaders?: () => Promise<Record<string, string>>;
+  onAccountDeleted?: () => void;
+  onSignOut?: () => void;
+}) {
   const [screen, setScreen] = useState<AppScreen>(() => ({
     name: "home",
     refreshKey: 0,
@@ -1139,9 +1089,7 @@ export function LiftMobileApp({
   const [pendingDraft, setPendingDraft] = useState<PendingWorkoutDraft | null>(
     null,
   );
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const checkedDraftRef = useRef(false);
-  const flushingOutboxRef = useRef(false);
   const returnHome = useCallback(() => {
     setScreen((current) => ({
       name: "home",
@@ -1176,50 +1124,6 @@ export function LiftMobileApp({
       cancelled = true;
     };
   }, []);
-
-  const flushWorkoutOutbox = useCallback(async () => {
-    if (flushingOutboxRef.current) return;
-    flushingOutboxRef.current = true;
-    try {
-      const { flushedCount, pendingCount } =
-        await flushCompletedWorkoutOutbox(api);
-      setPendingSyncCount(pendingCount);
-      if (flushedCount > 0) {
-        setScreen((current) =>
-          current.name === "home"
-            ? { ...current, refreshKey: current.refreshKey + 1 }
-            : current,
-        );
-      }
-    } catch {
-      // The queued payload remains durable and will retry at the next trigger.
-    } finally {
-      flushingOutboxRef.current = false;
-    }
-  }, [api]);
-
-  useEffect(() => {
-    if (screen.name === "home") void flushWorkoutOutbox();
-  }, [flushWorkoutOutbox, screen.name]);
-
-  useEffect(() => {
-    const appStateSubscription = AppState.addEventListener(
-      "change",
-      (state) => {
-        if (state === "active") void flushWorkoutOutbox();
-      },
-    );
-    const networkSubscription = Network.addNetworkStateListener((state) => {
-      if (state.isConnected && state.isInternetReachable !== false) {
-        void flushWorkoutOutbox();
-      }
-    });
-
-    return () => {
-      appStateSubscription.remove();
-      networkSubscription.remove();
-    };
-  }, [flushWorkoutOutbox]);
 
   useEffect(() => {
     if (Platform.OS !== "ios") return undefined;
@@ -1292,9 +1196,11 @@ export function LiftMobileApp({
     ) : (
       <HomeScreen
         api={api}
-        refreshKey={screen.refreshKey}
+        refreshKey={screen.refreshKey + syncRefreshKey}
+        syncStatus={syncStatus}
         pendingDraft={pendingDraft}
-        pendingSyncCount={pendingSyncCount}
+        deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
+        onAccountDeleted={onAccountDeleted}
         onSignOut={onSignOut}
         onContinueDraft={restoreDraft}
         onStartBlank={(bodyWeightLb) =>
@@ -1339,8 +1245,10 @@ export function LiftMobileApp({
 function HomeScreen({
   api,
   refreshKey,
+  syncStatus,
   pendingDraft,
-  pendingSyncCount,
+  deleteRemoteAccount,
+  onAccountDeleted,
   onSignOut,
   onContinueDraft,
   onStartBlank,
@@ -1349,13 +1257,15 @@ function HomeScreen({
 }: {
   api: WorkoutApiClient;
   refreshKey: number;
+  syncStatus: LocalSyncStatus | "local";
   pendingDraft: PendingWorkoutDraft | null;
-  pendingSyncCount: number;
+  deleteRemoteAccount?: () => Promise<void>;
+  onAccountDeleted?: () => void;
   onSignOut?: () => void;
   onContinueDraft: (draft: StoredWorkoutDraft) => void;
   onStartBlank: (bodyWeightLb: number | null) => void;
   onStartPrepared: (prepared: PreparedWorkout) => void;
-  onEditWorkout: (workoutId: number, details: WorkoutDetails) => void;
+  onEditWorkout: (workoutId: string, details: WorkoutDetails) => void;
 }) {
   const insets = useSafeAreaInsets();
   const presentDialog = useAppDialog();
@@ -1364,9 +1274,9 @@ function HomeScreen({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copyingWorkoutId, setCopyingWorkoutId] = useState<number | null>(null);
-  const [editingWorkoutId, setEditingWorkoutId] = useState<number | null>(null);
-  const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(
+  const [copyingWorkoutId, setCopyingWorkoutId] = useState<string | null>(null);
+  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
+  const [deletingWorkoutId, setDeletingWorkoutId] = useState<string | null>(
     null,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1523,9 +1433,20 @@ function HomeScreen({
     setDeletingAccount(true);
     setError(null);
     try {
+      if (deleteRemoteAccount) {
+        if (!(await api.isAccountDeletionRequested())) {
+          await api.requestAccountDeletion();
+        }
+        try {
+          await deleteRemoteAccount();
+        } catch (remoteDeleteError) {
+          await api.cancelAccountDeletionRequest();
+          throw remoteDeleteError;
+        }
+      }
       await api.deleteCurrentUser();
       await clearActiveWorkoutDraft();
-      onSignOut?.();
+      onAccountDeleted?.();
     } catch (deleteError) {
       setError(getWorkoutApiErrorMessage(deleteError));
     } finally {
@@ -1593,13 +1514,6 @@ function HomeScreen({
       >
         <Text style={styles.title}>Lift Prog</Text>
         <Text style={styles.subtleTitle}>workouts</Text>
-        {pendingSyncCount > 0 ? (
-          <Text style={styles.mutedText}>
-            {pendingSyncCount} workout{pendingSyncCount === 1 ? "" : "s"} saved
-            locally, waiting to sync
-          </Text>
-        ) : null}
-
         {loading && workouts.length === 0 ? (
           <View style={styles.centerRow}>
             <ActivityIndicator color={palette.active} />
@@ -1670,6 +1584,7 @@ function HomeScreen({
       ) : null}
       <HomeSettingsModal
         visible={settingsOpen}
+        syncStatus={syncStatus}
         deletingAccount={deletingAccount}
         onClose={() => setSettingsOpen(false)}
         onDeleteAccount={confirmDeleteAccount}
@@ -1686,6 +1601,7 @@ function HomeScreen({
 
 function HomeSettingsModal({
   visible,
+  syncStatus,
   deletingAccount,
   onClose,
   onDeleteAccount,
@@ -1694,6 +1610,7 @@ function HomeSettingsModal({
   onSignOut,
 }: {
   visible: boolean;
+  syncStatus: LocalSyncStatus | "local";
   deletingAccount: boolean;
   onClose: () => void;
   onDeleteAccount: () => void;
@@ -1714,6 +1631,15 @@ function HomeSettingsModal({
       >
         <View style={[styles.commandMenuPanel, styles.homeSettingsPanel]}>
           <Text style={styles.commandMenuTitle}>settings</Text>
+          <Text style={styles.mutedText}>
+            {syncStatus === "local"
+              ? "data stored on this iPhone"
+              : syncStatus === "syncing"
+                ? "cloud backup syncing"
+                : syncStatus === "synced"
+                  ? "cloud backup up to date"
+                  : "cloud backup waiting for connection"}
+          </Text>
           <CommandMenuItem
             icon="mail-outline"
             label="Support"
@@ -2018,7 +1944,7 @@ function WorkoutScreen({
   prepared: PreparedWorkout;
   initialViewMode?: WorkoutViewMode;
   draftWorkout?: Workout;
-  workoutId?: number;
+  workoutId?: string;
   startedAt?: Date;
   completedAt?: Date | null;
   workoutNote?: string | null;
@@ -2499,7 +2425,7 @@ function WorkoutScreen({
     });
 
     const target =
-      exercise.userExerciseId != null
+      typeof exercise.userExerciseId === "string"
         ? { id: exercise.userExerciseId }
         : { name: exercise.name };
 
@@ -2812,22 +2738,10 @@ function WorkoutScreen({
     setError(null);
     try {
       if (isEditingPastWorkout && workoutId) {
-        try {
-          await api.updateWorkout({
-            workoutId,
-            workout: finishedWorkout,
-          });
-        } catch (saveError) {
-          try {
-            await enqueueCompletedWorkoutSave({
-              action: "update",
-              workoutId,
-              workout: finishedWorkout,
-            });
-          } catch {
-            throw saveError;
-          }
-        }
+        await api.updateWorkout({
+          workoutId,
+          workout: finishedWorkout,
+        });
         setFinishPreviewOpen(false);
         onBack();
         return;
@@ -2869,18 +2783,7 @@ function WorkoutScreen({
           }));
         }
       }
-      try {
-        await api.saveWorkout(finishedWorkout);
-      } catch (saveError) {
-        try {
-          await enqueueCompletedWorkoutSave({
-            action: "create",
-            workout: finishedWorkout,
-          });
-        } catch {
-          throw saveError;
-        }
-      }
+      await api.saveWorkout(finishedWorkout);
       stopWorkoutEndSurfaces();
       await clearPersistedActiveWorkout();
       setFinishPreviewOpen(false);
@@ -3522,7 +3425,15 @@ function WorkoutScreen({
             </ScrollView>
           </View>
         ) : (
-          <Text style={styles.metaText}>add an exercise</Text>
+          <Pressable
+            accessibilityLabel="Add an exercise"
+            accessibilityRole="button"
+            disabled={!canEditWorkout}
+            hitSlop={8}
+            onPress={() => setExercisePlanOpen(true)}
+          >
+            <Text style={styles.metaText}>+ add an exercise</Text>
+          </Pressable>
         )}
       </ScrollView>
 

@@ -98,9 +98,7 @@ const exerciseUpdateTargetShape = {
   name: z.string().min(1).optional(),
 };
 
-const requireExerciseUpdateTarget = <
-  T extends { id?: number; name?: string },
->(
+const requireExerciseUpdateTarget = <T extends { id?: number; name?: string }>(
   input: T,
 ) => input.id !== undefined || input.name !== undefined;
 
@@ -138,11 +136,12 @@ export const GetWorkoutDetailsInputSchema = z.object({
   workoutId: z.number(),
 });
 
-export const GetWorkoutDetailsResultSchema = PrepareInitialWorkoutResultSchema.extend({
-  startedAt: z.coerce.date(),
-  completedAt: z.coerce.date().nullable(),
-  notes: z.string().nullable().optional(),
-});
+export const GetWorkoutDetailsResultSchema =
+  PrepareInitialWorkoutResultSchema.extend({
+    startedAt: z.coerce.date(),
+    completedAt: z.coerce.date().nullable(),
+    notes: z.string().nullable().optional(),
+  });
 
 export const UpdateWorkoutInputSchema = z.object({
   workoutId: z.number(),
@@ -159,6 +158,80 @@ export const DeleteWorkoutResultSchema = z.object({
 
 export const DeleteCurrentUserResultSchema = z.object({
   success: z.boolean(),
+});
+
+export const LocalSyncCredentialsResultSchema = z.discriminatedUnion(
+  "enabled",
+  [
+    z.object({
+      enabled: z.literal(false),
+      userId: z.string().min(1),
+    }),
+    z.object({
+      enabled: z.literal(true),
+      userId: z.string().min(1),
+      url: z.string().url(),
+      authToken: z.string().min(1),
+      expiresAt: z.coerce.date(),
+    }),
+  ],
+);
+
+const ExportUserExerciseSchema = z.object({
+  id: z.number().int().positive(),
+  exerciseId: z.number().int().positive().nullable(),
+  name: z.string(),
+  notes: z.string().nullable(),
+  plateStartingWeight: z.number().nullable(),
+  plateLoadMode: plateLoadModeSchema.nullable(),
+  restWarmupSeconds: z.number().int().positive().nullable(),
+  restWorkingSeconds: z.number().int().positive().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+
+const ExportWorkoutSetSchema = z.object({
+  order: z.number().int().nonnegative(),
+  weight: z.number().nullable(),
+  reps: z.number().int().nullable(),
+  modifier: setModifierSchema.nullable(),
+  weightModifier: weightModifierSchema.nullable(),
+  restBefore: restTypeSchema.nullable(),
+  restSeconds: z.number().int().positive().nullable(),
+  notes: z.string().nullable(),
+  rir: z.number().int().min(0).max(10).nullable(),
+  completed: z.boolean(),
+});
+
+const ExportWorkoutExerciseSchema = z.object({
+  id: z.number().int().positive(),
+  userExerciseId: z.number().int().positive(),
+  order: z.number().int().nonnegative(),
+  notes: z.string().nullable(),
+  exerciseNotesSnapshot: z.string().nullable(),
+  restWarmupSeconds: z.number().int().positive().nullable(),
+  restWorkingSeconds: z.number().int().positive().nullable(),
+  sets: z.array(ExportWorkoutSetSchema),
+});
+
+const ExportWorkoutSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  startedAt: z.coerce.date(),
+  completedAt: z.coerce.date(),
+  bodyWeightLb: z.number().nullable(),
+  notes: z.string().nullable(),
+  restWarmupSeconds: z.number().int().positive().nullable(),
+  restWorkingSeconds: z.number().int().positive().nullable(),
+  updatedAt: z.coerce.date(),
+  exercises: z.array(ExportWorkoutExerciseSchema),
+});
+
+export const ExportCurrentUserDataResultSchema = z.object({
+  version: z.literal(1),
+  exportedAt: z.coerce.date(),
+  userExercises: z.array(ExportUserExerciseSchema),
+  workouts: z.array(ExportWorkoutSchema),
 });
 
 export type PreviousExerciseDataDto = z.infer<
@@ -195,4 +268,10 @@ export type DeleteWorkoutInput = z.infer<typeof DeleteWorkoutInputSchema>;
 export type DeleteWorkoutResult = z.infer<typeof DeleteWorkoutResultSchema>;
 export type DeleteCurrentUserResult = z.infer<
   typeof DeleteCurrentUserResultSchema
+>;
+export type LocalSyncCredentialsResult = z.infer<
+  typeof LocalSyncCredentialsResultSchema
+>;
+export type ExportCurrentUserDataResult = z.infer<
+  typeof ExportCurrentUserDataResultSchema
 >;

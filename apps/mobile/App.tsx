@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -10,16 +10,12 @@ import {
   TextInput,
   View,
 } from "react-native";
-import {
-  SafeAreaProvider,
-  SafeAreaView,
-} from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  authClient,
-  getBetterAuthCookieHeaders,
-} from "./src/lib/auth-client";
+import { authClient, getBetterAuthCookieHeaders } from "./src/lib/auth-client";
 import { mobileLocalDevUserId } from "./src/lib/config";
+import { openLocalDatabase } from "./src/local-first/database";
+import { hasLocalWorkoutData } from "./src/local-first/workout-repository";
 import { MobileErrorBoundary } from "./src/workout/MobileErrorBoundary";
 import { LiftMobileApp } from "./src/workout/MobileWorkoutApp";
 
@@ -303,34 +299,65 @@ function AuthScreen({
   );
 }
 
-function SignedInHomeScreen() {
-  return (
-    <LiftMobileApp
-      getHeaders={getBetterAuthCookieHeaders}
-      onSignOut={() => {
-        void authClient.signOut();
-      }}
-    />
-  );
-}
-
 function AppContent() {
   const { data: session, isPending } = authClient.useSession();
   const [authDraft, setAuthDraft] = useState<AuthDraft>(initialAuthDraft);
+  const [hasLocalData, setHasLocalData] = useState<boolean | null>(null);
+  const markLocalDataReady = React.useCallback(() => {
+    setHasLocalData(true);
+  }, []);
+  const handleAccountDeleted = React.useCallback(() => {
+    setHasLocalData(false);
+    void authClient.signOut();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void openLocalDatabase()
+      .then(hasLocalWorkoutData)
+      .then((hasData) => {
+        if (!cancelled) setHasLocalData(hasData);
+      })
+      .catch(() => {
+        if (!cancelled) setHasLocalData(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (__DEV__ && mobileLocalDevUserId) {
-    return <LiftMobileApp localDevUserId={mobileLocalDevUserId} />;
+    return (
+      <LiftMobileApp
+        localDevUserId={mobileLocalDevUserId}
+        onLocalDataReady={markLocalDataReady}
+      />
+    );
   }
 
-  if (isPending) {
+  if (isPending || hasLocalData == null) {
     return <LoadingScreen message="loading..." />;
   }
 
-  if (!session?.user) {
+  if (!session?.user && !hasLocalData) {
     return <AuthScreen draft={authDraft} setDraft={setAuthDraft} />;
   }
 
-  return <SignedInHomeScreen />;
+  return (
+    <LiftMobileApp
+      accountId={session?.user.id}
+      getHeaders={session?.user ? getBetterAuthCookieHeaders : undefined}
+      onAccountDeleted={handleAccountDeleted}
+      onLocalDataReady={markLocalDataReady}
+      onSignOut={
+        session?.user
+          ? () => {
+              void authClient.signOut();
+            }
+          : undefined
+      }
+    />
+  );
 }
 
 export default function App() {

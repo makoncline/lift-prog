@@ -97,15 +97,16 @@ async function resolveUserExerciseIds({
       ...restTimeColumns(exerciseInput.restTimes),
     };
 
-    const existingById = exerciseInput.userExerciseId
-      ? await prisma.userExercise.findFirst({
-          where: {
-            id: exerciseInput.userExerciseId,
-            userId,
-          },
-          select: { id: true, name: true },
-        })
-      : null;
+    const existingById =
+      typeof exerciseInput.userExerciseId === "number"
+        ? await prisma.userExercise.findFirst({
+            where: {
+              id: exerciseInput.userExerciseId,
+              userId,
+            },
+            select: { id: true, name: true },
+          })
+        : null;
 
     if (existingById) {
       const rec =
@@ -174,6 +175,90 @@ async function resolveUserExerciseIds({
 }
 
 export const workoutRouter = createTRPCRouter({
+  exportCurrentUserData: protectedProcedure.query(async ({ ctx }) => {
+    const userId = ctx.session.userId;
+    if (!userId) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "User ID not found in session.",
+      });
+    }
+
+    const [userExercises, workouts] = await Promise.all([
+      ctx.db.userExercise.findMany({
+        where: { userId },
+        orderBy: { id: "asc" },
+        select: {
+          id: true,
+          exerciseId: true,
+          name: true,
+          notes: true,
+          plateStartingWeight: true,
+          plateLoadMode: true,
+          restWarmupSeconds: true,
+          restWorkingSeconds: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      ctx.db.workout.findMany({
+        where: {
+          userId,
+          completedAt: { not: null },
+        },
+        orderBy: { startedAt: "asc" },
+        select: {
+          id: true,
+          name: true,
+          startedAt: true,
+          completedAt: true,
+          bodyWeightLb: true,
+          notes: true,
+          restWarmupSeconds: true,
+          restWorkingSeconds: true,
+          updatedAt: true,
+          workoutExercises: {
+            orderBy: { order: "asc" },
+            select: {
+              id: true,
+              userExerciseId: true,
+              order: true,
+              notes: true,
+              exerciseNotesSnapshot: true,
+              restWarmupSeconds: true,
+              restWorkingSeconds: true,
+              sets: {
+                orderBy: { order: "asc" },
+                select: {
+                  order: true,
+                  weight: true,
+                  reps: true,
+                  modifier: true,
+                  weightModifier: true,
+                  restBefore: true,
+                  restSeconds: true,
+                  notes: true,
+                  rir: true,
+                  completed: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      version: 1 as const,
+      exportedAt: new Date(),
+      userExercises,
+      workouts: workouts.map(({ workoutExercises, ...workout }) => ({
+        ...workout,
+        exercises: workoutExercises,
+      })),
+    };
+  }),
+
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
     .mutation(async ({ ctx, input }) => {

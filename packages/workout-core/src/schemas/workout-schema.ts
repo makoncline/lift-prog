@@ -22,7 +22,7 @@ export const CompletedSetSchema = z.object({
 });
 
 export const CompletedExerciseSchema = z.object({
-  userExerciseId: z.number().optional(),
+  userExerciseId: z.union([z.string().min(1), z.number()]).optional(),
   name: z.string(),
   order: z.number(),
   exerciseNotes: z.string().optional(),
@@ -33,6 +33,7 @@ export const CompletedExerciseSchema = z.object({
 });
 
 export const CompletedWorkoutSchema = z.object({
+  clientId: z.string().min(1).optional(),
   name: z.string(),
   notes: z.string().optional(),
   completedAt: z.coerce.date(),

@@ -116,11 +116,11 @@ describe("user router admin guard", () => {
     process.env.ADMIN_USER_IDS = "user_admin";
     const { caller, spies } = makeCaller("user_member");
 
-    await expect(caller.user.delete({ id: "user_other" })).rejects.toMatchObject(
-      {
-        code: "FORBIDDEN",
-      },
-    );
+    await expect(
+      caller.user.delete({ id: "user_other" }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
     expect(spies.userDelete).not.toHaveBeenCalled();
   });
 
@@ -175,10 +175,7 @@ describe("user router admin guard", () => {
     });
     expect(spies.authUserDeleteMany).toHaveBeenCalledWith({
       where: {
-        OR: [
-          { id: "auth_user_member" },
-          { email: "user_member@example.com" },
-        ],
+        OR: [{ id: "auth_user_member" }, { email: "user_member@example.com" }],
       },
     });
   });
