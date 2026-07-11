@@ -5,11 +5,14 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
+import { getUserSyncCredentials } from "@/server/services/user-sync-database";
 
 export const userRouter = createTRPCRouter({
-  currentDataIdentity: protectedProcedure.query(({ ctx }) => ({
-    userId: ctx.session.userId,
-  })),
+  localSyncCredentials: protectedProcedure.query(({ ctx }) => {
+    const userId = ctx.session.userId;
+    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+    return getUserSyncCredentials(userId);
+  }),
 
   // Procedure to list all users
   list: adminProcedure.query(async ({ ctx }) => {

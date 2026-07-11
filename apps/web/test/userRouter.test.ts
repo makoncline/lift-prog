@@ -84,14 +84,6 @@ const makeCaller = (userId: string) => {
 };
 
 describe("user router admin guard", () => {
-  it("returns the stable app user id for local data ownership", async () => {
-    const { caller } = makeCaller("user_member");
-
-    await expect(caller.user.currentDataIdentity()).resolves.toEqual({
-      userId: "user_member",
-    });
-  });
-
   it("prevents a non-admin signed-in user from listing users", async () => {
     process.env.ADMIN_USER_IDS = "user_admin";
     const { caller, spies } = makeCaller("user_member");

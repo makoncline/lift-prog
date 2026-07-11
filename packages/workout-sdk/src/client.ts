@@ -11,7 +11,7 @@ import {
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
   DeleteCurrentUserResultSchema,
-  CurrentUserDataIdentityResultSchema,
+  LocalSyncCredentialsResultSchema,
   ExportCurrentUserDataResultSchema,
   ListExercisesResultSchema,
   ExerciseUpdateResultSchema,
@@ -28,7 +28,7 @@ import {
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
   type DeleteCurrentUserResult,
-  type CurrentUserDataIdentityResult,
+  type LocalSyncCredentialsResult,
   type ExportCurrentUserDataResult,
   type ExerciseListItem,
   type ExerciseUpdateResult,
@@ -162,9 +162,9 @@ export const createWorkoutApiClient = ({
       return DeleteCurrentUserResultSchema.parse(result);
     },
 
-    async getCurrentUserDataIdentity(): Promise<CurrentUserDataIdentityResult> {
-      const result = await client.query("user.currentDataIdentity");
-      return CurrentUserDataIdentityResultSchema.parse(result);
+    async getLocalSyncCredentials(): Promise<LocalSyncCredentialsResult> {
+      const result = await client.query("user.localSyncCredentials");
+      return LocalSyncCredentialsResultSchema.parse(result);
     },
 
     async exportCurrentUserData(): Promise<ExportCurrentUserDataResult> {

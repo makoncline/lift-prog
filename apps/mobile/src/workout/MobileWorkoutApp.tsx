@@ -60,7 +60,10 @@ import {
   mobileProductionImportUrl,
   mobileWorkoutApiBaseUrl,
 } from "../lib/config";
-import { openLocalDatabase } from "../local-first/database";
+import {
+  openLocalDatabase,
+  reopenLocalDatabaseWithSync,
+} from "../local-first/database";
 import { readProductionExportFile } from "../local-first/production-import";
 import type {
   LocalExerciseListItem,
@@ -844,7 +847,7 @@ export function LiftMobileApp({
 
     void (async () => {
       try {
-        const database = await openLocalDatabase();
+        let database = await openLocalDatabase();
         const authAccountId = accountId;
         let effectiveAccountId = localDevUserId;
         const hasData = await hasLocalWorkoutData(database);
@@ -854,11 +857,37 @@ export function LiftMobileApp({
               baseUrl: mobileWorkoutApiBaseUrl,
               getHeaders,
             });
-            effectiveAccountId = (
-              await identityClient.getCurrentUserDataIdentity()
-            ).userId;
+            let syncCredentials =
+              await identityClient.getLocalSyncCredentials();
+            effectiveAccountId = syncCredentials.userId;
+
+            if (syncCredentials.enabled) {
+              const syncUrl = syncCredentials.url;
+              database = await reopenLocalDatabaseWithSync({
+                url: syncUrl,
+                authToken: async () => {
+                  if (
+                    syncCredentials.enabled &&
+                    syncCredentials.expiresAt.getTime() > Date.now() + 60_000
+                  ) {
+                    return syncCredentials.authToken;
+                  }
+
+                  const refreshed =
+                    await identityClient.getLocalSyncCredentials();
+                  if (!refreshed.enabled || refreshed.url !== syncUrl) {
+                    throw new Error("Workout sync is no longer available.");
+                  }
+                  syncCredentials = refreshed;
+                  return refreshed.authToken;
+                },
+              });
+              await database.push();
+              await database.pull();
+            }
           } catch (error) {
             if (!hasData) throw error;
+            console.error("local workout sync unavailable", error);
           }
         }
         if (effectiveAccountId) {

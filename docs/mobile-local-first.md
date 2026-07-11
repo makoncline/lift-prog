@@ -36,9 +36,12 @@ Before releasing a migration:
 
 ## Optional cloud sync
 
-`openLocalDatabase` accepts a remote URL and token provider so the same local database can later use Turso push/pull. The remaining cloud work is intentionally outside this change:
+When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user and returns a one-hour database-scoped token. Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without those variables, the API reports sync disabled and the app remains fully local-only.
 
-1. Provision one new Turso database per app user. Do not sync against the legacy shared `lift-prog` database.
-2. Add an authenticated API endpoint that returns only that user's database URL and a short-lived token.
-3. Add explicit push/pull orchestration, retry state, and conflict handling at workout aggregate and user-exercise row boundaries.
-4. Keep all workout UI reads and writes local regardless of sync status.
+The remaining cloud work is:
+
+1. Add foreground/connectivity retry state and a subtle sync-status surface.
+2. Exercise two-device conflict handling at workout aggregate and user-exercise row boundaries.
+3. Verify backup/restore from an empty second installation before enabling platform credentials in production.
+
+Never point this path at the legacy shared `lift-prog` database.

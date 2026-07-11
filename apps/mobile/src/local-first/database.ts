@@ -24,7 +24,7 @@ export function openLocalDatabase(sync?: LocalDatabaseSyncConfig) {
         ? {
             url: sync.url,
             authToken: sync.authToken,
-            bootstrapIfEmpty: false,
+            bootstrapIfEmpty: true,
             clientName: "lift-prog-ios",
           }
         : {}),
@@ -57,4 +57,13 @@ export async function resetLocalDatabaseConnectionForTests() {
   const database = await databasePromise;
   database?.close();
   databasePromise = null;
+}
+
+export async function reopenLocalDatabaseWithSync(
+  sync: LocalDatabaseSyncConfig,
+) {
+  const database = await databasePromise;
+  database?.close();
+  databasePromise = null;
+  return openLocalDatabase(sync);
 }

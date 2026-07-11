@@ -160,9 +160,22 @@ export const DeleteCurrentUserResultSchema = z.object({
   success: z.boolean(),
 });
 
-export const CurrentUserDataIdentityResultSchema = z.object({
-  userId: z.string().min(1),
-});
+export const LocalSyncCredentialsResultSchema = z.discriminatedUnion(
+  "enabled",
+  [
+    z.object({
+      enabled: z.literal(false),
+      userId: z.string().min(1),
+    }),
+    z.object({
+      enabled: z.literal(true),
+      userId: z.string().min(1),
+      url: z.string().url(),
+      authToken: z.string().min(1),
+      expiresAt: z.coerce.date(),
+    }),
+  ],
+);
 
 const ExportUserExerciseSchema = z.object({
   id: z.number().int().positive(),
@@ -256,8 +269,8 @@ export type DeleteWorkoutResult = z.infer<typeof DeleteWorkoutResultSchema>;
 export type DeleteCurrentUserResult = z.infer<
   typeof DeleteCurrentUserResultSchema
 >;
-export type CurrentUserDataIdentityResult = z.infer<
-  typeof CurrentUserDataIdentityResultSchema
+export type LocalSyncCredentialsResult = z.infer<
+  typeof LocalSyncCredentialsResultSchema
 >;
 export type ExportCurrentUserDataResult = z.infer<
   typeof ExportCurrentUserDataResultSchema
