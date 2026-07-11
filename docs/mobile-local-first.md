@@ -44,9 +44,10 @@ Mobile coalesces local writes into background pushes, retries when connectivity 
 
 Turso resolves concurrent statements with last-push-wins semantics. The app uses that rule at the workout aggregate and user-exercise row boundaries. Stable IDs let independently created workouts coexist; concurrent edits to the same workout intentionally resolve to the last pushed aggregate. Workout deletion also writes an independent tombstone, so a stale edit from another device cannot make a deleted workout visible again.
 
+On July 10, 2026, the matching official Turso Sync `0.6.1` engine was exercised against an isolated temporary cloud database with two writers and an empty restore client. Independent workout inserts merged, the later push won a same-workout edit, the tombstone prevented stale resurrection, and the empty client restored the surviving rows. The temporary database was deleted after the test.
+
 The remaining cloud work is:
 
-1. Exercise two-device conflict handling at workout aggregate and user-exercise row boundaries.
-2. Verify backup/restore from an empty second installation before enabling platform credentials in production.
+1. Verify the complete authenticated React Native app restore from an empty second Simulator installation before enabling platform credentials in production.
 
 Never point this path at the legacy shared `lift-prog` database.
