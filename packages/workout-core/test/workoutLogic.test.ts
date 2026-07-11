@@ -451,6 +451,7 @@ describe("finalizeWorkout", () => {
     ]);
 
     const workout = finalizeWorkout({
+      clientId: "workout-local-1",
       currentExerciseIndex: 0,
       exercises: [exercise!],
       activeField: { exerciseIndex: null, setIndex: null, field: null },
@@ -467,6 +468,7 @@ describe("finalizeWorkout", () => {
       reps: 8,
       completed: true,
     });
+    expect(workout.clientId).toBe("workout-local-1");
   });
 
   it("keeps blank default sets incomplete", () => {

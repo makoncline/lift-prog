@@ -60,6 +60,17 @@ export const LOCAL_MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS quarantined_workout_draft (
+        slot TEXT PRIMARY KEY,
+        aggregate_json TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        quarantined_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export async function runLocalMigrations(database: Database) {
@@ -83,6 +94,10 @@ export async function runLocalMigrations(database: Database) {
     if (applied.has(migration.version)) continue;
 
     await withLocalTransaction(database, async () => {
+      // The current React Native sync SDK cannot keep an explicit SQL
+      // transaction open across run() calls. Every migration statement must
+      // therefore be safe to retry until true transaction support is restored
+      // in withLocalTransaction().
       const statements = migration.sql
         .split(";")
         .map((statement) => statement.trim())

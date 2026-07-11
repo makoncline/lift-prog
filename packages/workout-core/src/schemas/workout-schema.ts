@@ -33,6 +33,7 @@ export const CompletedExerciseSchema = z.object({
 });
 
 export const CompletedWorkoutSchema = z.object({
+  clientId: z.string().min(1).optional(),
   name: z.string(),
   notes: z.string().optional(),
   completedAt: z.coerce.date(),

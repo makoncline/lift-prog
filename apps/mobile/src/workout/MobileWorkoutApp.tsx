@@ -76,6 +76,7 @@ import {
   hasLocalWorkoutData,
   importProductionExport,
   isProductionImportComplete,
+  quarantineActiveWorkoutDraftJson,
   readActiveWorkoutDraftJson,
   writeActiveWorkoutDraftJson,
 } from "../local-first/workout-repository";
@@ -353,6 +354,10 @@ function makeClientId() {
   return id;
 }
 
+function makeWorkoutClientId() {
+  return `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function normalizeBodyWeightLb(value: unknown): number | null {
   const numeric =
     typeof value === "number"
@@ -477,6 +482,7 @@ function createWorkoutState(
     : exercises.map(resetExerciseCompletion);
 
   return ensureWorkoutSetIds({
+    clientId: makeWorkoutClientId(),
     currentExerciseIndex: 0,
     exercises: hydratedExercises,
     activeField: { exerciseIndex: null, setIndex: null, field: null },
@@ -597,9 +603,20 @@ function redoWorkoutSession(session: WorkoutSession): WorkoutSession {
 
 async function readActiveWorkoutDraft(): Promise<StoredWorkoutDraft | null> {
   try {
-    const raw = await readActiveWorkoutDraftJson(await openLocalDatabase());
-    return parseStoredWorkoutDraft(raw);
-  } catch {
+    const database = await openLocalDatabase();
+    const raw = await readActiveWorkoutDraftJson(database);
+    const draft = parseStoredWorkoutDraft(raw);
+    if (raw && !draft) {
+      await quarantineActiveWorkoutDraftJson(
+        database,
+        raw,
+        "Stored workout draft could not be parsed by this app version.",
+      );
+      console.error("quarantined unreadable local workout draft");
+    }
+    return draft;
+  } catch (error) {
+    console.error("could not read local workout draft", error);
     return null;
   }
 }
@@ -828,11 +845,26 @@ export function LiftMobileApp({
     void (async () => {
       try {
         const database = await openLocalDatabase();
-        const effectiveAccountId = accountId ?? localDevUserId;
+        const authAccountId = accountId;
+        let effectiveAccountId = localDevUserId;
         const hasData = await hasLocalWorkoutData(database);
+        if (!effectiveAccountId && getHeaders) {
+          try {
+            const identityClient = createWorkoutApiClient({
+              baseUrl: mobileWorkoutApiBaseUrl,
+              getHeaders,
+            });
+            effectiveAccountId = (
+              await identityClient.getCurrentUserDataIdentity()
+            ).userId;
+          } catch (error) {
+            if (!hasData) throw error;
+          }
+        }
         if (effectiveAccountId) {
           await bindOrAssertLocalAccount(database, effectiveAccountId, {
             bindIfUnbound: hasData,
+            previousAccountIds: authAccountId ? [authAccountId] : [],
           });
         }
         const importComplete = await isProductionImportComplete(

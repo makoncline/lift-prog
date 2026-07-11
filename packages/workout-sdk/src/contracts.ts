@@ -160,6 +160,10 @@ export const DeleteCurrentUserResultSchema = z.object({
   success: z.boolean(),
 });
 
+export const CurrentUserDataIdentityResultSchema = z.object({
+  userId: z.string().min(1),
+});
+
 const ExportUserExerciseSchema = z.object({
   id: z.number().int().positive(),
   exerciseId: z.number().int().positive().nullable(),
@@ -201,7 +205,7 @@ const ExportWorkoutSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
   startedAt: z.coerce.date(),
-  completedAt: z.coerce.date().nullable(),
+  completedAt: z.coerce.date(),
   bodyWeightLb: z.number().nullable(),
   notes: z.string().nullable(),
   restWarmupSeconds: z.number().int().positive().nullable(),
@@ -251,6 +255,9 @@ export type DeleteWorkoutInput = z.infer<typeof DeleteWorkoutInputSchema>;
 export type DeleteWorkoutResult = z.infer<typeof DeleteWorkoutResultSchema>;
 export type DeleteCurrentUserResult = z.infer<
   typeof DeleteCurrentUserResultSchema
+>;
+export type CurrentUserDataIdentityResult = z.infer<
+  typeof CurrentUserDataIdentityResultSchema
 >;
 export type ExportCurrentUserDataResult = z.infer<
   typeof ExportCurrentUserDataResultSchema

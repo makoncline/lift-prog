@@ -327,7 +327,7 @@ async function persistWorkout(
   workout: CompletedWorkout,
   options?: { id?: LocalId; legacyServerId?: number | null; updatedAt?: Date },
 ) {
-  const id = options?.id ?? createLocalId();
+  const id = options?.id ?? workout.clientId ?? createLocalId();
   const updatedAt = options?.updatedAt ?? new Date();
 
   const exercises: CompletedExercise[] = [];
@@ -500,19 +500,9 @@ export function createLocalWorkoutDataClient(
     },
 
     async saveWorkout(input) {
-      const existing = await database.get(
-        `SELECT id, legacy_server_id FROM workouts
-         WHERE started_at = ? AND deleted_at IS NULL
-         ORDER BY updated_at DESC
-         LIMIT 1`,
-        input.startedAt.toISOString(),
-      );
-      const existingId = readString(existing ?? {}, "id");
       const workoutId = await withLocalTransaction(database, () =>
         persistWorkout(database, input, {
-          id: existingId ?? undefined,
-          legacyServerId:
-            readNumber(existing ?? {}, "legacy_server_id") ?? undefined,
+          id: input.clientId,
         }),
       );
       return { success: true, workoutId };
@@ -612,16 +602,28 @@ export function createLocalWorkoutDataClient(
 export async function bindOrAssertLocalAccount(
   database: Database,
   accountId: string,
-  options?: { bindIfUnbound?: boolean },
+  options?: { bindIfUnbound?: boolean; previousAccountIds?: string[] },
 ) {
   const row = await database.get(
     `SELECT value FROM app_metadata WHERE key = ?`,
     ACCOUNT_ID_KEY,
   );
   const boundAccountId = readString(row ?? {}, "value");
+  const canMigrateBinding =
+    boundAccountId != null &&
+    options?.previousAccountIds?.includes(boundAccountId) === true;
   if (boundAccountId && boundAccountId !== accountId) {
-    throw new Error(
-      "This local workout log belongs to a different signed-in account.",
+    if (!canMigrateBinding) {
+      throw new Error(
+        "This local workout log belongs to a different signed-in account.",
+      );
+    }
+
+    await database.run(
+      `UPDATE app_metadata SET value = ?, updated_at = ? WHERE key = ?`,
+      accountId,
+      new Date().toISOString(),
+      ACCOUNT_ID_KEY,
     );
   }
   if (boundAccountId || !options?.bindIfUnbound) return;
@@ -679,16 +681,30 @@ export async function importProductionExport(
   const now = new Date().toISOString();
   const userExerciseIdMap = new Map<number, string>();
 
-  await withLocalTransaction(database, async () => {
-    for (const exercise of snapshot.userExercises) {
-      const existing = await database.get(
-        `SELECT id FROM user_exercises WHERE legacy_server_id = ?`,
-        exercise.id,
-      );
-      const id = readString(existing ?? {}, "id") ?? createLocalId();
-      userExerciseIdMap.set(exercise.id, id);
-      await database.run(
-        `INSERT INTO user_exercises (
+  if (options?.accountId) {
+    await bindOrAssertLocalAccount(database, options.accountId, {
+      bindIfUnbound: true,
+    });
+    await database.run(
+      `INSERT INTO app_metadata (key, value, updated_at)
+       VALUES (?, 'started', ?)
+       ON CONFLICT(key) DO UPDATE SET value = 'started', updated_at = excluded.updated_at`,
+      `${importCompleteKey(options.accountId)}:status`,
+      now,
+    );
+  }
+
+  try {
+    await withLocalTransaction(database, async () => {
+      for (const exercise of snapshot.userExercises) {
+        const existing = await database.get(
+          `SELECT id FROM user_exercises WHERE legacy_server_id = ?`,
+          exercise.id,
+        );
+        const id = readString(existing ?? {}, "id") ?? createLocalId();
+        userExerciseIdMap.set(exercise.id, id);
+        await database.run(
+          `INSERT INTO user_exercises (
            id, legacy_server_id, catalog_exercise_id, name, notes,
            plate_starting_weight, plate_load_mode,
            rest_warmup_seconds, rest_working_seconds,
@@ -705,81 +721,91 @@ export async function importProductionExport(
            rest_working_seconds = excluded.rest_working_seconds,
            updated_at = excluded.updated_at,
            deleted_at = NULL`,
-        id,
-        exercise.id,
-        exercise.exerciseId == null ? null : `legacy:${exercise.exerciseId}`,
-        exercise.name,
-        exercise.notes,
-        exercise.plateStartingWeight,
-        exercise.plateLoadMode,
-        exercise.restWarmupSeconds,
-        exercise.restWorkingSeconds,
-        exercise.createdAt.toISOString(),
-        exercise.updatedAt.toISOString(),
-      );
-    }
+          id,
+          exercise.id,
+          exercise.exerciseId == null ? null : `legacy:${exercise.exerciseId}`,
+          exercise.name,
+          exercise.notes,
+          exercise.plateStartingWeight,
+          exercise.plateLoadMode,
+          exercise.restWarmupSeconds,
+          exercise.restWorkingSeconds,
+          exercise.createdAt.toISOString(),
+          exercise.updatedAt.toISOString(),
+        );
+      }
 
-    for (const workout of snapshot.workouts) {
-      if (!workout.completedAt) continue;
-      const existing = await database.get(
-        `SELECT id FROM workouts WHERE legacy_server_id = ?`,
-        workout.id,
-      );
-      const id = readString(existing ?? {}, "id") ?? createLocalId();
-      const completedWorkout = CompletedWorkoutSchema.parse({
-        name: workout.name,
-        notes: workout.notes ?? undefined,
-        startedAt: workout.startedAt,
-        completedAt: workout.completedAt,
-        bodyWeightLb: workout.bodyWeightLb,
-        restTimes: restTimesFromColumns(workout),
-        exercises: workout.exercises.map((exercise) => ({
-          userExerciseId: userExerciseIdMap.get(exercise.userExerciseId),
-          name:
-            snapshot.userExercises.find(
-              (candidate) => candidate.id === exercise.userExerciseId,
-            )?.name ?? "Exercise",
-          order: exercise.order,
-          notes: exercise.notes ?? undefined,
-          exerciseNotesSnapshot: exercise.exerciseNotesSnapshot ?? undefined,
-          restTimes: restTimesFromColumns(exercise),
-          sets: exercise.sets.map((set) => ({
-            ...set,
-            modifier: set.modifier,
-            weightModifier: set.weightModifier,
-            restBefore: set.restBefore,
-            restSeconds: set.restSeconds,
-            notes: set.notes ?? undefined,
-            rir: set.rir,
+      for (const workout of snapshot.workouts) {
+        const existing = await database.get(
+          `SELECT id FROM workouts WHERE legacy_server_id = ?`,
+          workout.id,
+        );
+        const id = readString(existing ?? {}, "id") ?? createLocalId();
+        const completedWorkout = CompletedWorkoutSchema.parse({
+          name: workout.name,
+          notes: workout.notes ?? undefined,
+          startedAt: workout.startedAt,
+          completedAt: workout.completedAt,
+          bodyWeightLb: workout.bodyWeightLb,
+          restTimes: restTimesFromColumns(workout),
+          exercises: workout.exercises.map((exercise) => ({
+            userExerciseId: userExerciseIdMap.get(exercise.userExerciseId),
+            name:
+              snapshot.userExercises.find(
+                (candidate) => candidate.id === exercise.userExerciseId,
+              )?.name ?? "Exercise",
+            order: exercise.order,
+            notes: exercise.notes ?? undefined,
+            exerciseNotesSnapshot: exercise.exerciseNotesSnapshot ?? undefined,
+            restTimes: restTimesFromColumns(exercise),
+            sets: exercise.sets.map((set) => ({
+              ...set,
+              modifier: set.modifier,
+              weightModifier: set.weightModifier,
+              restBefore: set.restBefore,
+              restSeconds: set.restSeconds,
+              notes: set.notes ?? undefined,
+              rir: set.rir,
+            })),
           })),
-        })),
-      });
-      await persistWorkout(database, completedWorkout, {
-        id,
-        legacyServerId: workout.id,
-        updatedAt: workout.updatedAt,
-      });
-    }
+        });
+        await persistWorkout(database, completedWorkout, {
+          id,
+          legacyServerId: workout.id,
+          updatedAt: workout.updatedAt,
+        });
+      }
 
+      await database.run(
+        `INSERT INTO app_metadata (key, value, updated_at)
+       VALUES (?, 'true', ?)
+       ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = excluded.updated_at`,
+        importCompleteKey(options?.accountId),
+        now,
+      );
+
+      if (options?.accountId) {
+        await database.run(
+          `INSERT INTO app_metadata (key, value, updated_at)
+         VALUES (?, 'complete', ?)
+         ON CONFLICT(key) DO UPDATE SET value = 'complete', updated_at = excluded.updated_at`,
+          `${importCompleteKey(options.accountId)}:status`,
+          now,
+        );
+      }
+    });
+  } catch (error) {
     if (options?.accountId) {
       await database.run(
         `INSERT INTO app_metadata (key, value, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-        ACCOUNT_ID_KEY,
-        options.accountId,
-        now,
+         VALUES (?, 'failed', ?)
+         ON CONFLICT(key) DO UPDATE SET value = 'failed', updated_at = excluded.updated_at`,
+        `${importCompleteKey(options.accountId)}:status`,
+        new Date().toISOString(),
       );
     }
-
-    await database.run(
-      `INSERT INTO app_metadata (key, value, updated_at)
-       VALUES (?, 'true', ?)
-       ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = excluded.updated_at`,
-      importCompleteKey(options?.accountId),
-      now,
-    );
-  });
+    throw error;
+  }
 }
 
 export async function readActiveWorkoutDraftJson(database: Database) {
@@ -806,4 +832,24 @@ export async function writeActiveWorkoutDraftJson(
 
 export async function clearActiveWorkoutDraftRow(database: Database) {
   await database.run(`DELETE FROM active_workout_draft WHERE slot = 'current'`);
+}
+
+export async function quarantineActiveWorkoutDraftJson(
+  database: Database,
+  aggregateJson: string,
+  reason: string,
+) {
+  await database.run(
+    `INSERT INTO quarantined_workout_draft (
+       slot, aggregate_json, reason, quarantined_at
+     ) VALUES ('current', ?, ?, ?)
+     ON CONFLICT(slot) DO UPDATE SET
+       aggregate_json = excluded.aggregate_json,
+       reason = excluded.reason,
+       quarantined_at = excluded.quarantined_at`,
+    aggregateJson,
+    reason,
+    new Date().toISOString(),
+  );
+  await clearActiveWorkoutDraftRow(database);
 }

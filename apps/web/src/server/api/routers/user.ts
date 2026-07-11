@@ -7,6 +7,10 @@ import {
 import { TRPCError } from "@trpc/server";
 
 export const userRouter = createTRPCRouter({
+  currentDataIdentity: protectedProcedure.query(({ ctx }) => ({
+    userId: ctx.session.userId,
+  })),
+
   // Procedure to list all users
   list: adminProcedure.query(async ({ ctx }) => {
     return ctx.db.user.findMany({
@@ -19,10 +23,16 @@ export const userRouter = createTRPCRouter({
     .input(
       z
         .object({
-          authUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+          authUserId: z
+            .string()
+            .min(1, "Auth user ID cannot be empty")
+            .optional(),
           // Legacy input name kept so older callers do not break while the
           // database still stores this compatibility column.
-          clerkUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+          clerkUserId: z
+            .string()
+            .min(1, "Auth user ID cannot be empty")
+            .optional(),
         })
         .refine((input) => input.authUserId ?? input.clerkUserId, {
           message: "Auth user ID cannot be empty",
@@ -40,11 +50,7 @@ export const userRouter = createTRPCRouter({
 
       const existingUser = await ctx.db.user.findFirst({
         where: {
-          OR: [
-            { id: authUserId },
-            { clerkUserId: authUserId },
-            { authUserId },
-          ],
+          OR: [{ id: authUserId }, { clerkUserId: authUserId }, { authUserId }],
         },
       });
 
@@ -126,8 +132,7 @@ export const userRouter = createTRPCRouter({
         appUser.authUserId ? { id: appUser.authUserId } : null,
         appUser.email ? { email: appUser.email } : null,
       ].filter(
-        (match): match is { id: string } | { email: string } =>
-          match !== null,
+        (match): match is { id: string } | { email: string } => match !== null,
       );
 
       if (authUserMatches.length > 0) {

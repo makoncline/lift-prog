@@ -11,6 +11,7 @@ import {
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
   DeleteCurrentUserResultSchema,
+  CurrentUserDataIdentityResultSchema,
   ExportCurrentUserDataResultSchema,
   ListExercisesResultSchema,
   ExerciseUpdateResultSchema,
@@ -27,6 +28,7 @@ import {
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
   type DeleteCurrentUserResult,
+  type CurrentUserDataIdentityResult,
   type ExportCurrentUserDataResult,
   type ExerciseListItem,
   type ExerciseUpdateResult,
@@ -158,6 +160,11 @@ export const createWorkoutApiClient = ({
     async deleteCurrentUser(): Promise<DeleteCurrentUserResult> {
       const result = await client.mutation("user.deleteCurrent");
       return DeleteCurrentUserResultSchema.parse(result);
+    },
+
+    async getCurrentUserDataIdentity(): Promise<CurrentUserDataIdentityResult> {
+      const result = await client.query("user.currentDataIdentity");
+      return CurrentUserDataIdentityResultSchema.parse(result);
     },
 
     async exportCurrentUserData(): Promise<ExportCurrentUserDataResult> {

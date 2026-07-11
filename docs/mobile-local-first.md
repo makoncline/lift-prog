@@ -7,6 +7,7 @@ The iOS app treats its local Turso database as the source of truth for workout d
 - `workouts` stores each completed workout as one versioned JSON aggregate. A workout save is one atomic row write and is the future sync conflict boundary.
 - `user_exercises` stores user-owned exercise preferences separately from workout history.
 - `active_workout_draft` stores the single resumable in-progress workout.
+- `quarantined_workout_draft` preserves an unreadable draft for recovery instead of silently discarding it.
 - `app_metadata` stores idempotent bootstrap markers.
 - IDs are generated on the device. Imported server integer IDs are retained only as `legacy_server_id` metadata.
 - Deleted records use tombstones so a later cloud sync cannot resurrect them.
@@ -24,7 +25,7 @@ The import is idempotent by `legacy_server_id`. It never writes to the existing 
 
 `apps/mobile/src/local-first/migrations.ts` contains append-only, monotonically numbered migrations. Never edit a migration after a released build has used it.
 
-The React Native Turso SDK currently requires statements to be executed through `Database.run()`. Do not use `Database.exec()`, manual `BEGIN`/`COMMIT` statements, or the SDK's `Database.transaction()` helper in version 0.6.1. Manual transaction control either fails parsing or reports `no transaction is active` after writes have already autocommitted. Keep multi-write operations behind `withLocalTransaction()` as an idempotent operation boundary; restore true atomic transactions there when the SDK supports them reliably.
+The React Native Turso SDK currently requires statements to be executed through `Database.run()`. Do not use `Database.exec()`, manual `BEGIN`/`COMMIT` statements, or the SDK's `Database.transaction()` helper in version 0.6.1. Manual transaction control either fails parsing or reports `no transaction is active` after writes have already autocommitted. Keep multi-write operations behind `withLocalTransaction()` as an idempotent operation boundary; every migration statement and import write must be safe to retry. Restore true atomic transactions there when the SDK supports them reliably.
 
 Before releasing a migration:
 

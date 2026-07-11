@@ -202,7 +202,10 @@ export const workoutRouter = createTRPCRouter({
         },
       }),
       ctx.db.workout.findMany({
-        where: { userId },
+        where: {
+          userId,
+          completedAt: { not: null },
+        },
         orderBy: { startedAt: "asc" },
         select: {
           id: true,

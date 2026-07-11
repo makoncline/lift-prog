@@ -93,6 +93,7 @@ export interface ActiveField {
 }
 
 export interface Workout {
+  clientId?: string;
   currentExerciseIndex: number;
   exercises: WorkoutExercise[];
   activeField: ActiveField;
@@ -2013,6 +2014,7 @@ export function finalizeWorkout(
     .filter((ex) => ex.sets.length > 0);
 
   return {
+    clientId: state.clientId,
     name: state.name,
     startedAt: new Date(state.startTime),
     completedAt: new Date(),

@@ -613,6 +613,15 @@ describe("workout.exportCurrentUserData", () => {
 
     const snapshot = await caller.workout.exportCurrentUserData();
 
+    expect(spies.workoutFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: "user_123",
+          completedAt: { not: null },
+        },
+      }),
+    );
+
     expect(snapshot.userExercises.map((exercise) => exercise.id)).toEqual([
       7, 10,
     ]);
