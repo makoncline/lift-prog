@@ -1,6 +1,11 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import { createClient as createDatabaseClient } from "@libsql/client";
+import {
+  getLocalFirstMigrationStatements,
+  LOCAL_FIRST_MIGRATIONS,
+} from "@lift-prog/workout-sdk";
 import {
   createClient,
   type Database,
@@ -16,6 +21,11 @@ type SyncPlatformConfig = {
 };
 
 type SyncPlatformClient = ReturnType<typeof createClient>;
+
+type UserSyncDatabaseClient = Pick<
+  ReturnType<typeof createDatabaseClient>,
+  "execute"
+>;
 
 function errorStatus(error: unknown) {
   if (
@@ -75,27 +85,73 @@ async function getOrCreateDatabase(
   }
 }
 
+export async function ensureUserSyncDatabaseSchema(
+  database: UserSyncDatabaseClient,
+) {
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+
+  const appliedResult = await database.execute(
+    "SELECT version FROM schema_migrations ORDER BY version ASC",
+  );
+  const applied = new Set(
+    appliedResult.rows.flatMap((row) =>
+      typeof row.version === "number" ? [row.version] : [],
+    ),
+  );
+
+  for (const migration of LOCAL_FIRST_MIGRATIONS) {
+    if (applied.has(migration.version)) continue;
+
+    for (const statement of getLocalFirstMigrationStatements(migration.sql)) {
+      await database.execute(statement);
+    }
+    await database.execute({
+      sql: `INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+            VALUES (?, ?)`,
+      args: [migration.version, new Date().toISOString()],
+    });
+  }
+}
+
 export async function provisionUserSyncCredentials({
   userId,
   config,
   client,
   now = new Date(),
+  connectToDatabase = ({ url, authToken }) =>
+    createDatabaseClient({ url, authToken }),
 }: {
   userId: string;
   config: SyncPlatformConfig;
   client: SyncPlatformClient;
   now?: Date;
+  connectToDatabase?: (credentials: {
+    url: string;
+    authToken: string;
+  }) => ReturnType<typeof createDatabaseClient>;
 }) {
   const database = await getOrCreateDatabase(userId, config, client);
   const { jwt } = await client.databases.createToken(database.name, {
     expiration: "1h",
     authorization: "full-access",
   });
+  const url = `libsql://${database.hostname}`;
+  const syncDatabase = connectToDatabase({ url, authToken: jwt });
+  try {
+    await ensureUserSyncDatabaseSchema(syncDatabase);
+  } finally {
+    syncDatabase.close();
+  }
 
   return {
     enabled: true as const,
     userId,
-    url: `libsql://${database.hostname}`,
+    url,
     authToken: jwt,
     expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
   };

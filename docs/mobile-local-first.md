@@ -23,7 +23,9 @@ The import is idempotent by `legacy_server_id`. It never writes to the existing 
 
 ## Migrations
 
-`apps/mobile/src/local-first/migrations.ts` contains append-only, monotonically numbered migrations. Never edit a migration after a released build has used it.
+`packages/workout-sdk/src/local-first-schema.ts` contains the shared append-only, monotonically numbered migrations. The mobile database runner and server-side per-user database provisioner both consume that list. Never edit a migration after a released build has used it.
+
+Turso Sync does not copy client-created DDL to an empty remote database. Before the API returns sync credentials, it applies every pending shared migration to the per-user remote database. The mobile client then runs the same migrations locally before it pushes or pulls. This ordering is required for both first-device imports and empty-device restores.
 
 The React Native Turso SDK currently requires statements to be executed through `Database.run()`. Do not use `Database.exec()`, manual `BEGIN`/`COMMIT` statements, or the SDK's `Database.transaction()` helper in version 0.6.1. Manual transaction control either fails parsing or reports `no transaction is active` after writes have already autocommitted. Keep multi-write operations behind `withLocalTransaction()` as an idempotent operation boundary; every migration statement and import write must be safe to retry. Restore true atomic transactions there when the SDK supports them reliably.
 
@@ -36,7 +38,7 @@ Before releasing a migration:
 
 ## Optional cloud sync
 
-When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user and returns a one-hour database-scoped token. Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without those variables, the API reports sync disabled and the app remains fully local-only.
+When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user, migrates it to the current shared schema, and returns a one-hour database-scoped token. Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without those variables, the API reports sync disabled and the app remains fully local-only.
 
 Deleting an account also deletes its deterministic per-user sync database before removing the app and authentication records. A missing sync database is treated as already deleted. This operation never targets the legacy shared database.
 

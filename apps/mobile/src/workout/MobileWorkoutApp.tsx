@@ -866,6 +866,7 @@ export function LiftMobileApp({
         let database = await openLocalDatabase();
         const authAccountId = accountId;
         let effectiveAccountId = localDevUserId;
+        let didImportProductionData = false;
         const hasData = await hasLocalWorkoutData(database);
         if (!effectiveAccountId && getHeaders) {
           try {
@@ -934,6 +935,7 @@ export function LiftMobileApp({
           await importProductionExport(database, snapshot, {
             accountId: effectiveAccountId,
           });
+          didImportProductionData = true;
         } else if (!importComplete && (getHeaders || localDevUserId)) {
           try {
             const productionClient = createWorkoutApiClient({
@@ -944,9 +946,14 @@ export function LiftMobileApp({
             await importProductionExport(database, snapshot, {
               accountId: effectiveAccountId,
             });
+            didImportProductionData = true;
           } catch (error) {
             if (!hasData) throw error;
           }
+        }
+
+        if (didImportProductionData) {
+          await syncCoordinator?.sync();
         }
 
         const localClient = createLocalWorkoutDataClient(database, {

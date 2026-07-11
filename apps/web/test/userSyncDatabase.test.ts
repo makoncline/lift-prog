@@ -61,6 +61,9 @@ describe("user sync database provisioning", () => {
     } as unknown as Parameters<
       typeof provisionUserSyncCredentials
     >[0]["client"];
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    const close = vi.fn();
+    const connectToDatabase = vi.fn().mockReturnValue({ execute, close });
 
     const now = new Date("2026-07-11T00:00:00.000Z");
     await expect(
@@ -69,6 +72,7 @@ describe("user sync database provisioning", () => {
         config: { org: "example", token: "platform-token", group: "users" },
         client,
         now,
+        connectToDatabase,
       }),
     ).resolves.toEqual({
       enabled: true,
@@ -85,6 +89,16 @@ describe("user sync database provisioning", () => {
       expiration: "1h",
       authorization: "full-access",
     });
+    expect(connectToDatabase).toHaveBeenCalledWith({
+      url: `libsql://${databaseName}-example.turso.io`,
+      authToken: "database-token",
+    });
+    expect(
+      execute.mock.calls.some(([statement]) =>
+        String(statement).includes("CREATE TABLE IF NOT EXISTS app_metadata"),
+      ),
+    ).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("does not require platform access when deleting with sync disabled", async () => {
