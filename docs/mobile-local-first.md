@@ -38,7 +38,9 @@ Before releasing a migration:
 
 ## Optional cloud sync
 
-When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user, migrates it to the current shared schema, and returns a one-hour database-scoped token. Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without those variables, the API reports sync disabled and the app remains fully local-only.
+When `TURSO_PLATFORM_ORG` and `TURSO_PLATFORM_TOKEN` are configured, the authenticated API provisions one opaque database per stable app user, migrates it to the current shared schema, and returns a one-hour database-scoped token. Set `TURSO_USER_DB_GROUP=lift-users` so newly provisioned databases stay isolated from unrelated Turso projects. The central `UserSyncDatabase` registry records the opaque database name, group, status, and schema version for support and deletion workflows without exposing email addresses in Turso resource names. Existing databases can remain in their original group and are registered explicitly because Turso does not support moving an individual database between groups in place.
+
+Mobile reopens the same local file in sync mode, refreshes that token through the authenticated API, then pushes and pulls while all UI reads and writes remain local. Without the platform variables, the API reports sync disabled and the app remains fully local-only.
 
 Deleting an account also deletes its deterministic per-user sync database before removing the app and authentication records. A missing sync database is treated as already deleted. This operation never targets the legacy shared database.
 

@@ -14,7 +14,7 @@ export const userRouter = createTRPCRouter({
   localSyncCredentials: protectedProcedure.query(({ ctx }) => {
     const userId = ctx.session.userId;
     if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
-    return getUserSyncCredentials(userId);
+    return getUserSyncCredentials(userId, ctx.db.userSyncDatabase);
   }),
 
   // Procedure to list all users
@@ -94,7 +94,7 @@ export const userRouter = createTRPCRouter({
       }
 
       try {
-        await deleteUserSyncDatabase(input.id);
+        await deleteUserSyncDatabase(input.id, ctx.db.userSyncDatabase);
         return await ctx.db.user.delete({
           where: { id: input.id },
         });
@@ -130,7 +130,7 @@ export const userRouter = createTRPCRouter({
       });
     }
 
-    await deleteUserSyncDatabase(appUser.id);
+    await deleteUserSyncDatabase(appUser.id, ctx.db.userSyncDatabase);
 
     await ctx.db.$transaction(async (tx) => {
       await tx.user.delete({

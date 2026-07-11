@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
 import { createClient as createDatabaseClient } from "@libsql/client";
 import {
   getLocalFirstMigrationStatements,
@@ -21,6 +22,10 @@ type SyncPlatformConfig = {
 };
 
 type SyncPlatformClient = ReturnType<typeof createClient>;
+type UserSyncDatabaseRegistry = Pick<
+  PrismaClient["userSyncDatabase"],
+  "deleteMany" | "findUnique" | "upsert"
+>;
 
 type UserSyncDatabaseClient = Pick<
   ReturnType<typeof createDatabaseClient>,
@@ -52,17 +57,15 @@ export function readSyncPlatformConfig(): SyncPlatformConfig | null {
   return {
     org,
     token,
-    group: process.env.TURSO_USER_DB_GROUP?.trim() || "default",
+    group: process.env.TURSO_USER_DB_GROUP?.trim() ?? "default",
   };
 }
 
 async function getOrCreateDatabase(
-  userId: string,
+  databaseName: string,
   config: SyncPlatformConfig,
   client: SyncPlatformClient,
 ): Promise<DatabaseReference> {
-  const databaseName = userSyncDatabaseName(userId);
-
   try {
     return await client.databases.get(databaseName);
   } catch (error) {
@@ -122,20 +125,28 @@ export async function provisionUserSyncCredentials({
   userId,
   config,
   client,
+  databaseName = userSyncDatabaseName(userId),
   now = new Date(),
+  onProvisioned,
   connectToDatabase = ({ url, authToken }) =>
     createDatabaseClient({ url, authToken }),
 }: {
   userId: string;
   config: SyncPlatformConfig;
   client: SyncPlatformClient;
+  databaseName?: string;
   now?: Date;
+  onProvisioned?: (database: {
+    databaseName: string;
+    groupName: string;
+    schemaVersion: number;
+  }) => Promise<void>;
   connectToDatabase?: (credentials: {
     url: string;
     authToken: string;
   }) => ReturnType<typeof createDatabaseClient>;
 }) {
-  const database = await getOrCreateDatabase(userId, config, client);
+  const database = await getOrCreateDatabase(databaseName, config, client);
   const { jwt } = await client.databases.createToken(database.name, {
     expiration: "1h",
     authorization: "full-access",
@@ -148,6 +159,15 @@ export async function provisionUserSyncCredentials({
     syncDatabase.close();
   }
 
+  await onProvisioned?.({
+    databaseName: database.name,
+    groupName:
+      "group" in database && typeof database.group === "string"
+        ? database.group
+        : config.group,
+    schemaVersion: LOCAL_FIRST_MIGRATIONS.at(-1)?.version ?? 0,
+  });
+
   return {
     enabled: true as const,
     userId,
@@ -157,37 +177,75 @@ export async function provisionUserSyncCredentials({
   };
 }
 
-export async function getUserSyncCredentials(userId: string) {
+export async function getUserSyncCredentials(
+  userId: string,
+  registry: UserSyncDatabaseRegistry,
+) {
   const config = readSyncPlatformConfig();
   if (!config) {
     return { enabled: false as const, userId };
   }
 
   const client = createClient({ org: config.org, token: config.token });
+  const registration = await registry.findUnique({
+    where: { userId },
+  });
   return provisionUserSyncCredentials({
     userId,
-    config,
+    config: registration
+      ? { ...config, group: registration.groupName }
+      : config,
     client,
+    databaseName: registration?.databaseName,
+    onProvisioned: (database) =>
+      registry
+        .upsert({
+          where: { userId },
+          create: {
+            userId,
+            ...database,
+            status: "active",
+          },
+          update: {
+            ...database,
+            status: "active",
+          },
+        })
+        .then(() => undefined),
   });
 }
 
-export async function deleteUserSyncDatabase(userId: string) {
+export async function deleteUserSyncDatabase(
+  userId: string,
+  registry: UserSyncDatabaseRegistry,
+) {
   const config = readSyncPlatformConfig();
   if (!config) return;
 
   const client = createClient({ org: config.org, token: config.token });
-  return deleteProvisionedUserSyncDatabase({ userId, client });
+  const registration = await registry.findUnique({
+    where: { userId },
+    select: { databaseName: true },
+  });
+  await deleteProvisionedUserSyncDatabase({
+    userId,
+    databaseName: registration?.databaseName,
+    client,
+  });
+  await registry.deleteMany({ where: { userId } });
 }
 
 export async function deleteProvisionedUserSyncDatabase({
   userId,
+  databaseName = userSyncDatabaseName(userId),
   client,
 }: {
   userId: string;
+  databaseName?: string;
   client: SyncPlatformClient;
 }) {
   try {
-    await client.databases.delete(userSyncDatabaseName(userId));
+    await client.databases.delete(databaseName);
   } catch (error) {
     if (errorStatus(error) !== 404) throw error;
   }

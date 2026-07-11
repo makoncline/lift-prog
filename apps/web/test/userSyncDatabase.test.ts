@@ -29,7 +29,9 @@ describe("user sync database provisioning", () => {
     delete process.env.TURSO_PLATFORM_ORG;
     delete process.env.TURSO_PLATFORM_TOKEN;
 
-    await expect(getUserSyncCredentials("app-user-1")).resolves.toEqual({
+    await expect(
+      getUserSyncCredentials("app-user-1", {} as never),
+    ).resolves.toEqual({
       enabled: false,
       userId: "app-user-1",
     });
@@ -64,6 +66,7 @@ describe("user sync database provisioning", () => {
     const execute = vi.fn().mockResolvedValue({ rows: [] });
     const close = vi.fn();
     const connectToDatabase = vi.fn().mockReturnValue({ execute, close });
+    const onProvisioned = vi.fn().mockResolvedValue(undefined);
 
     const now = new Date("2026-07-11T00:00:00.000Z");
     await expect(
@@ -73,6 +76,7 @@ describe("user sync database provisioning", () => {
         client,
         now,
         connectToDatabase,
+        onProvisioned,
       }),
     ).resolves.toEqual({
       enabled: true,
@@ -99,13 +103,59 @@ describe("user sync database provisioning", () => {
       ),
     ).toBe(true);
     expect(close).toHaveBeenCalledOnce();
+    expect(onProvisioned).toHaveBeenCalledWith({
+      databaseName,
+      groupName: "users",
+      schemaVersion: 3,
+    });
+  });
+
+  it("uses a registered database name instead of deriving another one", async () => {
+    const databaseName = "lift-user-existing";
+    const client = {
+      databases: {
+        get: vi.fn().mockResolvedValue({
+          name: databaseName,
+          hostname: `${databaseName}-example.turso.io`,
+          group: "legacy",
+        }),
+        create: vi.fn(),
+        createToken: vi.fn().mockResolvedValue({ jwt: "database-token" }),
+      },
+    } as unknown as Parameters<
+      typeof provisionUserSyncCredentials
+    >[0]["client"];
+    const connectToDatabase = vi.fn().mockReturnValue({
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+      close: vi.fn(),
+    });
+    const onProvisioned = vi.fn().mockResolvedValue(undefined);
+
+    await provisionUserSyncCredentials({
+      userId: "app-user-1",
+      databaseName,
+      config: { org: "example", token: "platform-token", group: "users" },
+      client,
+      connectToDatabase,
+      onProvisioned,
+    });
+
+    expect(client.databases.get).toHaveBeenCalledWith(databaseName);
+    expect(client.databases.create).not.toHaveBeenCalled();
+    expect(onProvisioned).toHaveBeenCalledWith({
+      databaseName,
+      groupName: "legacy",
+      schemaVersion: 3,
+    });
   });
 
   it("does not require platform access when deleting with sync disabled", async () => {
     delete process.env.TURSO_PLATFORM_ORG;
     delete process.env.TURSO_PLATFORM_TOKEN;
 
-    await expect(deleteUserSyncDatabase("app-user-1")).resolves.toBeUndefined();
+    await expect(
+      deleteUserSyncDatabase("app-user-1", {} as never),
+    ).resolves.toBeUndefined();
   });
 
   it("deletes only the stable per-user database and tolerates a retry", async () => {
