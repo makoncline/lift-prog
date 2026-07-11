@@ -3,6 +3,10 @@ import { z } from "zod";
 const setModifierSchema = z.enum(["warmup"]);
 const weightModifierSchema = z.enum(["bodyweight"]);
 const restTypeSchema = z.enum(["standard", "short"]);
+const restTimesSchema = z.object({
+  warmupSeconds: z.number().int().positive().nullable(),
+  workingSeconds: z.number().int().positive().nullable(),
+});
 
 export const CompletedSetSchema = z.object({
   order: z.number(),
@@ -11,6 +15,7 @@ export const CompletedSetSchema = z.object({
   modifier: setModifierSchema.nullable(),
   weightModifier: weightModifierSchema.nullable(),
   restBefore: restTypeSchema.nullable().optional(),
+  restSeconds: z.number().int().positive().nullable().optional(),
   notes: z.string().optional(),
   rir: z.number().int().min(0).max(10).nullable().optional(),
   completed: z.boolean(),
@@ -23,6 +28,7 @@ export const CompletedExerciseSchema = z.object({
   exerciseNotes: z.string().optional(),
   notes: z.string().optional(),
   exerciseNotesSnapshot: z.string().optional(),
+  restTimes: restTimesSchema.optional(),
   sets: z.array(CompletedSetSchema),
 });
 
@@ -32,6 +38,7 @@ export const CompletedWorkoutSchema = z.object({
   completedAt: z.coerce.date(),
   startedAt: z.coerce.date(),
   bodyWeightLb: z.number().positive().nullable().optional(),
+  restTimes: restTimesSchema.optional(),
   exercises: z.array(CompletedExerciseSchema),
 });
 

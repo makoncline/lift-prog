@@ -3,6 +3,7 @@ import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
 import { parsePlateLoadMode } from "@lift-prog/workout-core";
 import type {
   PreviousExerciseData,
+  RestTimes,
   SetModifier,
   SetRestType,
   WeightModifier,
@@ -31,6 +32,29 @@ const DEFAULT_EXERCISE_SETS: PreviousExerciseData["sets"] = [
   },
 ];
 
+const mapRestTimes = (
+  record: {
+    restWarmupSeconds?: number | null;
+    restWorkingSeconds?: number | null;
+  },
+): RestTimes | undefined => {
+  if (
+    record.restWarmupSeconds === undefined &&
+    record.restWorkingSeconds === undefined
+  ) {
+    return undefined;
+  }
+
+  if (record.restWarmupSeconds == null && record.restWorkingSeconds == null) {
+    return undefined;
+  }
+
+  return {
+    warmupSeconds: record.restWarmupSeconds ?? null,
+    workingSeconds: record.restWorkingSeconds ?? null,
+  };
+};
+
 const mapSet = (
   set: {
     weight: number | null;
@@ -38,6 +62,7 @@ const mapSet = (
     modifier: SetModifier | null;
     weightModifier: WeightModifier | null;
     restBefore?: SetRestType | null;
+    restSeconds?: number | null;
     notes?: string | null;
     rir?: number | null;
   },
@@ -48,6 +73,7 @@ const mapSet = (
   ...(set.modifier ? { modifier: set.modifier } : {}),
   ...(set.weightModifier ? { weightModifier: set.weightModifier } : {}),
   ...(set.restBefore ? { restBefore: set.restBefore } : {}),
+  ...(set.restSeconds != null ? { restSeconds: set.restSeconds } : {}),
   ...(options.includeNotes !== false && set.notes ? { notes: set.notes } : {}),
   ...(set.rir != null ? { rir: set.rir } : {}),
 });
@@ -56,6 +82,8 @@ type WorkoutExerciseHistoryRecord = {
   userExerciseId: number;
   notes: string | null;
   exerciseNotesSnapshot: string | null;
+  restWarmupSeconds: number | null;
+  restWorkingSeconds: number | null;
   workout: {
     completedAt: Date | null;
     bodyWeightLb: number | null;
@@ -67,6 +95,7 @@ type WorkoutExerciseHistoryRecord = {
     modifier: SetModifier | null;
     weightModifier: WeightModifier | null;
     restBefore?: SetRestType | null;
+    restSeconds?: number | null;
     notes?: string | null;
     rir?: number | null;
     completed: boolean;
@@ -166,6 +195,8 @@ async function getHistoriesByUserExerciseId({
       userExerciseId: true,
       notes: true,
       exerciseNotesSnapshot: true,
+      restWarmupSeconds: true,
+      restWorkingSeconds: true,
       workout: {
         select: {
           completedAt: true,
@@ -181,6 +212,7 @@ async function getHistoriesByUserExerciseId({
           modifier: true,
           weightModifier: true,
           restBefore: true,
+          restSeconds: true,
           notes: true,
           rir: true,
           completed: true,
@@ -214,6 +246,7 @@ function buildExerciseFromHistory({
   exerciseNotes,
   plateStartingWeight,
   plateLoadMode,
+  restTimes,
   historyRecords,
 }: {
   userExerciseId: number;
@@ -221,6 +254,7 @@ function buildExerciseFromHistory({
   exerciseNotes: string | null;
   plateStartingWeight?: number | null;
   plateLoadMode?: string | null;
+  restTimes?: RestTimes;
   historyRecords: WorkoutExerciseHistoryRecord[];
 }): PreviousExerciseData {
   const latestExercise = historyRecords[0] ?? null;
@@ -236,6 +270,7 @@ function buildExerciseFromHistory({
       ...(exerciseNotes ? { exerciseNotes } : {}),
       plateStartingWeight: plateStartingWeight ?? null,
       plateLoadMode: plateLoadMode ? parsePlateLoadMode(plateLoadMode) : null,
+      ...(restTimes ? { restTimes } : {}),
       notes: previousNotes,
       ...(latestExercise?.exerciseNotesSnapshot
         ? { exerciseNotesSnapshot: latestExercise.exerciseNotesSnapshot }
@@ -251,6 +286,7 @@ function buildExerciseFromHistory({
     ...(exerciseNotes ? { exerciseNotes } : {}),
     plateStartingWeight: plateStartingWeight ?? null,
     plateLoadMode: plateLoadMode ? parsePlateLoadMode(plateLoadMode) : null,
+    ...(restTimes ? { restTimes } : {}),
     notes: previousNotes,
     ...(latestExercise.exerciseNotesSnapshot
       ? { exerciseNotesSnapshot: latestExercise.exerciseNotesSnapshot }
@@ -285,6 +321,8 @@ export async function buildInitialExercisesForNames({
         notes: true,
         plateStartingWeight: true,
         plateLoadMode: true,
+        restWarmupSeconds: true,
+        restWorkingSeconds: true,
       },
     })
   ).filter((exercise) =>
@@ -326,6 +364,7 @@ export async function buildInitialExercisesForNames({
       exerciseNotes: userExercise.notes ?? null,
       plateStartingWeight: userExercise.plateStartingWeight,
       plateLoadMode: userExercise.plateLoadMode,
+      restTimes: mapRestTimes(userExercise),
       historyRecords: historiesByUserExerciseId.get(userExercise.id) ?? [],
     });
   });
@@ -349,6 +388,7 @@ export async function buildInitialExercisesFromWorkout({
   startedAt: Date;
   completedAt: Date | null;
   bodyWeightLb: number | null;
+  restTimes?: RestTimes;
   notes: string | null;
 }> {
   const workout = await prisma.workout.findFirst({
@@ -369,8 +409,12 @@ export async function buildInitialExercisesFromWorkout({
               notes: true,
               plateStartingWeight: true,
               plateLoadMode: true,
+              restWarmupSeconds: true,
+              restWorkingSeconds: true,
             },
           },
+          restWarmupSeconds: true,
+          restWorkingSeconds: true,
           sets: {
             orderBy: { order: "asc" },
             select: {
@@ -380,6 +424,7 @@ export async function buildInitialExercisesFromWorkout({
               weightModifier: true,
               completed: true,
               restBefore: true,
+              restSeconds: true,
               notes: true,
               rir: true,
             },
@@ -411,6 +456,9 @@ export async function buildInitialExercisesFromWorkout({
       const exerciseHistory =
         historiesByUserExerciseId.get(workoutExercise.userExercise.id) ?? [];
       const history = mapHistory(exerciseHistory);
+      const workoutExerciseRestTimes =
+        mapRestTimes(workoutExercise) ??
+        mapRestTimes(workoutExercise.userExercise);
 
       if (sets.length > 0) {
         return {
@@ -425,6 +473,9 @@ export async function buildInitialExercisesFromWorkout({
           plateLoadMode: workoutExercise.userExercise.plateLoadMode
             ? parsePlateLoadMode(workoutExercise.userExercise.plateLoadMode)
             : null,
+          ...(workoutExerciseRestTimes
+            ? { restTimes: workoutExerciseRestTimes }
+            : {}),
           notes: preserveInstanceNotes ? workoutExercise.notes : null,
           ...(workoutExercise.exerciseNotesSnapshot
             ? { exerciseNotesSnapshot: workoutExercise.exerciseNotesSnapshot }
@@ -440,6 +491,7 @@ export async function buildInitialExercisesFromWorkout({
         plateStartingWeight:
           workoutExercise.userExercise.plateStartingWeight ?? null,
         plateLoadMode: workoutExercise.userExercise.plateLoadMode,
+        restTimes: workoutExerciseRestTimes,
         historyRecords: exerciseHistory,
       });
 
@@ -453,14 +505,42 @@ export async function buildInitialExercisesFromWorkout({
     },
   );
 
+  const workoutRestTimes = mapRestTimes(workout);
+
   return {
     workoutName: workout.name,
     exercises,
     startedAt: workout.startedAt,
     completedAt: workout.completedAt,
     bodyWeightLb: workout.bodyWeightLb,
+    ...(workoutRestTimes ? { restTimes: workoutRestTimes } : {}),
     notes: workout.notes,
   };
+}
+
+export async function getLatestWorkoutRestTimes({
+  prisma,
+  userId,
+}: {
+  prisma: PrismaClient;
+  userId: string;
+}) {
+  const workout = await prisma.workout.findFirst({
+    where: {
+      userId,
+      OR: [
+        { restWarmupSeconds: { not: null } },
+        { restWorkingSeconds: { not: null } },
+      ],
+    },
+    orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+    select: {
+      restWarmupSeconds: true,
+      restWorkingSeconds: true,
+    },
+  });
+
+  return workout ? mapRestTimes(workout) : undefined;
 }
 
 export async function getLatestWorkoutBodyWeightLb({

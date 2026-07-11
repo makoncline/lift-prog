@@ -202,13 +202,14 @@ describe("workout.saveWorkout", () => {
     expect(spies.workoutCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("persists exercise notes, set notes, rest, and rir when present", async () => {
+  it("persists exercise notes, rest times, set notes, rest, and rir when present", async () => {
     const { caller, spies } = makeCaller();
 
     await caller.workout.saveWorkout({
       name: "Session",
       startedAt: new Date(),
       completedAt: new Date(),
+      restTimes: { warmupSeconds: 60, workingSeconds: 180 },
       exercises: [
         {
           name: "Pull Up",
@@ -216,6 +217,7 @@ describe("workout.saveWorkout", () => {
           exerciseNotes: "Hold dumbbell in thighs",
           exerciseNotesSnapshot: "Old machine setup",
           notes: "Feeling weak today",
+          restTimes: { warmupSeconds: 45, workingSeconds: 150 },
           sets: [
             {
               order: 0,
@@ -226,6 +228,7 @@ describe("workout.saveWorkout", () => {
               completed: true,
               notes: "Foot assist",
               rir: 2,
+              restSeconds: 45,
             },
             {
               order: 1,
@@ -237,6 +240,7 @@ describe("workout.saveWorkout", () => {
               restBefore: "short",
               notes: "solid first set",
               rir: 1,
+              restSeconds: null,
             },
           ],
         },
@@ -247,21 +251,35 @@ describe("workout.saveWorkout", () => {
     expect(spies.txUserExerciseUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId_name: { userId: "user_123", name: "Pull Up" } },
-        update: { notes: "Hold dumbbell in thighs" },
+        update: {
+          notes: "Hold dumbbell in thighs",
+          restWarmupSeconds: 45,
+          restWorkingSeconds: 150,
+        },
         create: {
           userId: "user_123",
           name: "Pull Up",
           exerciseId: null,
           notes: "Hold dumbbell in thighs",
+          restWarmupSeconds: 45,
+          restWorkingSeconds: 150,
         },
       }),
     );
+    expect(spies.workoutCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        restWarmupSeconds: 60,
+        restWorkingSeconds: 180,
+      }),
+    });
     expect(spies.workoutExerciseCreate).toHaveBeenCalledWith({
       data: {
         workoutSessionId: 101,
         userExerciseId: "Pull Up".length,
         order: 0,
         notes: "Feeling weak today",
+        restWarmupSeconds: 45,
+        restWorkingSeconds: 150,
         exerciseNotesSnapshot: "Old machine setup",
       },
     });
@@ -276,6 +294,7 @@ describe("workout.saveWorkout", () => {
           weightModifier: "bodyweight",
           notes: "Foot assist",
           rir: 2,
+          restSeconds: 45,
           completed: true,
         },
         {
@@ -286,6 +305,7 @@ describe("workout.saveWorkout", () => {
           modifier: null,
           weightModifier: null,
           restBefore: "short",
+          restSeconds: null,
           notes: "solid first set",
           rir: 1,
           completed: true,

@@ -9,6 +9,9 @@ export const palette = {
   active: "#383225",
   disabled: "#c9bdaa",
   danger: "#9f2f2f",
+  complete: "#eee9df",
+  completeLine: "#383225",
+  timerProgress: "#4aa7e8",
 };
 
 export const monoFont = "Courier";

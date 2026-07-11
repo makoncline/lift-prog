@@ -24,8 +24,32 @@ export async function tryCatch<T, E = Error>(
 }
 
 export function reportError({ message }: { message: string }) {
-  // TODO: Implement error reporting
   console.error(message);
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  void fetch("/api/error-reports", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      source: "web",
+      scope: "reportError",
+      name: "Error",
+      message,
+      url: window.location.href,
+      pathname: window.location.pathname,
+      userAgent: window.navigator.userAgent,
+      language: window.navigator.language,
+      platform: window.navigator.platform,
+      timestamp: new Date().toISOString(),
+    }),
+  }).catch(() => {
+    // Error reporting must never create another user-visible error.
+  });
 }
 
 type ErrorWithMessage = {

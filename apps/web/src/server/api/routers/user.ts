@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { adminProcedure, createTRPCRouter } from "@/server/api/trpc";
+import {
+  adminProcedure,
+  createTRPCRouter,
+  protectedProcedure,
+} from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
 
 export const userRouter = createTRPCRouter({
@@ -10,22 +14,36 @@ export const userRouter = createTRPCRouter({
     });
   }),
 
-  // Procedure to add a new user by external auth ID.
+  // Procedure to add a new app user by Better Auth user ID.
   add: adminProcedure
     .input(
-      z.object({
-        clerkUserId: z.string().min(1, "Auth user ID cannot be empty"),
-      }),
+      z
+        .object({
+          authUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+          // Legacy input name kept so older callers do not break while the
+          // database still stores this compatibility column.
+          clerkUserId: z.string().min(1, "Auth user ID cannot be empty").optional(),
+        })
+        .refine((input) => input.authUserId ?? input.clerkUserId, {
+          message: "Auth user ID cannot be empty",
+        }),
     )
     .mutation(async ({ ctx, input }) => {
-      const { clerkUserId } = input;
+      const authUserId = input.authUserId ?? input.clerkUserId;
+
+      if (!authUserId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Auth user ID cannot be empty.",
+        });
+      }
 
       const existingUser = await ctx.db.user.findFirst({
         where: {
           OR: [
-            { id: clerkUserId },
-            { clerkUserId },
-            { authUserId: clerkUserId },
+            { id: authUserId },
+            { clerkUserId: authUserId },
+            { authUserId },
           ],
         },
       });
@@ -33,16 +51,15 @@ export const userRouter = createTRPCRouter({
       if (existingUser) {
         throw new TRPCError({
           code: "CONFLICT",
-          message: `User with auth ID "${clerkUserId}" already exists.`,
+          message: `User with auth ID "${authUserId}" already exists.`,
         });
       }
 
-      // Create the new user
       const newUser = await ctx.db.user.create({
         data: {
-          id: clerkUserId,
-          clerkUserId,
-          authUserId: clerkUserId,
+          id: authUserId,
+          clerkUserId: authUserId,
+          authUserId,
           authProvider: "better-auth",
         },
       });
@@ -77,4 +94,49 @@ export const userRouter = createTRPCRouter({
         });
       }
     }),
+
+  deleteCurrent: protectedProcedure.mutation(async ({ ctx }) => {
+    const userId = ctx.session.userId;
+    if (!userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+
+    const appUser = await ctx.db.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        authUserId: true,
+        email: true,
+      },
+    });
+
+    if (!appUser) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Current user was not found.",
+      });
+    }
+
+    await ctx.db.$transaction(async (tx) => {
+      await tx.user.delete({
+        where: { id: appUser.id },
+      });
+
+      const authUserMatches = [
+        appUser.authUserId ? { id: appUser.authUserId } : null,
+        appUser.email ? { email: appUser.email } : null,
+      ].filter(
+        (match): match is { id: string } | { email: string } =>
+          match !== null,
+      );
+
+      if (authUserMatches.length > 0) {
+        await tx.authUser.deleteMany({
+          where: { OR: authUserMatches },
+        });
+      }
+    });
+
+    return { success: true };
+  }),
 });

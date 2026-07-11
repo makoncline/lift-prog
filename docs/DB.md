@@ -11,6 +11,10 @@ https://www.prisma.io/docs/orm/overview/databases/turso
 locally to generate migration SQL. Do not apply a production migration until the
 same SQL has passed a local rehearsal.
 
+The production database name for Turso CLI commands is `lift-prog`. The libSQL
+hostname is `lift-prog-makoncline.aws-us-east-1.turso.io`; do not use the
+hostname prefix as the Turso database name.
+
 1. Create a Turso backup branch first.
 2. Export or copy production to a disposable local SQLite rehearsal database.
 3. Apply `prisma/migrations/<timestamp>_<name>/migration.sql` to that local
@@ -25,5 +29,6 @@ Generate and apply the SQL manually:
 
 ```
 npx prisma migrate dev --name <name>
-turso db shell turso-prisma-db < ./<path to migration.sql>
+turso db branch lift-prog lift-prog-bak-YYYYMMDD
+turso db shell lift-prog < ./<path to migration.sql>
 ```

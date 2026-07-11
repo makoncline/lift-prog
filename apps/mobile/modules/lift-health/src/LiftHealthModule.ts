@@ -1,29 +1,50 @@
 import { NativeModule, requireNativeModule } from "expo";
 
 import type {
-  CancelStrengthWorkoutResult,
+  CancelTimerNotificationResult,
+  CancelUnfinishedWorkoutNotificationResult,
+  EndRestTimerLiveActivityResult,
   FinishStrengthWorkoutResult,
   HealthAuthorizationResult,
+  LiftHealthEvents,
   LatestBodyWeight,
-  StartStrengthWorkoutResult,
+  RestTimerLiveActivityResult,
   TimerNotificationResult,
+  UnfinishedWorkoutNotificationResult,
+  WatchWorkoutSnapshot,
+  WatchWorkoutSnapshotResult,
 } from "./LiftHealth.types";
 
-declare class LiftHealthModule extends NativeModule<{}> {
+declare class LiftHealthModule extends NativeModule<LiftHealthEvents> {
   isHealthAvailable(): boolean;
+  getHealthAuthorizationStatus(): Promise<HealthAuthorizationResult>;
   requestHealthAuthorization(): Promise<HealthAuthorizationResult>;
   getLatestBodyWeight(): Promise<LatestBodyWeight>;
-  startStrengthWorkout(
-    startedAtMs?: number | null,
-  ): Promise<StartStrengthWorkoutResult>;
   finishStrengthWorkout(
     startedAtMs: number,
     endedAtMs: number,
   ): Promise<FinishStrengthWorkoutResult>;
-  cancelStrengthWorkout(): Promise<CancelStrengthWorkoutResult>;
   scheduleWorkoutTimerNotification(
     seconds: number,
   ): Promise<TimerNotificationResult>;
+  startOrUpdateRestTimerLiveActivity(
+    durationSeconds: number,
+    endsAtMs: number,
+    title?: string | null,
+  ): Promise<RestTimerLiveActivityResult>;
+  endRestTimerLiveActivity(): Promise<EndRestTimerLiveActivityResult>;
+  cancelWorkoutTimerNotification(
+    identifier?: string | null,
+  ): Promise<CancelTimerNotificationResult>;
+  scheduleUnfinishedWorkoutNotification(
+    workoutName: string,
+    seconds: number,
+  ): Promise<UnfinishedWorkoutNotificationResult>;
+  cancelUnfinishedWorkoutNotification(): Promise<CancelUnfinishedWorkoutNotificationResult>;
+  updateWatchWorkoutSnapshot(
+    snapshot: WatchWorkoutSnapshot,
+  ): Promise<WatchWorkoutSnapshotResult>;
+  clearWatchWorkoutSnapshot(): Promise<WatchWorkoutSnapshotResult>;
 }
 
 export default requireNativeModule<LiftHealthModule>("LiftHealth");

@@ -18,6 +18,11 @@ export type WeightModifier = "bodyweight"; // New type for weight modifier
 export type SetRestType = "standard" | "short";
 export type PlateLoadMode = "equal-sides" | "total";
 
+export interface RestTimes {
+  warmupSeconds: number | null;
+  workingSeconds: number | null;
+}
+
 export interface Note {
   text: string;
 }
@@ -34,6 +39,7 @@ export interface WorkoutSet {
   modifier?: SetModifier;
   weightModifier?: WeightModifier; // Added weight modifier field
   restBefore?: SetRestType;
+  restSeconds?: number | null;
   notes?: string;
   rir?: number | null;
 }
@@ -44,6 +50,7 @@ export interface WorkoutExercise {
   exerciseNotes?: string | null;
   plateStartingWeight?: number | null;
   plateLoadMode?: PlateLoadMode | null;
+  restTimes?: RestTimes;
   sets: WorkoutSet[];
   previousSets: Array<{
     weight: number | null;
@@ -51,6 +58,7 @@ export interface WorkoutExercise {
     modifier?: SetModifier;
     weightModifier?: WeightModifier; // Ensure consistency if loading previous data
     restBefore?: SetRestType;
+    restSeconds?: number | null;
     notes?: string | null;
     rir?: number | null;
   }>;
@@ -68,6 +76,7 @@ export interface WorkoutExercise {
       modifier?: SetModifier;
       weightModifier?: WeightModifier;
       restBefore?: SetRestType;
+      restSeconds?: number | null;
       notes?: string | null;
     }>;
   }>;
@@ -92,6 +101,7 @@ export interface Workout {
   startTime: number; // Added startTime
   name: string; // Added workout name
   bodyWeightLb?: number | null;
+  restTimes?: RestTimes;
   isInProgress: boolean; // Added to track if workout is active
 }
 
@@ -110,6 +120,7 @@ const makeCompletedSet = ({
   modifier,
   weightModifier,
   restBefore,
+  restSeconds,
   notes,
 }: {
   weight: number | null;
@@ -117,6 +128,7 @@ const makeCompletedSet = ({
   modifier?: SetModifier;
   weightModifier?: WeightModifier;
   restBefore?: SetRestType;
+  restSeconds?: number | null;
   notes?: string;
 }): WorkoutSet => ({
   weight,
@@ -129,6 +141,7 @@ const makeCompletedSet = ({
   ...(modifier ? { modifier } : {}),
   ...(weightModifier ? { weightModifier } : {}),
   ...(restBefore ? { restBefore } : {}),
+  ...(restSeconds != null ? { restSeconds } : {}),
   ...(notes ? { notes } : {}),
 });
 
@@ -540,12 +553,14 @@ export const initialiseExercises = (
       modifier?: SetModifier;
       weightModifier?: WeightModifier;
       restBefore?: SetRestType;
+      restSeconds?: number | null;
       notes?: string | null;
       rir?: number | null;
     }>;
     exerciseNotes?: string | null;
     plateStartingWeight?: number | null;
     plateLoadMode?: PlateLoadMode | string | null;
+    restTimes?: RestTimes;
     notes?: string | null;
     exerciseNotesSnapshot?: string | null;
     history?: WorkoutExercise["history"];
@@ -558,6 +573,7 @@ export const initialiseExercises = (
       modifier: s.modifier ?? (s.isWarmup ? "warmup" : undefined),
       weightModifier: s.weightModifier,
       restBefore: s.restBefore,
+      restSeconds: s.restSeconds,
       notes: s.notes,
       rir: s.rir,
     }));
@@ -573,6 +589,7 @@ export const initialiseExercises = (
       plateLoadMode: ex.plateLoadMode
         ? parsePlateLoadMode(ex.plateLoadMode)
         : null,
+      restTimes: ex.restTimes,
       sets: ex.sets.map((s) => {
         const modifier = s.modifier ?? (s.isWarmup ? "warmup" : undefined);
         return {
@@ -586,6 +603,7 @@ export const initialiseExercises = (
           modifier,
           weightModifier: s.weightModifier,
           restBefore: s.restBefore,
+          restSeconds: s.restSeconds,
           rir: s.rir,
         };
       }),
@@ -595,6 +613,7 @@ export const initialiseExercises = (
         modifier: s.modifier,
         weightModifier: s.weightModifier,
         restBefore: s.restBefore,
+        restSeconds: s.restSeconds,
         notes: s.notes,
         rir: s.rir,
       })),
@@ -698,6 +717,7 @@ export type Action =
   | { type: "TOGGLE_SIGN" }
   | { type: "NEXT" }
   | { type: "TOGGLE_COMPLETE"; exerciseIndex: number; setIndex: number }
+  | { type: "TOGGLE_SET_COMPLETED"; exerciseIndex: number; setIndex: number }
   | { type: "TOGGLE_WARMUP"; exerciseIndex: number; setIndex: number }
   | { type: "TOGGLE_BODYWEIGHT" }
   | { type: "DELETE_SET"; exerciseIndex: number; setIndex: number }
@@ -724,18 +744,27 @@ export type Action =
       exerciseIndex: number;
       setIndex: number;
       restBefore: SetRestType | undefined;
+      restSeconds?: number | null;
+    }
+  | {
+      type: "UPDATE_SET_REST_SECONDS";
+      exerciseIndex: number;
+      setIndex: number;
+      restSeconds: number | null;
     }
   | {
       type: "UPDATE_SET_WEIGHT";
       exerciseIndex: number;
       setIndex: number;
       weight: number | null;
+      preserveCompleted?: boolean;
     }
   | {
       type: "UPDATE_SET_REPS";
       exerciseIndex: number;
       setIndex: number;
       reps: number | null;
+      preserveCompleted?: boolean;
     }
   | {
       type: "APPLY_QUICK_SET_LINE";
@@ -755,6 +784,7 @@ export type Action =
       exerciseIndex: number;
       targetIndex: number;
     }
+  | { type: "SELECT_EXERCISE"; exerciseIndex: number }
   | { type: "NAV_EXERCISE"; direction: 1 | -1 }
   | { type: "COLLAPSE_KEYBOARD" }
   | { type: "UPDATE_USER_EXERCISE_NOTE"; exerciseIndex: number; note: string }
@@ -785,6 +815,12 @@ export type Action =
   | { type: "REORDER_WORKOUT_NOTES"; fromIndex: number; toIndex: number }
   | { type: "UPDATE_WORKOUT_NAME"; name: string }
   | { type: "UPDATE_BODY_WEIGHT"; bodyWeightLb: number | null }
+  | { type: "UPDATE_WORKOUT_REST_TIMES"; restTimes: RestTimes }
+  | {
+      type: "UPDATE_EXERCISE_REST_TIMES";
+      exerciseIndex: number;
+      restTimes: RestTimes | undefined;
+    }
   | { type: "REPLACE_STATE"; state: Workout };
 
 // --------------------------- Reducer -----------------------------------
@@ -814,6 +850,22 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         ...state,
         bodyWeightLb: action.bodyWeightLb,
       };
+    case "UPDATE_WORKOUT_REST_TIMES":
+      return {
+        ...state,
+        restTimes: action.restTimes,
+      };
+    case "UPDATE_EXERCISE_REST_TIMES": {
+      const exercise = state.exercises[action.exerciseIndex];
+      if (!exercise) return state;
+      return {
+        ...state,
+        exercises: replaceExercise(state.exercises, action.exerciseIndex, {
+          ...exercise,
+          restTimes: action.restTimes,
+        }),
+      };
+    }
     case "FOCUS_FIELD": {
       const { exerciseIndex, setIndex, field } = action;
       const ex = state.exercises[exerciseIndex];
@@ -968,6 +1020,20 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
       return { ...state, exercises: newExercises };
     }
 
+    case "TOGGLE_SET_COMPLETED": {
+      const { exerciseIndex, setIndex } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      return {
+        ...state,
+        exercises: replaceSet(state.exercises, exerciseIndex, setIndex, {
+          ...set,
+          completed: !set.completed,
+        }),
+      };
+    }
+
     case "TOGGLE_WARMUP": {
       const { exerciseIndex, setIndex } = action;
       const ex = state.exercises[exerciseIndex];
@@ -997,6 +1063,9 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
 
       // Combine the sorted lists
       const newSets = [...warmups, ...working];
+      const newSetIndex = newSets.findIndex(
+        (candidate) => candidate === updatedSet,
+      );
 
       const newEx: WorkoutExercise = { ...ex, sets: newSets };
       const newExercises = replaceExercise(
@@ -1005,7 +1074,18 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         newEx,
       );
 
-      return { ...state, exercises: newExercises };
+      const shouldMoveActiveField =
+        state.activeField.exerciseIndex === exerciseIndex &&
+        state.activeField.setIndex === setIndex &&
+        newSetIndex >= 0;
+
+      return {
+        ...state,
+        exercises: newExercises,
+        activeField: shouldMoveActiveField
+          ? { ...state.activeField, setIndex: newSetIndex }
+          : state.activeField,
+      };
     }
 
     case "TOGGLE_BODYWEIGHT": {
@@ -1112,6 +1192,13 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         prevReps: null,
         modifier: undefined,
         weightModifier: lastSet?.weightModifier,
+        restBefore: exPrev.sets.length > 0 ? "standard" : undefined,
+        restSeconds:
+          exPrev.sets.length > 0
+            ? (exPrev.restTimes?.workingSeconds ??
+              state.restTimes?.workingSeconds ??
+              null)
+            : undefined,
       };
       const updatedExercise: WorkoutExercise = {
         ...exPrev,
@@ -1187,11 +1274,28 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
     }
 
     case "SET_REST_BEFORE": {
-      const { exerciseIndex, setIndex, restBefore } = action;
+      const { exerciseIndex, setIndex, restBefore, restSeconds } = action;
       const ex = state.exercises[exerciseIndex];
       const set = ex?.sets[setIndex];
       if (!ex || !set) return state;
-      const updatedSet: WorkoutSet = { ...set, restBefore };
+      const updatedSet: WorkoutSet = { ...set, restBefore, restSeconds };
+      return {
+        ...state,
+        exercises: replaceSet(
+          state.exercises,
+          exerciseIndex,
+          setIndex,
+          updatedSet,
+        ),
+      };
+    }
+
+    case "UPDATE_SET_REST_SECONDS": {
+      const { exerciseIndex, setIndex, restSeconds } = action;
+      const ex = state.exercises[exerciseIndex];
+      const set = ex?.sets[setIndex];
+      if (!ex || !set) return state;
+      const updatedSet: WorkoutSet = { ...set, restSeconds };
       return {
         ...state,
         exercises: replaceSet(
@@ -1204,7 +1308,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
     }
 
     case "UPDATE_SET_WEIGHT": {
-      const { exerciseIndex, setIndex, weight } = action;
+      const { exerciseIndex, setIndex, weight, preserveCompleted } = action;
       const ex = state.exercises[exerciseIndex];
       const set = ex?.sets[setIndex];
       if (!ex || !set) return state;
@@ -1212,7 +1316,11 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         ...set,
         weight,
         weightExplicit: true,
-        completed: weight !== null && set.reps !== null ? true : set.completed,
+        completed: preserveCompleted
+          ? set.completed
+          : weight !== null && set.reps !== null
+            ? true
+            : set.completed,
       };
       return {
         ...state,
@@ -1226,7 +1334,7 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
     }
 
     case "UPDATE_SET_REPS": {
-      const { exerciseIndex, setIndex, reps } = action;
+      const { exerciseIndex, setIndex, reps, preserveCompleted } = action;
       const ex = state.exercises[exerciseIndex];
       const set = ex?.sets[setIndex];
       if (!ex || !set) return state;
@@ -1234,7 +1342,11 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         ...set,
         reps,
         repsExplicit: true,
-        completed: set.weight !== null && reps !== null ? true : set.completed,
+        completed: preserveCompleted
+          ? set.completed
+          : set.weight !== null && reps !== null
+            ? true
+            : set.completed,
       };
       return {
         ...state,
@@ -1403,6 +1515,17 @@ export const workoutReducer = (state: Workout, action: Action): Workout => {
         exercises: nextExercises,
         currentExerciseIndex: remapIndex(state.currentExerciseIndex),
         activeField,
+      };
+    }
+
+    case "SELECT_EXERCISE": {
+      const { exerciseIndex } = action;
+      if (exerciseIndex < 0 || exerciseIndex >= state.exercises.length) {
+        return state;
+      }
+      return {
+        ...state,
+        currentExerciseIndex: exerciseIndex,
       };
     }
 
@@ -1867,6 +1990,7 @@ export function finalizeWorkout(
           weightModifier:
             set.weightModifier ?? previousSet?.weightModifier ?? null,
           restBefore: set.restBefore ?? previousSet?.restBefore ?? null,
+          restSeconds: set.restSeconds ?? previousSet?.restSeconds ?? null,
           notes: set.notes,
           rir: set.rir ?? null,
           order: index + 1,
@@ -1881,6 +2005,7 @@ export function finalizeWorkout(
         exerciseNotes: ex.exerciseNotes ?? undefined,
         exerciseNotesSnapshot: ex.exerciseNotes?.trim() || undefined,
         notes: ex.notes.length > 0 ? ex.notes[0]?.text : undefined,
+        restTimes: ex.restTimes,
         order: exIndex + 1,
       };
     })
@@ -1891,6 +2016,7 @@ export function finalizeWorkout(
     startedAt: new Date(state.startTime),
     completedAt: new Date(),
     bodyWeightLb: state.bodyWeightLb ?? null,
+    restTimes: state.restTimes,
     notes: workoutNotesText,
     exercises: completedExercises,
   };

@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 import {
   CompletedWorkoutSchema,
   type CompletedExercise,
+  type RestTimes,
   summarizeWorkingSets,
 } from "@lift-prog/workout-core";
 import { normalizeExerciseNameForCompare } from "@/lib/exercise-name";
@@ -16,9 +17,19 @@ import {
   buildInitialExercisesForNames,
   buildInitialExercisesFromWorkout,
   getLatestWorkoutBodyWeightLb,
+  getLatestWorkoutRestTimes,
 } from "@/server/services/workout-initializer";
 
 type WorkoutPrisma = Pick<PrismaClient, "exercise" | "userExercise">;
+
+function restTimeColumns(restTimes: RestTimes | undefined) {
+  if (restTimes === undefined) return {};
+
+  return {
+    restWarmupSeconds: restTimes.warmupSeconds,
+    restWorkingSeconds: restTimes.workingSeconds,
+  };
+}
 
 async function resolveUserExerciseIds({
   prisma,
@@ -81,6 +92,10 @@ async function resolveUserExerciseIds({
       exerciseInput.exerciseNotes === undefined
         ? {}
         : { notes: exerciseInput.exerciseNotes.trim() || null };
+    const exerciseDefaultsUpdate = {
+      ...notesUpdate,
+      ...restTimeColumns(exerciseInput.restTimes),
+    };
 
     const existingById = exerciseInput.userExerciseId
       ? await prisma.userExercise.findFirst({
@@ -94,11 +109,11 @@ async function resolveUserExerciseIds({
 
     if (existingById) {
       const rec =
-        exerciseInput.exerciseNotes === undefined
+        Object.keys(exerciseDefaultsUpdate).length === 0
           ? existingById
           : await prisma.userExercise.update({
               where: { id: existingById.id },
-              data: notesUpdate,
+              data: exerciseDefaultsUpdate,
               select: { id: true, name: true },
             });
       rememberUserExercise(rec);
@@ -112,11 +127,11 @@ async function resolveUserExerciseIds({
     const existingByName = findExistingByName(exerciseName);
     if (existingByName) {
       const rec =
-        exerciseInput.exerciseNotes === undefined
+        Object.keys(exerciseDefaultsUpdate).length === 0
           ? existingByName
           : await prisma.userExercise.update({
               where: { id: existingByName.id },
-              data: notesUpdate,
+              data: exerciseDefaultsUpdate,
               select: { id: true, name: true },
             });
       rememberUserExercise(rec);
@@ -139,12 +154,12 @@ async function resolveUserExerciseIds({
           name: exerciseName,
         },
       },
-      update: notesUpdate,
+      update: exerciseDefaultsUpdate,
       create: {
         userId,
         name: exerciseName,
         exerciseId: catalogExercise?.id ?? null,
-        ...notesUpdate,
+        ...exerciseDefaultsUpdate,
       },
       select: { id: true, name: true },
     });
@@ -162,8 +177,15 @@ export const workoutRouter = createTRPCRouter({
   saveWorkout: protectedProcedure
     .input(CompletedWorkoutSchema)
     .mutation(async ({ ctx, input }) => {
-      const { name, exercises, notes, completedAt, startedAt, bodyWeightLb } =
-        input;
+      const {
+        name,
+        exercises,
+        notes,
+        completedAt,
+        startedAt,
+        bodyWeightLb,
+        restTimes,
+      } = input;
       const prisma = ctx.db; // Use prisma client from context
       const userId = ctx.session.userId;
 
@@ -200,6 +222,7 @@ export const workoutRouter = createTRPCRouter({
             completedAt: completedAt,
             startedAt: startedAt,
             bodyWeightLb: bodyWeightLb ?? null,
+            ...restTimeColumns(restTimes),
           },
         });
 
@@ -228,6 +251,7 @@ export const workoutRouter = createTRPCRouter({
               userExerciseId,
               order: exerciseInput.order,
               notes: exerciseInput.notes,
+              ...restTimeColumns(exerciseInput.restTimes),
               ...(exerciseInput.exerciseNotesSnapshot === undefined
                 ? {}
                 : {
@@ -246,6 +270,9 @@ export const workoutRouter = createTRPCRouter({
             ...(set.restBefore === undefined
               ? {}
               : { restBefore: set.restBefore }),
+            ...(set.restSeconds === undefined
+              ? {}
+              : { restSeconds: set.restSeconds }),
             ...(set.notes === undefined ? {} : { notes: set.notes }),
             ...(set.rir === undefined ? {} : { rir: set.rir }),
             completed: true,
@@ -302,6 +329,7 @@ export const workoutRouter = createTRPCRouter({
         completedAt,
         startedAt,
         bodyWeightLb,
+        restTimes,
       } = input.workout;
 
       return prisma.$transaction(async (tx) => {
@@ -319,6 +347,7 @@ export const workoutRouter = createTRPCRouter({
             startedAt,
             completedAt,
             bodyWeightLb: bodyWeightLb ?? null,
+            ...restTimeColumns(restTimes),
           },
         });
 
@@ -349,6 +378,7 @@ export const workoutRouter = createTRPCRouter({
               userExerciseId,
               order: exerciseInput.order,
               notes: exerciseInput.notes,
+              ...restTimeColumns(exerciseInput.restTimes),
               ...(exerciseInput.exerciseNotesSnapshot === undefined
                 ? {}
                 : {
@@ -367,6 +397,9 @@ export const workoutRouter = createTRPCRouter({
             ...(set.restBefore === undefined
               ? {}
               : { restBefore: set.restBefore }),
+            ...(set.restSeconds === undefined
+              ? {}
+              : { restSeconds: set.restSeconds }),
             ...(set.notes === undefined ? {} : { notes: set.notes }),
             ...(set.rir === undefined ? {} : { rir: set.rir }),
             completed: true,
@@ -496,19 +529,26 @@ export const workoutRouter = createTRPCRouter({
       }
 
       if (input.mode === "exerciseList") {
-        const bodyWeightLb = await getLatestWorkoutBodyWeightLb({
-          prisma: ctx.db,
-          userId,
-        });
-        const exercises = await buildInitialExercisesForNames({
-          prisma: ctx.db,
-          userId,
-          exerciseNames: input.exerciseNames,
-        });
+        const [bodyWeightLb, restTimes, exercises] = await Promise.all([
+          getLatestWorkoutBodyWeightLb({
+            prisma: ctx.db,
+            userId,
+          }),
+          getLatestWorkoutRestTimes({
+            prisma: ctx.db,
+            userId,
+          }),
+          buildInitialExercisesForNames({
+            prisma: ctx.db,
+            userId,
+            exerciseNames: input.exerciseNames,
+          }),
+        ]);
 
         return {
           workoutName: input.workoutName ?? "Workout",
           bodyWeightLb,
+          ...(restTimes ? { restTimes } : {}),
           exercises,
         };
       }

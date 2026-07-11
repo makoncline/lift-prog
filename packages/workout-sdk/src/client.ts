@@ -10,18 +10,24 @@ import {
   ListRecentWorkoutsResultSchema,
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
+  DeleteCurrentUserResultSchema,
   ListExercisesResultSchema,
+  ExerciseUpdateResultSchema,
   GetWorkoutDetailsInputSchema,
   GetWorkoutDetailsResultSchema,
   PrepareInitialWorkoutInputSchema,
   PrepareInitialWorkoutResultSchema,
   SaveWorkoutInputSchema,
   SaveWorkoutResultSchema,
+  UpdateExerciseNoteInputSchema,
+  UpdateExercisePlateDefaultsInputSchema,
   UpdateWorkoutInputSchema,
   type ListRecentWorkoutsInput,
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
+  type DeleteCurrentUserResult,
   type ExerciseListItem,
+  type ExerciseUpdateResult,
   type GetWorkoutDetailsInput,
   type GetWorkoutDetailsResult,
   type PrepareInitialWorkoutInput,
@@ -29,6 +35,8 @@ import {
   type RecentWorkoutSummary,
   type SaveWorkoutInput,
   type SaveWorkoutResult,
+  type UpdateExerciseNoteInput,
+  type UpdateExercisePlateDefaultsInput,
   type UpdateWorkoutInput,
 } from "./contracts";
 
@@ -36,27 +44,22 @@ type HeadersShape = Record<string, string>;
 
 export type WorkoutApiClientOptions = {
   baseUrl: string;
-  getToken?: () => Promise<string | null>;
   getHeaders?: () => Promise<HeadersShape>;
 };
 
 const buildHeaders = async ({
   getHeaders,
-  getToken,
-}: Pick<WorkoutApiClientOptions, "getHeaders" | "getToken">) => {
+}: Pick<WorkoutApiClientOptions, "getHeaders">) => {
   const headers = (await getHeaders?.()) ?? {};
-  const token = await getToken?.();
 
   return {
     ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     "x-trpc-source": "expo-mobile",
   } satisfies HeadersShape;
 };
 
 export const createWorkoutApiClient = ({
   baseUrl,
-  getToken,
   getHeaders,
 }: WorkoutApiClientOptions) => {
   const client = createTRPCUntypedClient({
@@ -64,7 +67,7 @@ export const createWorkoutApiClient = ({
       httpBatchLink({
         transformer: SuperJSON,
         url: new URL("/api/trpc", baseUrl).toString(),
-        headers: async () => buildHeaders({ getHeaders, getToken }),
+        headers: async () => buildHeaders({ getHeaders }),
       }),
     ],
   });
@@ -94,6 +97,25 @@ export const createWorkoutApiClient = ({
       return ListExercisesResultSchema.parse(result);
     },
 
+    async updateExerciseNote(
+      input: UpdateExerciseNoteInput,
+    ): Promise<ExerciseUpdateResult> {
+      const parsedInput = UpdateExerciseNoteInputSchema.parse(input);
+      const result = await client.mutation("exercise.updateNote", parsedInput);
+      return ExerciseUpdateResultSchema.parse(result);
+    },
+
+    async updateExercisePlateDefaults(
+      input: UpdateExercisePlateDefaultsInput,
+    ): Promise<ExerciseUpdateResult> {
+      const parsedInput = UpdateExercisePlateDefaultsInputSchema.parse(input);
+      const result = await client.mutation(
+        "exercise.updatePlateDefaults",
+        parsedInput,
+      );
+      return ExerciseUpdateResultSchema.parse(result);
+    },
+
     async saveWorkout(input: SaveWorkoutInput): Promise<SaveWorkoutResult> {
       const parsedInput = SaveWorkoutInputSchema.parse(input);
       const result = await client.mutation("workout.saveWorkout", parsedInput);
@@ -120,6 +142,11 @@ export const createWorkoutApiClient = ({
       const parsedInput = DeleteWorkoutInputSchema.parse(input);
       const result = await client.mutation("workout.deleteWorkout", parsedInput);
       return DeleteWorkoutResultSchema.parse(result);
+    },
+
+    async deleteCurrentUser(): Promise<DeleteCurrentUserResult> {
+      const result = await client.mutation("user.deleteCurrent");
+      return DeleteCurrentUserResultSchema.parse(result);
     },
   };
 };

@@ -27,7 +27,10 @@ apps/mobile/.expo/
 apps/mobile/.expo-shared/
 apps/mobile/dist/
 apps/mobile/dist-ios/
-apps/mobile/ios/
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+apps/mobile/ios/DerivedData/
+apps/mobile/ios/.xcode.env.local
 apps/mobile/android/
 
 # production
