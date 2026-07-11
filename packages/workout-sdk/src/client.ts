@@ -11,6 +11,7 @@ import {
   DeleteWorkoutInputSchema,
   DeleteWorkoutResultSchema,
   DeleteCurrentUserResultSchema,
+  ExportCurrentUserDataResultSchema,
   ListExercisesResultSchema,
   ExerciseUpdateResultSchema,
   GetWorkoutDetailsInputSchema,
@@ -26,6 +27,7 @@ import {
   type DeleteWorkoutInput,
   type DeleteWorkoutResult,
   type DeleteCurrentUserResult,
+  type ExportCurrentUserDataResult,
   type ExerciseListItem,
   type ExerciseUpdateResult,
   type GetWorkoutDetailsInput,
@@ -126,13 +128,19 @@ export const createWorkoutApiClient = ({
       input: GetWorkoutDetailsInput,
     ): Promise<GetWorkoutDetailsResult> {
       const parsedInput = GetWorkoutDetailsInputSchema.parse(input);
-      const result = await client.query("workout.getWorkoutDetails", parsedInput);
+      const result = await client.query(
+        "workout.getWorkoutDetails",
+        parsedInput,
+      );
       return GetWorkoutDetailsResultSchema.parse(result);
     },
 
     async updateWorkout(input: UpdateWorkoutInput): Promise<SaveWorkoutResult> {
       const parsedInput = UpdateWorkoutInputSchema.parse(input);
-      const result = await client.mutation("workout.updateWorkout", parsedInput);
+      const result = await client.mutation(
+        "workout.updateWorkout",
+        parsedInput,
+      );
       return SaveWorkoutResultSchema.parse(result);
     },
 
@@ -140,13 +148,21 @@ export const createWorkoutApiClient = ({
       input: DeleteWorkoutInput,
     ): Promise<DeleteWorkoutResult> {
       const parsedInput = DeleteWorkoutInputSchema.parse(input);
-      const result = await client.mutation("workout.deleteWorkout", parsedInput);
+      const result = await client.mutation(
+        "workout.deleteWorkout",
+        parsedInput,
+      );
       return DeleteWorkoutResultSchema.parse(result);
     },
 
     async deleteCurrentUser(): Promise<DeleteCurrentUserResult> {
       const result = await client.mutation("user.deleteCurrent");
       return DeleteCurrentUserResultSchema.parse(result);
+    },
+
+    async exportCurrentUserData(): Promise<ExportCurrentUserDataResult> {
+      const result = await client.query("workout.exportCurrentUserData");
+      return ExportCurrentUserDataResultSchema.parse(result);
     },
   };
 };

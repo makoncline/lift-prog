@@ -29,6 +29,7 @@ apps/mobile/dist/
 apps/mobile/dist-ios/
 apps/mobile/ios/Pods/
 apps/mobile/ios/build/
+apps/mobile/ios/build-xcodebuildmcp/
 apps/mobile/ios/DerivedData/
 apps/mobile/ios/.xcode.env.local
 apps/mobile/android/

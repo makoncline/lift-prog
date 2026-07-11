@@ -16,6 +16,7 @@
     "@lift-prog/workout-sdk": "file:../../packages/workout-sdk",
     "@react-native-community/datetimepicker": "8.6.0",
     "@react-native-picker/picker": "^2.11.4",
+    "@tursodatabase/sync-react-native": "^0.6.1",
     "better-auth": "^1.6.20",
     "expo": "^55.0.8",
     "expo-constants": "~55.0.9",

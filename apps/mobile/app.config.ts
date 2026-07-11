@@ -22,7 +22,7 @@ const cleanBaseUrl = (rawUrl: string | undefined): string | undefined => {
       parsed.hostname.startsWith("192.168.") ||
       parsed.hostname.startsWith("10.");
 
-    if (isLocalHost) {
+    if (isLocalHost && process.env.NODE_ENV === "production") {
       return undefined;
     }
 
@@ -43,6 +43,10 @@ const authBaseUrl =
 const localDevUserId =
   process.env.EXPO_PUBLIC_MOBILE_LOCAL_DEV_USER_ID ??
   process.env.LOCAL_DEV_USER_ID;
+const productionImportUrl =
+  process.env.NODE_ENV === "production"
+    ? undefined
+    : process.env.EXPO_PUBLIC_PRODUCTION_IMPORT_URL;
 
 const config: ExpoConfig = {
   name: "Lift Prog",
@@ -73,6 +77,7 @@ const config: ExpoConfig = {
     workoutApiBaseUrl,
     authBaseUrl,
     localDevUserId,
+    productionImportUrl,
   },
 };
 

@@ -17,6 +17,7 @@ export type SetModifier = "warmup";
 export type WeightModifier = "bodyweight"; // New type for weight modifier
 export type SetRestType = "standard" | "short";
 export type PlateLoadMode = "equal-sides" | "total";
+export type EntityId = string | number;
 
 export interface RestTimes {
   warmupSeconds: number | null;
@@ -45,7 +46,7 @@ export interface WorkoutSet {
 }
 
 export interface WorkoutExercise {
-  userExerciseId?: number;
+  userExerciseId?: EntityId;
   name: string;
   exerciseNotes?: string | null;
   plateStartingWeight?: number | null;
@@ -544,7 +545,7 @@ export type PreviousExerciseData = Parameters<
 
 export const initialiseExercises = (
   previous: {
-    userExerciseId?: number;
+    userExerciseId?: EntityId;
     name: string;
     sets: Array<{
       weight: number | null;

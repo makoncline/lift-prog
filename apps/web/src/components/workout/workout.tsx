@@ -34,7 +34,7 @@ import { WorkoutExerciseList } from "@/components/workout/workout_exercise_list"
 import type { PlateSettings } from "@/components/workout-reference/weight_helper_dialog";
 
 interface PreviousExerciseData {
-  userExerciseId?: number;
+  userExerciseId?: string | number;
   name: string;
   sets: Array<{
     weight: number | null;
@@ -625,7 +625,7 @@ function WorkoutComponentInner({
       note: nextNote,
     });
 
-    if (exercise.userExerciseId) {
+    if (typeof exercise.userExerciseId === "number") {
       updateUserExerciseNoteMutation.mutate({
         id: exercise.userExerciseId,
         note: nextNote,
@@ -660,7 +660,7 @@ function WorkoutComponentInner({
       plateLoadMode: settings.loadMode,
     };
 
-    if (exercise.userExerciseId) {
+    if (typeof exercise.userExerciseId === "number") {
       updateUserExercisePlateDefaultsMutation.mutate({
         id: exercise.userExerciseId,
         ...payload,
