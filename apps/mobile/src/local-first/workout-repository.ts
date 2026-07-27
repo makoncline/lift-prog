@@ -23,6 +23,7 @@ import {
   StoredUserExerciseSchema,
   StoredWorkoutAggregateSchema,
 } from "./model";
+import { withLocalTransaction } from "./transaction";
 
 const LEGACY_ACCOUNT_ID_KEY = "bound-account-id";
 const AUTH_ACCOUNT_ID_KEY = "bound-auth-account-id";
@@ -526,9 +527,11 @@ export function createLocalWorkoutDataClient(
     },
 
     async saveWorkout(input) {
-      const workoutId = await persistWorkout(database, input, {
-        id: input.clientId,
-      });
+      const workoutId = await withLocalTransaction(database, () =>
+        persistWorkout(database, input, {
+          id: input.clientId,
+        }),
+      );
       didChange();
       return { success: true, workoutId };
     },
@@ -567,10 +570,12 @@ export function createLocalWorkoutDataClient(
     },
 
     async updateWorkout(input) {
-      const existing = await loadWorkout(database, input.workoutId);
-      await persistWorkout(database, input.workout, {
-        id: input.workoutId,
-        legacyServerId: existing.legacyServerId,
+      await withLocalTransaction(database, async () => {
+        const existing = await loadWorkout(database, input.workoutId);
+        await persistWorkout(database, input.workout, {
+          id: input.workoutId,
+          legacyServerId: existing.legacyServerId,
+        });
       });
       didChange();
       return { success: true, workoutId: input.workoutId };
