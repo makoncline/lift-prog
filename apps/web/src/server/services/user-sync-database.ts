@@ -3,10 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { createClient as createDatabaseClient } from "@libsql/client";
-import {
-  getLocalFirstMigrationStatements,
-  LOCAL_FIRST_MIGRATIONS,
-} from "@lift-prog/workout-sdk";
+import { LOCAL_FIRST_MIGRATIONS } from "@lift-prog/workout-sdk";
 import {
   createClient,
   type Database,
@@ -24,7 +21,11 @@ type SyncPlatformConfig = {
 type SyncPlatformClient = ReturnType<typeof createClient>;
 type UserSyncDatabaseRegistry = Pick<
   PrismaClient["userSyncDatabase"],
-  "deleteMany" | "findUnique" | "upsert"
+  "findUnique" | "upsert"
+>;
+type UserSyncDatabaseDeletionQueue = Pick<
+  PrismaClient["userSyncDatabaseDeletion"],
+  "deleteMany" | "findMany" | "update"
 >;
 
 type UserSyncDatabaseClient = Pick<
@@ -110,7 +111,7 @@ export async function ensureUserSyncDatabaseSchema(
   for (const migration of LOCAL_FIRST_MIGRATIONS) {
     if (applied.has(migration.version)) continue;
 
-    for (const statement of getLocalFirstMigrationStatements(migration.sql)) {
+    for (const statement of migration.statements) {
       await database.execute(statement);
     }
     await database.execute({
@@ -215,24 +216,57 @@ export async function getUserSyncCredentials(
   });
 }
 
-export async function deleteUserSyncDatabase(
-  userId: string,
-  registry: UserSyncDatabaseRegistry,
+export async function drainUserSyncDatabaseDeletionQueue(
+  queue: UserSyncDatabaseDeletionQueue,
 ) {
   const config = readSyncPlatformConfig();
-  if (!config) return;
+  if (!config) return { deleted: 0, pending: true };
 
   const client = createClient({ org: config.org, token: config.token });
-  const registration = await registry.findUnique({
-    where: { userId },
-    select: { databaseName: true },
+  return processUserSyncDatabaseDeletionQueue({ queue, client });
+}
+
+export async function processUserSyncDatabaseDeletionQueue({
+  queue,
+  client,
+}: {
+  queue: UserSyncDatabaseDeletionQueue;
+  client: SyncPlatformClient;
+}) {
+  const queued = await queue.findMany({
+    // Never let old failures starve new deletion requests. SQLite sorts null
+    // values first, so untried rows run before rows with a failed attempt.
+    orderBy: [{ lastAttemptAt: "asc" }, { requestedAt: "asc" }],
+    take: 11,
   });
-  await deleteProvisionedUserSyncDatabase({
-    userId,
-    databaseName: registration?.databaseName,
-    client,
-  });
-  await registry.deleteMany({ where: { userId } });
+  const pending = queued.slice(0, 10);
+  let deleted = 0;
+
+  for (const item of pending) {
+    try {
+      await deleteProvisionedUserSyncDatabase({
+        userId: item.userId,
+        databaseName: item.databaseName,
+        client,
+      });
+      await queue.deleteMany({ where: { databaseName: item.databaseName } });
+      deleted += 1;
+    } catch (error) {
+      await queue.update({
+        where: { databaseName: item.databaseName },
+        data: {
+          attempts: { increment: 1 },
+          lastAttemptAt: new Date(),
+          lastError: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  return {
+    deleted,
+    pending: pending.length > deleted || queued.length > pending.length,
+  };
 }
 
 export async function deleteProvisionedUserSyncDatabase({

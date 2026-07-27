@@ -1,10 +1,8 @@
 import Constants from "expo-constants";
 
 type MobileExpoExtra = {
-  localDevUserId?: string;
   workoutApiBaseUrl?: string;
   authBaseUrl?: string;
-  productionImportUrl?: string;
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as MobileExpoExtra;
@@ -45,8 +43,3 @@ export const mobileWorkoutApiBaseUrl =
   cleanBaseUrl(extra.workoutApiBaseUrl) ?? "https://lift.makon.dev";
 export const mobileAuthBaseUrl =
   cleanBaseUrl(extra.authBaseUrl) ?? mobileWorkoutApiBaseUrl;
-
-export const mobileLocalDevUserId = extra.localDevUserId ?? "";
-export const mobileProductionImportUrl = __DEV__
-  ? extra.productionImportUrl
-  : undefined;

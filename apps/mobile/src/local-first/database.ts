@@ -53,7 +53,7 @@ export function openLocalDatabase(sync?: LocalDatabaseSyncConfig) {
   return databasePromise;
 }
 
-export async function resetLocalDatabaseConnectionForTests() {
+export async function closeLocalDatabaseConnection() {
   const database = await databasePromise;
   database?.close();
   databasePromise = null;

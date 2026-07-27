@@ -149,9 +149,19 @@ struct WatchWorkoutSnapshot: Equatable {
 
 final class WatchWorkoutStore: NSObject, ObservableObject, WCSessionDelegate {
   @Published var snapshot: WatchWorkoutSnapshot = .inactive
+#if DEBUG
+  private(set) var atlasState: Int?
+#endif
 
   override init() {
     super.init()
+#if DEBUG
+    if let state = Self.launchAtlasState {
+      atlasState = state
+      snapshot = WatchWorkoutSnapshot(context: Self.atlasFixture(for: state))
+      return
+    }
+#endif
     activateSession()
   }
 
@@ -220,6 +230,62 @@ final class WatchWorkoutStore: NSObject, ObservableObject, WCSessionDelegate {
       "isActive": true,
       "updatedAt": ISO8601DateFormatter().string(from: Date())
     ]
+  }
+
+  private static var launchAtlasState: Int? {
+    let arguments = ProcessInfo.processInfo.arguments
+    guard let flagIndex = arguments.firstIndex(of: "-uiAtlasState"),
+      arguments.indices.contains(flagIndex + 1)
+    else {
+      return nil
+    }
+    return Int(arguments[flagIndex + 1])
+  }
+
+  private static func atlasFixture(for state: Int) -> [String: Any] {
+    guard ![70, 75].contains(state) else {
+      return [
+        "isActive": false,
+        "updatedAt": ISO8601DateFormatter().string(from: Date())
+      ]
+    }
+
+    var fixture = activeWorkoutFixture
+    fixture["restTimerRunning"] = state == 74
+    fixture["restTimerRemainingSeconds"] = state == 74 ? 95 : nil
+    fixture["restTimerEndsAt"] =
+      state == 74
+      ? ISO8601DateFormatter().string(from: Date().addingTimeInterval(95))
+      : nil
+
+    switch state {
+    case 124:
+      fixture["setId"] = "fixture-warm-up-1"
+      fixture["setLabel"] = "warm-up 1"
+      fixture["setText"] = "BW x 20"
+      fixture["setWeight"] = 0.0
+      fixture["setReps"] = 20
+    case 126:
+      fixture["setId"] = "fixture-set-3"
+      fixture["setLabel"] = "set 3"
+      fixture["setText"] = "BW+20lb x 8"
+      fixture["setWeight"] = 20.0
+      fixture["setReps"] = 8
+    case 127:
+      fixture["exerciseName"] = "Rows"
+      fixture["setId"] = "fixture-row-set-1"
+      fixture["setLabel"] = "set 1"
+      fixture["setText"] = "75lb x 11"
+      fixture["setWeight"] = 75.0
+      fixture["setReps"] = 11
+      fixture["setWeightModifier"] = nil
+    case 128:
+      fixture["setCompleted"] = true
+    default:
+      break
+    }
+
+    return fixture
   }
 #endif
 

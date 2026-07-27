@@ -5,6 +5,7 @@ import {
   summarizeSetEntries,
   type CompletedExercise,
   type CompletedWorkout,
+  type SetRestType,
   type SummaryInputSet,
   type Workout,
   type WorkoutExercise,
@@ -34,6 +35,10 @@ const MONTHS = [
 export function formatNumber(value: number) {
   const rounded = Number(value.toFixed(1));
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+export function formatRestChoiceLabel(restType: SetRestType) {
+  return restType === "short" ? "pause" : "standard";
 }
 
 export function formatDateTime(value: Date) {
@@ -213,14 +218,32 @@ export function summarizeCompletedExerciseSetGroup(
   sets: CompletedExercise["sets"],
 ) {
   return summarizeSetEntries(
-    sets.map((set): SummaryInputSet => ({
-      weight: set.weight,
-      reps: set.reps,
-      modifier: set.modifier ?? undefined,
-      weightModifier: set.weightModifier ?? undefined,
-      restBefore: set.restBefore ?? undefined,
-    })),
+    sets.map(
+      (set): SummaryInputSet => ({
+        weight: set.weight,
+        reps: set.reps,
+        modifier: set.modifier ?? undefined,
+        weightModifier: set.weightModifier ?? undefined,
+        restBefore: set.restBefore ?? undefined,
+      }),
+    ),
   );
+}
+
+export function buildCompletedExercisePreviewLines(
+  exercise: CompletedExercise,
+) {
+  const warmupSummary = summarizeCompletedExerciseSetGroup(
+    exercise.sets.filter((set) => set.modifier === "warmup"),
+  );
+  const workingSummary = summarizeCompletedExerciseSetGroup(
+    exercise.sets.filter((set) => set.modifier !== "warmup"),
+  );
+
+  return [
+    ...(warmupSummary ? [`W ${warmupSummary}`] : []),
+    ...(workingSummary ? [workingSummary] : []),
+  ];
 }
 
 function toSummaryInputSet(

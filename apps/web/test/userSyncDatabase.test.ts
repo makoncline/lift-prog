@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deleteProvisionedUserSyncDatabase,
-  deleteUserSyncDatabase,
+  drainUserSyncDatabaseDeletionQueue,
   getUserSyncCredentials,
+  processUserSyncDatabaseDeletionQueue,
   provisionUserSyncCredentials,
   userSyncDatabaseName,
 } from "@/server/services/user-sync-database";
@@ -149,13 +150,15 @@ describe("user sync database provisioning", () => {
     });
   });
 
-  it("does not require platform access when deleting with sync disabled", async () => {
+  it("leaves queued cleanup pending when platform access is disabled", async () => {
     delete process.env.TURSO_PLATFORM_ORG;
     delete process.env.TURSO_PLATFORM_TOKEN;
+    const findMany = vi.fn();
 
     await expect(
-      deleteUserSyncDatabase("app-user-1", {} as never),
-    ).resolves.toBeUndefined();
+      drainUserSyncDatabaseDeletionQueue({ findMany } as never),
+    ).resolves.toEqual({ deleted: 0, pending: true });
+    expect(findMany).not.toHaveBeenCalled();
   });
 
   it("deletes only the stable per-user database and tolerates a retry", async () => {
@@ -180,5 +183,135 @@ describe("user sync database provisioning", () => {
       2,
       userSyncDatabaseName("app-user-1"),
     );
+  });
+
+  it("keeps failed remote deletion queued for a later retry", async () => {
+    const databaseName = userSyncDatabaseName("app-user-1");
+    const remove = vi.fn().mockRejectedValue(new Error("platform unavailable"));
+    const deleteMany = vi.fn();
+    const update = vi.fn().mockResolvedValue(undefined);
+    const queue = {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          databaseName,
+          userId: "app-user-1",
+          requestedAt: new Date(),
+        },
+      ]),
+      deleteMany,
+      update,
+    };
+    const client = {
+      databases: { delete: remove },
+    } as unknown as Parameters<
+      typeof processUserSyncDatabaseDeletionQueue
+    >[0]["client"];
+
+    await expect(
+      processUserSyncDatabaseDeletionQueue({
+        queue: queue as never,
+        client,
+      }),
+    ).resolves.toEqual({ deleted: 0, pending: true });
+    expect(queue.findMany).toHaveBeenCalledWith({
+      orderBy: [{ lastAttemptAt: "asc" }, { requestedAt: "asc" }],
+      take: 11,
+    });
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({
+      where: { databaseName },
+      data: {
+        attempts: { increment: 1 },
+        lastAttemptAt: expect.any(Date),
+        lastError: "platform unavailable",
+      },
+    });
+  });
+
+  it("reports more queued work when a full deletion batch succeeds", async () => {
+    const queued = Array.from({ length: 11 }, (_, index) => ({
+      databaseName: `lift-user-${index}`,
+      userId: `app-user-${index}`,
+      requestedAt: new Date(index),
+    }));
+    const queue = {
+      findMany: vi.fn().mockResolvedValue(queued),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn(),
+    };
+    const client = {
+      databases: { delete: vi.fn().mockResolvedValue(undefined) },
+    } as unknown as Parameters<
+      typeof processUserSyncDatabaseDeletionQueue
+    >[0]["client"];
+
+    await expect(
+      processUserSyncDatabaseDeletionQueue({
+        queue: queue as never,
+        client,
+      }),
+    ).resolves.toEqual({ deleted: 10, pending: true });
+    expect(client.databases.delete).toHaveBeenCalledTimes(10);
+  });
+
+  it("processes a new deletion after an earlier batch fails", async () => {
+    const failed = Array.from({ length: 10 }, (_, index) => ({
+      databaseName: `lift-user-failed-${index}`,
+      userId: `app-user-failed-${index}`,
+      requestedAt: new Date(
+        `2026-07-26T${String(index).padStart(2, "0")}:00:00Z`,
+      ),
+      lastAttemptAt: null,
+    }));
+    const untried = {
+      databaseName: "lift-user-new",
+      userId: "app-user-new",
+      requestedAt: new Date("2026-07-27T01:00:00Z"),
+      lastAttemptAt: null,
+    };
+    const queue = {
+      findMany: vi
+        .fn()
+        .mockResolvedValueOnce([...failed, untried])
+        .mockResolvedValueOnce([
+          untried,
+          ...failed.map((item) => ({
+            ...item,
+            lastAttemptAt: new Date("2026-07-27T02:00:00Z"),
+          })),
+        ]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue(undefined),
+    };
+    const client = {
+      databases: {
+        delete: vi.fn().mockImplementation(async (databaseName: string) => {
+          if (databaseName !== untried.databaseName) {
+            throw new Error("platform unavailable");
+          }
+        }),
+      },
+    } as unknown as Parameters<
+      typeof processUserSyncDatabaseDeletionQueue
+    >[0]["client"];
+
+    await expect(
+      processUserSyncDatabaseDeletionQueue({
+        queue: queue as never,
+        client,
+      }),
+    ).resolves.toEqual({ deleted: 0, pending: true });
+    await expect(
+      processUserSyncDatabaseDeletionQueue({
+        queue: queue as never,
+        client,
+      }),
+    ).resolves.toEqual({ deleted: 1, pending: true });
+
+    expect(queue.findMany).toHaveBeenCalledWith({
+      orderBy: [{ lastAttemptAt: "asc" }, { requestedAt: "asc" }],
+      take: 11,
+    });
+    expect(client.databases.delete).toHaveBeenCalledWith("lift-user-new");
   });
 });

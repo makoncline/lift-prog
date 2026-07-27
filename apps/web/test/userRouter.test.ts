@@ -30,6 +30,7 @@ const makeCaller = (userId: string) => {
     id: userId,
     authUserId: `auth_${userId}`,
     email: `${userId}@example.com`,
+    syncDatabase: { databaseName: `lift-user-${userId}` },
   });
   const userCreate = vi.fn().mockImplementation(async ({ data }) => ({
     ...data,
@@ -38,6 +39,13 @@ const makeCaller = (userId: string) => {
   }));
   const userDelete = vi.fn();
   const authUserDeleteMany = vi.fn();
+  const syncDatabaseFindUnique = vi.fn().mockResolvedValue({
+    databaseName: `lift-user-${userId}`,
+  });
+  const deletionQueueUpsert = vi.fn().mockResolvedValue(undefined);
+  const deletionQueueFindMany = vi.fn().mockResolvedValue([]);
+  const deletionQueueDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
+  const deletionQueueUpdate = vi.fn().mockResolvedValue(undefined);
   const transaction = vi
     .fn()
     .mockImplementation(async (cb: (tx: any) => Promise<unknown>) =>
@@ -47,6 +55,9 @@ const makeCaller = (userId: string) => {
         },
         authUser: {
           deleteMany: authUserDeleteMany,
+        },
+        userSyncDatabaseDeletion: {
+          upsert: deletionQueueUpsert,
         },
       }),
     );
@@ -63,6 +74,15 @@ const makeCaller = (userId: string) => {
       authUser: {
         deleteMany: authUserDeleteMany,
       },
+      userSyncDatabase: {
+        findUnique: syncDatabaseFindUnique,
+      },
+      userSyncDatabaseDeletion: {
+        upsert: deletionQueueUpsert,
+        findMany: deletionQueueFindMany,
+        deleteMany: deletionQueueDeleteMany,
+        update: deletionQueueUpdate,
+      },
       $transaction: transaction,
     } as any,
     session: { userId },
@@ -78,6 +98,9 @@ const makeCaller = (userId: string) => {
       userCreate,
       userDelete,
       authUserDeleteMany,
+      deletionQueueFindMany,
+      deletionQueueUpsert,
+      syncDatabaseFindUnique,
       transaction,
     },
   };
@@ -168,7 +191,18 @@ describe("user router admin guard", () => {
         id: true,
         authUserId: true,
         email: true,
+        syncDatabase: {
+          select: { databaseName: true },
+        },
       },
+    });
+    expect(spies.deletionQueueUpsert).toHaveBeenCalledWith({
+      where: { databaseName: "lift-user-user_member" },
+      create: {
+        databaseName: "lift-user-user_member",
+        userId: "user_member",
+      },
+      update: { userId: "user_member" },
     });
     expect(spies.userDelete).toHaveBeenCalledWith({
       where: { id: "user_member" },
@@ -178,5 +212,15 @@ describe("user router admin guard", () => {
         OR: [{ id: "auth_user_member" }, { email: "user_member@example.com" }],
       },
     });
+  });
+
+  it("does not start remote cleanup when the account transaction fails", async () => {
+    const { caller, spies } = makeCaller("user_member");
+    spies.userDelete.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(caller.user.deleteCurrent()).rejects.toThrow(
+      "database unavailable",
+    );
+    expect(spies.deletionQueueFindMany).not.toHaveBeenCalled();
   });
 });

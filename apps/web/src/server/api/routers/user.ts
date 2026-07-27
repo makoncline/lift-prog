@@ -6,15 +6,29 @@ import {
 } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
 import {
-  deleteUserSyncDatabase,
+  drainUserSyncDatabaseDeletionQueue,
   getUserSyncCredentials,
 } from "@/server/services/user-sync-database";
 
+async function drainQueuedSyncDatabaseDeletions(
+  queue: Parameters<typeof drainUserSyncDatabaseDeletionQueue>[0],
+) {
+  try {
+    await drainUserSyncDatabaseDeletionQueue(queue);
+  } catch (error) {
+    console.error("Could not process queued sync database deletions.", error);
+  }
+}
+
 export const userRouter = createTRPCRouter({
-  localSyncCredentials: protectedProcedure.query(({ ctx }) => {
+  localSyncCredentials: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.userId;
     if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
     return getUserSyncCredentials(userId, ctx.db.userSyncDatabase);
+  }),
+
+  drainSyncDatabaseDeletions: adminProcedure.mutation(async ({ ctx }) => {
+    return drainUserSyncDatabaseDeletionQueue(ctx.db.userSyncDatabaseDeletion);
   }),
 
   // Procedure to list all users
@@ -94,10 +108,25 @@ export const userRouter = createTRPCRouter({
       }
 
       try {
-        await deleteUserSyncDatabase(input.id, ctx.db.userSyncDatabase);
-        return await ctx.db.user.delete({
-          where: { id: input.id },
+        const registration = await ctx.db.userSyncDatabase.findUnique({
+          where: { userId: input.id },
+          select: { databaseName: true },
         });
+        const deletedUser = await ctx.db.$transaction(async (tx) => {
+          if (registration) {
+            await tx.userSyncDatabaseDeletion.upsert({
+              where: { databaseName: registration.databaseName },
+              create: {
+                databaseName: registration.databaseName,
+                userId: input.id,
+              },
+              update: { userId: input.id },
+            });
+          }
+          return tx.user.delete({ where: { id: input.id } });
+        });
+        await drainQueuedSyncDatabaseDeletions(ctx.db.userSyncDatabaseDeletion);
+        return deletedUser;
       } catch (error) {
         console.error("Error deleting user:", error);
         throw new TRPCError({
@@ -120,6 +149,9 @@ export const userRouter = createTRPCRouter({
         id: true,
         authUserId: true,
         email: true,
+        syncDatabase: {
+          select: { databaseName: true },
+        },
       },
     });
 
@@ -130,9 +162,17 @@ export const userRouter = createTRPCRouter({
       });
     }
 
-    await deleteUserSyncDatabase(appUser.id, ctx.db.userSyncDatabase);
-
     await ctx.db.$transaction(async (tx) => {
+      if (appUser.syncDatabase) {
+        await tx.userSyncDatabaseDeletion.upsert({
+          where: { databaseName: appUser.syncDatabase.databaseName },
+          create: {
+            databaseName: appUser.syncDatabase.databaseName,
+            userId: appUser.id,
+          },
+          update: { userId: appUser.id },
+        });
+      }
       await tx.user.delete({
         where: { id: appUser.id },
       });
@@ -150,6 +190,7 @@ export const userRouter = createTRPCRouter({
         });
       }
     });
+    await drainQueuedSyncDatabaseDeletions(ctx.db.userSyncDatabaseDeletion);
 
     return { success: true };
   }),

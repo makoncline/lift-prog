@@ -11,7 +11,6 @@ import {
   estimate1RM,
   finalizeWorkout,
   initialiseExercises,
-  workoutReducer,
   type Action,
   type CompletedWorkout,
   type PlateLoadMode,
@@ -38,37 +37,29 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Linking,
-  Modal,
-  type ModalProps,
   PanResponder,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   type GestureResponderEvent,
-  type StyleProp,
   Text,
   TextInput,
   useWindowDimensions,
   View,
-  type ViewStyle,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
+import { mobileWorkoutApiBaseUrl } from "../lib/config";
+import { bootstrapLocalWorkoutStore } from "../local-first/bootstrap";
 import {
-  mobileProductionImportUrl,
-  mobileWorkoutApiBaseUrl,
-} from "../lib/config";
+  isLocalWorkoutStoreConfigurationCurrent,
+  localWorkoutStoreConfigurationKey,
+} from "../local-first/store-configuration";
 import {
-  openLocalDatabase,
-  reopenLocalDatabaseWithSync,
-} from "../local-first/database";
-import { readProductionExportFile } from "../local-first/production-import";
-import {
-  createLocalSyncCoordinator,
   type LocalSyncCoordinator,
   type LocalSyncStatus,
 } from "../local-first/sync-coordinator";
@@ -79,17 +70,8 @@ import type {
   LocalWorkoutDataClient,
   LocalWorkoutDetails,
 } from "../local-first/model";
-import {
-  bindOrAssertLocalAccount,
-  createLocalWorkoutDataClient,
-  clearActiveWorkoutDraftRow,
-  hasLocalWorkoutData,
-  importProductionExport,
-  isProductionImportComplete,
-  quarantineActiveWorkoutDraftJson,
-  readActiveWorkoutDraftJson,
-  writeActiveWorkoutDraftJson,
-} from "../local-first/workout-repository";
+import { createLocalWorkoutDataClient } from "../local-first/workout-repository";
+import { StartupErrorScreen, StartupLoadingScreen } from "../StartupState";
 import {
   addWatchWorkoutCommandListener,
   addUnfinishedWorkoutReminderListener,
@@ -114,12 +96,29 @@ import type {
 } from "../../modules/lift-health/src";
 import { MobileErrorBoundary } from "./MobileErrorBoundary";
 import {
+  buildExerciseDetailsCharts,
+  buildExerciseDetailsRecords,
+  getChartPositions,
+  getHistorySetLoad,
+  type HistoryChartPoint,
+} from "./exercise-history-stats";
+import {
+  AppDialogProvider,
+  AppModal,
+  AppModalLayerProvider,
+  DismissibleModalShade,
+  useAppDialog,
+  useAppModalLayerOpen,
+} from "./modal-primitives";
+import {
+  buildCompletedExercisePreviewLines,
   countCompletedExerciseWorkingSets,
   countWorkoutWorkingSets,
   formatDateTime,
   formatDuration,
   formatNumber,
   formatRelativeDate,
+  formatRestChoiceLabel,
   formatSetInline,
   formatTime,
   formatWeightLabel,
@@ -129,16 +128,67 @@ import {
   summarizeWorkoutExerciseSetGroup,
   type IndexedWorkoutSet,
 } from "./format";
+import {
+  applyDefaultRestBoundaries,
+  applyRestTimesToExerciseSets,
+  DEFAULT_REST_SECONDS,
+  DEFAULT_WORKOUT_REST_TIMES,
+  getEffectiveExerciseRestTimes,
+  getRestSecondsForSet,
+  getRestTimerSecondsAfterSet,
+  normalizeActiveWorkoutRestDefaults,
+  normalizeRestTimes,
+} from "./rest";
+import { materializeEditedExerciseSets } from "./set-edit";
 import { styles } from "./styles";
 import { palette } from "./theme";
+import { type WeightSuggestion } from "./weight_helper";
 import {
-  buildAddedWeightRepRows,
-  calculatePlatePlan,
-  formatPlateWeight,
-  PLATES,
-  type PlateWeight,
-  type WeightSuggestion,
-} from "./weight_helper";
+  getStartingWeightLabel,
+  IncreaseWeightHelperModal,
+  parsePlateMode,
+  PlateCalculatorHelperModal,
+  SegmentedChoice,
+  STARTING_WEIGHTS,
+} from "./weight-tools";
+import {
+  applyWorkoutSessionAction,
+  blankPreparedWorkout,
+  commitPendingWorkoutHistory,
+  createWorkoutSession,
+  createWorkoutState,
+  ensureWorkoutSetIds,
+  makeClientId,
+  normalizeBodyWeightLb,
+  redoWorkoutSession,
+  resetExerciseCompletion,
+  undoWorkoutSession,
+  type WorkoutDispatchOptions,
+  type WorkoutSession,
+} from "./workout-session";
+import {
+  clearActiveWorkoutDraft,
+  type PendingWorkoutDraft,
+  readActiveWorkoutDraft,
+  type StoredWorkoutDraft,
+  writeActiveWorkoutDraft,
+} from "./workout-draft";
+import type { MobileWorkoutInitialState } from "./initial-state";
+import {
+  type ClockTimeEditTarget,
+  completedAtForDuration,
+  defaultCompletedAtForStartTime,
+  type DurationEditTarget,
+  durationMinutesBetween,
+  formatAdjustDateTime,
+  formatElapsedClock,
+  formatTitleDate,
+  formatWorkoutStartDate,
+  isDurationEditTarget,
+  mergeDatePart,
+  mergeTimePart,
+  type TimeEditTarget,
+} from "./workout-time";
 
 type WorkoutApiClient = LocalWorkoutDataClient;
 type RecentWorkout = LocalRecentWorkout;
@@ -146,7 +196,9 @@ type PreparedWorkout = LocalPreparedWorkout;
 type WorkoutDetails = LocalWorkoutDetails;
 type ExerciseSuggestion = LocalExerciseListItem;
 
-type AppScreen =
+const COMPACT_HIT_SLOP = { bottom: 7, left: 7, right: 7, top: 7 };
+
+export type AppScreen =
   | { name: "home"; refreshKey: number }
   | {
       name: "workout";
@@ -186,25 +238,7 @@ type SwipeActionSetRowHelpers = {
     onTouchStart: (event: GestureResponderEvent) => void;
   };
 };
-type AppDialogAction = {
-  label: string;
-  onPress?: () => void | Promise<void>;
-  testID?: string;
-  variant?: "default" | "primary" | "danger" | "cancel";
-};
-type AppDialogState = {
-  actions: AppDialogAction[];
-  message?: string;
-  title: string;
-};
-type AppDialogPresenter = (dialog: AppDialogState) => void;
-
 const USE_SWIPEABLE_EXERCISE_SET_CARDS = false;
-const AppDialogContext = React.createContext<AppDialogPresenter | null>(null);
-const AppModalLayerOpenContext = React.createContext(false);
-const AppModalLayerRegisterContext = React.createContext<
-  (() => () => void) | null
->(null);
 
 type NoteEditTarget =
   | { kind: "workout" }
@@ -212,30 +246,9 @@ type NoteEditTarget =
   | { kind: "workout-exercise"; exerciseIndex: number }
   | { kind: "set"; exerciseIndex: number; setId: string };
 type InlineNoteEditTarget = Exclude<NoteEditTarget, { kind: "workout" }>;
-type TimeEditTarget =
-  | "start-date"
-  | "start-time"
-  | "end-date"
-  | "end-time"
-  | "end-duration"
-  | "finish-end-date"
-  | "finish-end-time"
-  | "finish-duration";
-type ClockTimeEditTarget = Exclude<
-  TimeEditTarget,
-  "end-duration" | "finish-duration"
->;
-type DurationEditTarget = Extract<
-  TimeEditTarget,
-  "end-duration" | "finish-duration"
->;
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-const REST_TIMER_SECONDS = 180;
-const DEFAULT_WORKOUT_REST_TIMES: RestTimes = {
-  warmupSeconds: null,
-  workingSeconds: REST_TIMER_SECONDS,
-};
+const REST_TIMER_SECONDS = DEFAULT_REST_SECONDS;
 const UNFINISHED_WORKOUT_REMINDER_SECONDS = 15 * 60;
 const REST_TIMER_PRESET_SECONDS = [30, 60, 90, 120, 150, 180, 240, 300];
 const REST_TIMER_STEP_SECONDS = 10;
@@ -270,48 +283,7 @@ function formatRestTimerDurationLabel(seconds: number) {
 }
 
 function formatRestTimeSetting(seconds: number | null | undefined) {
-  if (seconds == null) return "none";
-  return formatCountdown(seconds);
-}
-
-function normalizeRestTimes(restTimes: RestTimes | undefined): RestTimes {
-  return {
-    warmupSeconds: restTimes?.warmupSeconds ?? null,
-    workingSeconds: restTimes?.workingSeconds ?? REST_TIMER_SECONDS,
-  };
-}
-
-function getEffectiveExerciseRestTimes(
-  workout: Workout,
-  exercise: WorkoutExercise,
-): RestTimes {
-  const workoutRestTimes = normalizeRestTimes(workout.restTimes);
-  return {
-    warmupSeconds:
-      exercise.restTimes?.warmupSeconds ?? workoutRestTimes.warmupSeconds,
-    workingSeconds:
-      exercise.restTimes?.workingSeconds ?? workoutRestTimes.workingSeconds,
-  };
-}
-
-function getRestSecondsForSet(set: WorkoutSet, restTimes: RestTimes) {
-  if (set.restBefore === "short") return null;
-  if (set.modifier === "warmup") return restTimes.warmupSeconds;
-  return restTimes.workingSeconds;
-}
-
-function applyRestTimesToExerciseSets(
-  exercise: WorkoutExercise,
-  restTimes: RestTimes,
-) {
-  return exercise.sets.map((set, index) => {
-    if (index === 0 || set.restBefore === "short") return set;
-    return {
-      ...set,
-      restBefore: set.restBefore ?? "standard",
-      restSeconds: getRestSecondsForSet(set, restTimes),
-    };
-  });
+  return formatCountdown(seconds ?? DEFAULT_REST_SECONDS);
 }
 
 function closestRestTimerOption(seconds: number, options: number[]) {
@@ -323,63 +295,10 @@ function closestRestTimerOption(seconds: number, options: number[]) {
   );
 }
 
-type StoredWorkoutDraft = {
-  workout: Workout;
-  completedAt: string | null;
-  savedAt: number;
-};
-
-type PendingWorkoutDraft = StoredWorkoutDraft;
-
-type WorkoutSession = {
-  past: Workout[];
-  present: Workout;
-  future: Workout[];
-  pendingHistoryBase?: Workout;
-};
-
-type WorkoutDispatchOptions = {
-  track?: boolean;
-  deferHistory?: boolean;
-};
-
 type HealthWorkoutState = {
   saving: boolean;
   message: string | null;
 };
-
-const MAX_MOBILE_DRAFT_HISTORY = 80;
-const EPHEMERAL_WORKOUT_ACTIONS = new Set<Action["type"]>([
-  "FOCUS_FIELD",
-  "COLLAPSE_KEYBOARD",
-  "NAV_EXERCISE",
-  "SELECT_EXERCISE",
-]);
-
-let nextClientId = 1;
-
-function makeClientId() {
-  const id = `mobile-set-${Date.now()}-${nextClientId}`;
-  nextClientId += 1;
-  return id;
-}
-
-function makeWorkoutClientId() {
-  return `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function normalizeBodyWeightLb(value: unknown): number | null {
-  const numeric =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim()
-        ? Number(value)
-        : null;
-
-  return numeric != null && Number.isFinite(numeric) && numeric > 0
-    ? numeric
-    : null;
-}
 
 function getUnknownErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
@@ -417,434 +336,35 @@ function triggerSelectionHaptic() {
   void Haptics.selectionAsync().catch(() => undefined);
 }
 
-function ensureWorkoutSetIds(workout: Workout): Workout {
-  return {
-    ...workout,
-    exercises: workout.exercises.map((exercise) => ({
-      ...exercise,
-      sets: exercise.sets.map((set) => ({
-        ...set,
-        clientId: set.clientId ?? makeClientId(),
-      })),
-    })),
-  };
-}
-
-function resetExerciseCompletion(exercise: WorkoutExercise): WorkoutExercise {
-  return {
-    ...exercise,
-    sets: exercise.sets.map((set) => ({
-      ...set,
-      completed: false,
-    })),
-  };
-}
-
-function createWorkoutState(
-  prepared: PreparedWorkout,
-  options: {
-    startedAt?: Date;
-    notes?: string | null;
-    isInProgress?: boolean;
-    preservePreparedValues?: boolean;
-  } = {},
-): Workout {
-  const exercises = initialiseExercises(
-    prepared.exercises as PreviousExerciseData[],
-  );
-  const hydratedExercises = options.preservePreparedValues
-    ? exercises.map((exercise, exerciseIndex) => {
-        const preparedExercise = prepared.exercises[exerciseIndex];
-        if (!preparedExercise) return exercise;
-
-        return {
-          ...exercise,
-          restTimes: preparedExercise.restTimes,
-          notes: preparedExercise.notes?.trim()
-            ? [{ text: preparedExercise.notes.trim() }]
-            : [],
-          sets: exercise.sets.map((set, setIndex) => {
-            const preparedSet = preparedExercise.sets[setIndex];
-            if (!preparedSet) return set;
-            const modifier =
-              preparedSet.modifier ??
-              (preparedSet.isWarmup ? "warmup" : undefined);
-
-            return {
-              ...set,
-              weight: preparedSet.weight,
-              reps: preparedSet.reps,
-              completed: true,
-              weightExplicit: preparedSet.weight !== null,
-              repsExplicit: preparedSet.reps !== null,
-              prevWeight: preparedSet.weight,
-              prevReps: preparedSet.reps,
-              modifier,
-              weightModifier: preparedSet.weightModifier,
-              restBefore: preparedSet.restBefore,
-              restSeconds: preparedSet.restSeconds,
-              notes: preparedSet.notes ?? undefined,
-              rir: preparedSet.rir,
-            };
-          }),
-        };
-      })
-    : exercises.map(resetExerciseCompletion);
-
-  return ensureWorkoutSetIds({
-    clientId: makeWorkoutClientId(),
-    currentExerciseIndex: 0,
-    exercises: hydratedExercises,
-    activeField: { exerciseIndex: null, setIndex: null, field: null },
-    inputValue: "",
-    isFirstInteraction: false,
-    notes: options.notes?.trim() ? [{ text: options.notes.trim() }] : [],
-    startTime: options.startedAt?.getTime() ?? Date.now(),
-    name: prepared.workoutName || "Workout",
-    bodyWeightLb: normalizeBodyWeightLb(prepared.bodyWeightLb),
-    restTimes: prepared.restTimes ?? DEFAULT_WORKOUT_REST_TIMES,
-    isInProgress: options.isInProgress ?? true,
-  });
-}
-
-function blankPreparedWorkout(
-  bodyWeightLb: number | null = null,
-): PreparedWorkout {
-  return {
-    workoutName: "Custom Workout",
-    bodyWeightLb,
-    restTimes: DEFAULT_WORKOUT_REST_TIMES,
-    exercises: [],
-  };
-}
-
-function applyWorkoutAction(workout: Workout, action: Action) {
-  return ensureWorkoutSetIds(workoutReducer(workout, action));
-}
-
-function createWorkoutSession(workout: Workout): WorkoutSession {
-  return {
-    past: [],
-    present: ensureWorkoutSetIds(workout),
-    future: [],
-  };
-}
-
-function applyWorkoutSessionAction(
-  session: WorkoutSession,
-  action: Action,
-  options: WorkoutDispatchOptions = {},
-): WorkoutSession {
-  const nextWorkout = applyWorkoutAction(session.present, action);
-  const shouldTrack =
-    options.track ?? !EPHEMERAL_WORKOUT_ACTIONS.has(action.type);
-
-  if (!shouldTrack) {
-    return { ...session, present: nextWorkout };
-  }
-
-  if (options.deferHistory) {
-    return {
-      ...session,
-      present: nextWorkout,
-      future: [],
-      pendingHistoryBase: session.pendingHistoryBase ?? session.present,
-    };
-  }
-
-  return pushWorkoutHistory(session, nextWorkout);
-}
-
-function pushWorkoutHistory(
-  session: WorkoutSession,
-  nextWorkout: Workout,
-): WorkoutSession {
-  const base = session.pendingHistoryBase ?? session.present;
-  return {
-    past: [...session.past, base].slice(-MAX_MOBILE_DRAFT_HISTORY),
-    present: nextWorkout,
-    future: [],
-    pendingHistoryBase: undefined,
-  };
-}
-
-function commitPendingWorkoutHistory(session: WorkoutSession): WorkoutSession {
-  if (!session.pendingHistoryBase) return session;
-  return {
-    ...session,
-    past: [...session.past, session.pendingHistoryBase].slice(
-      -MAX_MOBILE_DRAFT_HISTORY,
-    ),
-    future: [],
-    pendingHistoryBase: undefined,
-  };
-}
-
-function undoWorkoutSession(session: WorkoutSession): WorkoutSession {
-  if (session.pendingHistoryBase) {
-    return {
-      ...session,
-      present: session.pendingHistoryBase,
-      future: [session.present, ...session.future],
-      pendingHistoryBase: undefined,
-    };
-  }
-
-  const previous = session.past[session.past.length - 1];
-  if (!previous) return session;
-
-  return {
-    past: session.past.slice(0, -1),
-    present: previous,
-    future: [session.present, ...session.future],
-  };
-}
-
-function redoWorkoutSession(session: WorkoutSession): WorkoutSession {
-  const next = session.future[0];
-  if (!next) return session;
-
-  return {
-    past: [...session.past, session.present].slice(-MAX_MOBILE_DRAFT_HISTORY),
-    present: next,
-    future: session.future.slice(1),
-  };
-}
-
-async function readActiveWorkoutDraft(): Promise<StoredWorkoutDraft | null> {
-  try {
-    const database = await openLocalDatabase();
-    const raw = await readActiveWorkoutDraftJson(database);
-    const draft = parseStoredWorkoutDraft(raw);
-    if (raw && !draft) {
-      await quarantineActiveWorkoutDraftJson(
-        database,
-        raw,
-        "Stored workout draft could not be parsed by this app version.",
-      );
-      console.error("quarantined unreadable local workout draft");
-    }
-    return draft;
-  } catch (error) {
-    console.error("could not read local workout draft", error);
-    return null;
-  }
-}
-
-async function writeActiveWorkoutDraft(draft: StoredWorkoutDraft) {
-  await writeActiveWorkoutDraftJson(
-    await openLocalDatabase(),
-    JSON.stringify(draft),
-  );
-}
-
-async function clearActiveWorkoutDraft() {
-  try {
-    await clearActiveWorkoutDraftRow(await openLocalDatabase());
-  } catch {
-    // Draft cleanup should never block navigation after a save or discard.
-  }
-}
-
-function parseStoredWorkoutDraft(
-  raw: string | null,
-): StoredWorkoutDraft | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<StoredWorkoutDraft>;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      !parsed.workout ||
-      !Array.isArray(parsed.workout.exercises) ||
-      typeof parsed.savedAt !== "number"
-    ) {
-      return null;
-    }
-
-    const workout = ensureWorkoutSetIds(parsed.workout);
-
-    return {
-      workout: {
-        ...workout,
-        bodyWeightLb: normalizeBodyWeightLb(workout.bodyWeightLb),
-      },
-      completedAt:
-        typeof parsed.completedAt === "string" ? parsed.completedAt : null,
-      savedAt: parsed.savedAt,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function useAppDialog() {
-  const presentDialog = React.use(AppDialogContext);
-  if (!presentDialog) {
-    throw new Error("useAppDialog must be used inside AppDialogProvider");
-  }
-  return presentDialog;
-}
-
-function useAppModalLayerOpen() {
-  return React.use(AppModalLayerOpenContext);
-}
-
-function useRegisterAppModalLayer(open: boolean) {
-  const registerModal = React.use(AppModalLayerRegisterContext);
-
-  useEffect(() => {
-    if (!open || !registerModal) return undefined;
-    return registerModal();
-  }, [open, registerModal]);
-}
-
-function AppModalLayerProvider({ children }: { children: React.ReactNode }) {
-  const [openCount, setOpenCount] = useState(0);
-  const registerModal = useCallback(() => {
-    let released = false;
-    setOpenCount((count) => count + 1);
-
-    return () => {
-      if (released) return;
-      released = true;
-      setOpenCount((count) => Math.max(0, count - 1));
-    };
-  }, []);
-
-  return (
-    <AppModalLayerRegisterContext.Provider value={registerModal}>
-      <AppModalLayerOpenContext.Provider value={openCount > 0}>
-        {children}
-      </AppModalLayerOpenContext.Provider>
-    </AppModalLayerRegisterContext.Provider>
-  );
-}
-
-function AppModal({ visible, children, ...props }: ModalProps) {
-  useRegisterAppModalLayer(Boolean(visible));
-  return (
-    <Modal visible={visible} {...props}>
-      {children}
-    </Modal>
-  );
-}
-
-function AppDialogProvider({ children }: { children: React.ReactNode }) {
-  const [dialog, setDialog] = useState<AppDialogState | null>(null);
-  const presentDialog = useCallback((nextDialog: AppDialogState) => {
-    setDialog(nextDialog);
-  }, []);
-  const dismissDialog = useCallback(() => setDialog(null), []);
-
-  return (
-    <AppDialogContext.Provider value={presentDialog}>
-      {children}
-      <AppDialogModal dialog={dialog} onDismiss={dismissDialog} />
-    </AppDialogContext.Provider>
-  );
-}
-
-function AppDialogModal({
-  dialog,
-  onDismiss,
-}: {
-  dialog: AppDialogState | null;
-  onDismiss: () => void;
-}) {
-  if (!dialog) return null;
-
-  return (
-    <AppModal
-      visible
-      transparent
-      animationType="fade"
-      onRequestClose={onDismiss}
-    >
-      <DismissibleModalShade
-        onDismiss={onDismiss}
-        style={styles.confirmDialogShade}
-      >
-        <View
-          accessibilityRole="alert"
-          accessible={false}
-          accessibilityViewIsModal
-          style={styles.confirmDialog}
-        >
-          <View style={styles.confirmDialogCopy}>
-            <Text style={styles.confirmDialogTitle}>{dialog.title}</Text>
-            {dialog.message ? (
-              <Text style={styles.confirmDialogMessage}>{dialog.message}</Text>
-            ) : null}
-          </View>
-          <View style={styles.confirmDialogActions}>
-            {dialog.actions.map((action, index) => {
-              const variant = action.variant ?? "default";
-              return (
-                <Pressable
-                  key={`${action.label}-${index}`}
-                  accessibilityLabel={action.label}
-                  accessibilityRole="button"
-                  style={[
-                    styles.confirmDialogAction,
-                    variant === "primary"
-                      ? styles.confirmDialogActionPrimary
-                      : null,
-                  ]}
-                  testID={action.testID}
-                  onPress={() => {
-                    onDismiss();
-                    void action.onPress?.();
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.confirmDialogActionText,
-                      variant === "danger"
-                        ? styles.confirmDialogActionTextDanger
-                        : null,
-                      variant === "cancel"
-                        ? styles.confirmDialogActionTextMuted
-                        : null,
-                    ]}
-                  >
-                    {action.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </DismissibleModalShade>
-    </AppModal>
-  );
-}
-
 export function LiftMobileApp({
   getHeaders,
-  localDevUserId,
   accountId,
   onAccountDeleted,
-  onLocalDataReady,
+  onConnectCloud,
   onSignOut,
 }: {
   getHeaders?: () => Promise<Record<string, string>>;
-  localDevUserId?: string;
   accountId?: string;
   onAccountDeleted?: () => void;
-  onLocalDataReady?: () => void;
+  onConnectCloud?: () => void;
   onSignOut?: () => void;
 }) {
+  const requestedConfigurationKey = localWorkoutStoreConfigurationKey(
+    accountId,
+    Boolean(getHeaders),
+  );
   const [state, setState] = useState<
     | { status: "loading" }
     | {
         status: "ready";
         api: LocalWorkoutDataClient;
+        configurationKey: string;
         sync: LocalSyncCoordinator | null;
       }
     | { status: "error"; message: string }
   >({ status: "loading" });
   const [retryKey, setRetryKey] = useState(0);
+  const bootstrapGeneration = useRef(0);
   const [syncRefreshKey, setSyncRefreshKey] = useState(0);
   const [syncStatus, setSyncStatus] = useState<LocalSyncStatus | "local">(
     "local",
@@ -858,102 +378,34 @@ export function LiftMobileApp({
   }, [getHeaders]);
 
   useEffect(() => {
+    const generation = bootstrapGeneration.current + 1;
+    bootstrapGeneration.current = generation;
     let cancelled = false;
     let syncCoordinator: LocalSyncCoordinator | null = null;
+    setState({ status: "loading" });
+    if (!getHeaders) setSyncStatus("local");
 
     void (async () => {
       try {
-        let database = await openLocalDatabase();
-        const authAccountId = accountId;
-        let effectiveAccountId = localDevUserId;
-        let didImportProductionData = false;
-        const hasData = await hasLocalWorkoutData(database);
-        if (!effectiveAccountId && getHeaders) {
-          try {
-            const identityClient = createWorkoutApiClient({
-              baseUrl: mobileWorkoutApiBaseUrl,
-              getHeaders,
-            });
-            let syncCredentials =
-              await identityClient.getLocalSyncCredentials();
-            effectiveAccountId = syncCredentials.userId;
-
-            if (syncCredentials.enabled) {
-              const syncUrl = syncCredentials.url;
-              database = await reopenLocalDatabaseWithSync({
-                url: syncUrl,
-                authToken: async () => {
-                  if (
-                    syncCredentials.enabled &&
-                    syncCredentials.expiresAt.getTime() > Date.now() + 60_000
-                  ) {
-                    return syncCredentials.authToken;
-                  }
-
-                  const refreshed =
-                    await identityClient.getLocalSyncCredentials();
-                  if (!refreshed.enabled || refreshed.url !== syncUrl) {
-                    throw new Error("Workout sync is no longer available.");
-                  }
-                  syncCredentials = refreshed;
-                  return refreshed.authToken;
-                },
-              });
-              syncCoordinator = createLocalSyncCoordinator({
-                database,
-                onStatusChange: (status) => {
-                  if (!cancelled) setSyncStatus(status);
-                },
-                onPulled: () => {
-                  if (!cancelled) setSyncRefreshKey((value) => value + 1);
-                },
-                onError: (error) =>
-                  console.error("local workout sync unavailable", error),
-              });
-              await syncCoordinator.sync();
-            }
-          } catch (error) {
-            if (!hasData) throw error;
-            console.error("local workout sync unavailable", error);
-          }
-        }
-        if (effectiveAccountId) {
-          await bindOrAssertLocalAccount(database, effectiveAccountId, {
-            bindIfUnbound: hasData,
-            previousAccountIds: authAccountId ? [authAccountId] : [],
-          });
-        }
-        const importComplete = await isProductionImportComplete(
-          database,
-          effectiveAccountId,
-        );
-
-        if (!importComplete && mobileProductionImportUrl) {
-          const snapshot = await readProductionExportFile(
-            mobileProductionImportUrl,
-          );
-          await importProductionExport(database, snapshot, {
-            accountId: effectiveAccountId,
-          });
-          didImportProductionData = true;
-        } else if (!importComplete && (getHeaders || localDevUserId)) {
-          try {
-            const productionClient = createWorkoutApiClient({
-              baseUrl: mobileWorkoutApiBaseUrl,
-              getHeaders,
-            });
-            const snapshot = await productionClient.exportCurrentUserData();
-            await importProductionExport(database, snapshot, {
-              accountId: effectiveAccountId,
-            });
-            didImportProductionData = true;
-          } catch (error) {
-            if (!hasData) throw error;
-          }
-        }
-
-        if (didImportProductionData) {
-          await syncCoordinator?.sync();
+        const store = await bootstrapLocalWorkoutStore({
+          accountId,
+          getHeaders,
+          isCurrent: () =>
+            !cancelled && bootstrapGeneration.current === generation,
+          onSyncStatusChange: (status) => {
+            if (!cancelled) setSyncStatus(status);
+          },
+          onPulled: () => {
+            if (!cancelled) setSyncRefreshKey((value) => value + 1);
+          },
+          onSyncError: (error) =>
+            console.error("local workout sync unavailable", error),
+        });
+        const { database } = store;
+        syncCoordinator = store.syncCoordinator;
+        if (cancelled || bootstrapGeneration.current !== generation) {
+          syncCoordinator?.stop();
+          return;
         }
 
         const localClient = createLocalWorkoutDataClient(database, {
@@ -966,10 +418,10 @@ export function LiftMobileApp({
         }
 
         if (!cancelled) {
-          onLocalDataReady?.();
           setState({
             status: "ready",
             api: localClient,
+            configurationKey: requestedConfigurationKey,
             sync: syncCoordinator,
           });
         }
@@ -991,9 +443,8 @@ export function LiftMobileApp({
   }, [
     accountId,
     getHeaders,
-    localDevUserId,
     onAccountDeleted,
-    onLocalDataReady,
+    requestedConfigurationKey,
     retryKey,
   ]);
 
@@ -1020,35 +471,28 @@ export function LiftMobileApp({
     };
   }, [state]);
 
-  if (state.status === "loading") {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.page, { flex: 1, justifyContent: "center" }]}>
-          <ActivityIndicator color={palette.ink} />
-          <Text style={styles.mutedText}>opening local workout log...</Text>
-        </View>
-      </SafeAreaView>
-    );
+  if (
+    state.status === "loading" ||
+    (state.status === "ready" &&
+      !isLocalWorkoutStoreConfigurationCurrent(
+        state.configurationKey,
+        requestedConfigurationKey,
+      ))
+  ) {
+    return <StartupLoadingScreen message="opening local workout log..." />;
   }
 
   if (state.status === "error") {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.page, { flex: 1, justifyContent: "center" }]}>
-          <Text style={styles.title}>could not open workout log</Text>
-          <Text style={styles.mutedText}>{state.message}</Text>
-          <Pressable
-            accessibilityRole="button"
-            style={styles.textButton}
-            onPress={() => {
-              setState({ status: "loading" });
-              setRetryKey((value) => value + 1);
-            }}
-          >
-            <Text style={styles.textButtonText}>try again</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <StartupErrorScreen
+        message={state.message}
+        reference="local-data-open"
+        onRetry={() => {
+          setState({ status: "loading" });
+          setRetryKey((value) => value + 1);
+        }}
+        onSupport={() => void Linking.openURL("https://lift.makon.dev/support")}
+      />
     );
   }
 
@@ -1060,19 +504,39 @@ export function LiftMobileApp({
       deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
       getHeaders={getHeaders}
       onAccountDeleted={onAccountDeleted}
+      onBackUpNow={
+        getHeaders
+          ? () => {
+              if (state.sync) {
+                void state.sync.sync();
+                return;
+              }
+              setState({ status: "loading" });
+              setRetryKey((value) => value + 1);
+            }
+          : undefined
+      }
+      onConnectCloud={onConnectCloud}
       onSignOut={onSignOut}
     />
   );
 }
 
-function LiftMobileAppReady({
+export function LiftMobileAppReady({
   api,
   syncRefreshKey,
   syncStatus,
   deleteRemoteAccount,
   getHeaders,
   onAccountDeleted,
+  onBackUpNow,
+  onConnectCloud,
   onSignOut,
+  debugInitialState,
+  debugInitialNowMs,
+  debugInitialScreen,
+  debugInitialPendingDraft,
+  debugInitialHomeWorkouts,
 }: {
   api: LocalWorkoutDataClient;
   syncRefreshKey: number;
@@ -1080,14 +544,31 @@ function LiftMobileAppReady({
   deleteRemoteAccount?: () => Promise<void>;
   getHeaders?: () => Promise<Record<string, string>>;
   onAccountDeleted?: () => void;
+  onBackUpNow?: () => void;
+  onConnectCloud?: () => void;
   onSignOut?: () => void;
+  debugInitialState?: MobileWorkoutInitialState;
+  debugInitialNowMs?: number;
+  debugInitialScreen?: AppScreen;
+  debugInitialPendingDraft?: PendingWorkoutDraft | null;
+  debugInitialHomeWorkouts?: RecentWorkout[];
 }) {
-  const [screen, setScreen] = useState<AppScreen>(() => ({
-    name: "home",
-    refreshKey: 0,
-  }));
+  const initialState = __DEV__ ? debugInitialState : undefined;
+  const initialNowMs = __DEV__ ? debugInitialNowMs : undefined;
+  const initialScreen = __DEV__ ? debugInitialScreen : undefined;
+  const initialPendingDraft = __DEV__
+    ? (debugInitialPendingDraft ?? null)
+    : null;
+  const initialHomeWorkouts = __DEV__ ? (debugInitialHomeWorkouts ?? []) : [];
+  const [screen, setScreen] = useState<AppScreen>(
+    () =>
+      initialScreen ?? {
+        name: "home",
+        refreshKey: 0,
+      },
+  );
   const [pendingDraft, setPendingDraft] = useState<PendingWorkoutDraft | null>(
-    null,
+    initialPendingDraft,
   );
   const checkedDraftRef = useRef(false);
   const returnHome = useCallback(() => {
@@ -1111,6 +592,7 @@ function LiftMobileAppReady({
   }, []);
 
   useEffect(() => {
+    if (initialState?.freezeEffects) return;
     if (checkedDraftRef.current) return;
     checkedDraftRef.current = true;
 
@@ -1123,7 +605,7 @@ function LiftMobileAppReady({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialState?.freezeEffects]);
 
   useEffect(() => {
     if (Platform.OS !== "ios") return undefined;
@@ -1178,6 +660,7 @@ function LiftMobileAppReady({
         getHeaders={getHeaders}
         recoverLabel="home"
         onRecover={returnHome}
+        initialErrorMessage={initialState?.workoutErrorMessage}
       >
         <WorkoutScreen
           api={api}
@@ -1191,6 +674,8 @@ function LiftMobileAppReady({
           contextLabel={screen.contextLabel}
           onBack={returnHome}
           onActiveDraftSaved={setPendingDraft}
+          initialState={initialState}
+          initialNowMs={initialNowMs}
         />
       </MobileErrorBoundary>
     ) : (
@@ -1201,6 +686,8 @@ function LiftMobileAppReady({
         pendingDraft={pendingDraft}
         deleteRemoteAccount={getHeaders ? deleteRemoteAccount : undefined}
         onAccountDeleted={onAccountDeleted}
+        onBackUpNow={onBackUpNow}
+        onConnectCloud={onConnectCloud}
         onSignOut={onSignOut}
         onContinueDraft={restoreDraft}
         onStartBlank={(bodyWeightLb) =>
@@ -1232,6 +719,9 @@ function LiftMobileAppReady({
             contextLabel: `editing past workout #${workoutId}`,
           })
         }
+        initialState={initialState}
+        initialNowMs={initialNowMs}
+        initialWorkouts={initialHomeWorkouts}
       />
     );
 
@@ -1249,11 +739,16 @@ function HomeScreen({
   pendingDraft,
   deleteRemoteAccount,
   onAccountDeleted,
+  onBackUpNow,
+  onConnectCloud,
   onSignOut,
   onContinueDraft,
   onStartBlank,
   onStartPrepared,
   onEditWorkout,
+  initialState,
+  initialNowMs,
+  initialWorkouts,
 }: {
   api: WorkoutApiClient;
   refreshKey: number;
@@ -1261,29 +756,45 @@ function HomeScreen({
   pendingDraft: PendingWorkoutDraft | null;
   deleteRemoteAccount?: () => Promise<void>;
   onAccountDeleted?: () => void;
+  onBackUpNow?: () => void;
+  onConnectCloud?: () => void;
   onSignOut?: () => void;
   onContinueDraft: (draft: StoredWorkoutDraft) => void;
   onStartBlank: (bodyWeightLb: number | null) => void;
   onStartPrepared: (prepared: PreparedWorkout) => void;
   onEditWorkout: (workoutId: string, details: WorkoutDetails) => void;
+  initialState?: MobileWorkoutInitialState;
+  initialNowMs?: number;
+  initialWorkouts?: RecentWorkout[];
 }) {
   const insets = useSafeAreaInsets();
   const presentDialog = useAppDialog();
-  const [workouts, setWorkouts] = useState<RecentWorkout[]>([]);
-  const [limit, setLimit] = useState(10);
+  const [workouts, setWorkouts] = useState<RecentWorkout[]>(
+    () => initialWorkouts ?? [],
+  );
+  const [limit, setLimit] = useState(initialState?.home?.limit ?? 10);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copyingWorkoutId, setCopyingWorkoutId] = useState<string | null>(null);
-  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
+  const [copyingWorkoutId, setCopyingWorkoutId] = useState<string | null>(
+    initialState?.home?.copyingWorkoutId ?? null,
+  );
+  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(
+    initialState?.home?.editingWorkoutId ?? null,
+  );
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<string | null>(
     null,
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [settingsOpen, setSettingsOpen] = useState(
+    initialState?.home?.settingsOpen ?? false,
+  );
+  const [deletingAccount, setDeletingAccount] = useState(
+    initialState?.home?.deletingAccount ?? false,
+  );
+  const [now, setNow] = useState(() => initialNowMs ?? Date.now());
   const loadRequestIdRef = useRef(0);
   const navigationRequestIdRef = useRef(0);
+  const initialDialogPresentedRef = useRef(false);
   const bottomDockInset = Math.max(insets.bottom, 12);
   const latestBodyWeightLb = useMemo(
     () =>
@@ -1336,10 +847,11 @@ function HomeScreen({
   }, [limit, loadWorkouts, refreshKey]);
 
   useEffect(() => {
+    if (initialState?.freezeEffects) return undefined;
     if (!pendingDraft || pendingDraft.completedAt) return undefined;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [pendingDraft]);
+  }, [initialState?.freezeEffects, pendingDraft]);
 
   const copyWorkout = async (workout: RecentWorkout) => {
     const requestId = navigationRequestIdRef.current + 1;
@@ -1471,29 +983,49 @@ function HomeScreen({
     });
   };
 
+  useEffect(() => {
+    if (initialDialogPresentedRef.current) return;
+    if (initialState?.home?.dialog === "delete-workout" && workouts[0]) {
+      initialDialogPresentedRef.current = true;
+      confirmDeleteWorkout(workouts[0]);
+    } else if (initialState?.home?.dialog === "delete-account") {
+      initialDialogPresentedRef.current = true;
+      setSettingsOpen(false);
+      presentDialog({
+        title: "Delete account?",
+        message:
+          "This permanently deletes your Lift Prog account, workouts, exercises, and saved notes.",
+        actions: [
+          { label: "cancel", variant: "cancel" },
+          { label: "delete account", variant: "danger" },
+        ],
+      });
+    }
+  }, [initialState, presentDialog, workouts]);
+
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <View style={styles.topActions}>
         <Pressable
           accessibilityLabel="Start new workout"
           accessibilityRole="button"
+          hitSlop={COMPACT_HIT_SLOP}
           style={styles.iconButton}
           testID="home-start-new-workout"
           onPress={() => onStartBlank(latestBodyWeightLb)}
         >
           <Text style={styles.iconButtonText}>+</Text>
         </Pressable>
-        {onSignOut ? (
-          <Pressable
-            accessibilityLabel="Open settings"
-            accessibilityRole="button"
-            style={styles.iconButton}
-            testID="home-settings"
-            onPress={() => setSettingsOpen(true)}
-          >
-            <Icon name="settings-outline" />
-          </Pressable>
-        ) : null}
+        <Pressable
+          accessibilityLabel="Open settings"
+          accessibilityRole="button"
+          hitSlop={COMPACT_HIT_SLOP}
+          style={styles.iconButton}
+          testID="home-settings"
+          onPress={() => setSettingsOpen(true)}
+        >
+          <Icon name="settings-outline" />
+        </Pressable>
       </View>
       <ScrollView
         contentContainerStyle={[
@@ -1521,9 +1053,22 @@ function HomeScreen({
           </View>
         ) : null}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (
+          <View>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable
+              accessibilityLabel="Retry loading workouts"
+              accessibilityRole="button"
+              style={styles.textButton}
+              testID="home-retry-workouts"
+              onPress={() => void loadWorkouts(limit)}
+            >
+              <Text style={styles.textButtonText}>try again</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
-        {!loading && workouts.length === 0 ? (
+        {!loading && !error && workouts.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.historyTitle}>no workouts yet</Text>
             <Text style={styles.mutedText}>
@@ -1588,12 +1133,18 @@ function HomeScreen({
         deletingAccount={deletingAccount}
         onClose={() => setSettingsOpen(false)}
         onDeleteAccount={confirmDeleteAccount}
+        onBackUpNow={onBackUpNow}
+        onConnectCloud={onConnectCloud}
         onOpenPrivacy={() => openExternalUrl("https://lift.makon.dev/privacy")}
         onOpenSupport={() => openExternalUrl("https://lift.makon.dev/support")}
-        onSignOut={() => {
-          setSettingsOpen(false);
-          onSignOut?.();
-        }}
+        onSignOut={
+          onSignOut
+            ? () => {
+                setSettingsOpen(false);
+                onSignOut();
+              }
+            : undefined
+        }
       />
     </SafeAreaView>
   );
@@ -1605,6 +1156,8 @@ function HomeSettingsModal({
   deletingAccount,
   onClose,
   onDeleteAccount,
+  onBackUpNow,
+  onConnectCloud,
   onOpenPrivacy,
   onOpenSupport,
   onSignOut,
@@ -1614,10 +1167,21 @@ function HomeSettingsModal({
   deletingAccount: boolean;
   onClose: () => void;
   onDeleteAccount: () => void;
+  onBackUpNow?: () => void;
+  onConnectCloud?: () => void;
   onOpenPrivacy: () => void;
   onOpenSupport: () => void;
   onSignOut?: () => void;
 }) {
+  const cloudStatus =
+    syncStatus === "local"
+      ? "stored on this iPhone"
+      : syncStatus === "syncing"
+        ? "syncing"
+        : syncStatus === "synced"
+          ? "up to date"
+          : "waiting for connection";
+
   return (
     <AppModal
       visible={visible}
@@ -1629,24 +1193,48 @@ function HomeSettingsModal({
         onDismiss={onClose}
         style={styles.commandMenuShade}
       >
-        <View style={[styles.commandMenuPanel, styles.homeSettingsPanel]}>
+        <View
+          accessible={false}
+          accessibilityRole="menu"
+          accessibilityViewIsModal
+          style={[styles.commandMenuPanel, styles.homeSettingsPanel]}
+        >
           <Text style={styles.commandMenuTitle}>settings</Text>
-          <Text style={styles.mutedText}>
-            {syncStatus === "local"
-              ? "data stored on this iPhone"
-              : syncStatus === "syncing"
-                ? "cloud backup syncing"
-                : syncStatus === "synced"
-                  ? "cloud backup up to date"
-                  : "cloud backup waiting for connection"}
-          </Text>
+          {onConnectCloud ? (
+            <CommandMenuItem
+              compact
+              detail={cloudStatus}
+              icon="cloud-upload-outline"
+              label="Connect Cloud Backup"
+              onPress={() => {
+                onClose();
+                onConnectCloud();
+              }}
+              testID="home-settings-connect-cloud"
+            />
+          ) : null}
+          {onBackUpNow ? (
+            <CommandMenuItem
+              compact
+              detail={cloudStatus}
+              icon="cloud-upload-outline"
+              label="Back Up Now"
+              onPress={() => {
+                onClose();
+                onBackUpNow();
+              }}
+              testID="home-settings-back-up-now"
+            />
+          ) : null}
           <CommandMenuItem
+            compact
             icon="mail-outline"
             label="Support"
             onPress={onOpenSupport}
             testID="home-settings-support"
           />
           <CommandMenuItem
+            compact
             icon="document-text-outline"
             label="Privacy Policy"
             onPress={onOpenPrivacy}
@@ -1654,19 +1242,24 @@ function HomeSettingsModal({
           />
           {onSignOut ? (
             <CommandMenuItem
+              compact
               icon="log-out-outline"
               label="Sign Out"
               onPress={onSignOut}
               testID="home-settings-sign-out"
             />
           ) : null}
-          <CommandMenuItem
-            danger
-            icon="trash-outline"
-            label={deletingAccount ? "Deleting Account" : "Delete Account"}
-            onPress={deletingAccount ? () => undefined : onDeleteAccount}
-            testID="home-settings-delete-account"
-          />
+          {syncStatus !== "local" ? (
+            <CommandMenuItem
+              busy={deletingAccount}
+              compact
+              danger
+              icon="trash-outline"
+              label="Delete Account"
+              onPress={deletingAccount ? () => undefined : onDeleteAccount}
+              testID="home-settings-delete-account"
+            />
+          ) : null}
         </View>
       </DismissibleModalShade>
     </AppModal>
@@ -1757,75 +1350,6 @@ function ActiveWorkoutDraftBanner({
   );
 }
 
-function DismissibleModalShade({
-  children,
-  keyboardAvoiding = false,
-  onDismiss,
-  style = styles.modalShade,
-}: {
-  children: React.ReactNode;
-  keyboardAvoiding?: boolean;
-  onDismiss: () => void;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const content = (
-    <Pressable
-      accessible={false}
-      style={styles.dismissibleModalContent}
-      onPress={(event) => event.stopPropagation()}
-    >
-      {children}
-    </Pressable>
-  );
-
-  return (
-    <Pressable
-      accessibilityViewIsModal
-      accessible={false}
-      style={style}
-      onPress={onDismiss}
-    >
-      {keyboardAvoiding ? (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.keyboardAvoidingModalContent}
-        >
-          {content}
-        </KeyboardAvoidingView>
-      ) : (
-        content
-      )}
-    </Pressable>
-  );
-}
-
-function useNativeKeyboardFrame() {
-  const [frame, setFrame] = useState({ height: 0, visible: false });
-
-  useEffect(() => {
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const show = Keyboard.addListener(showEvent, (event) =>
-      setFrame({
-        height: Math.max(0, event.endCoordinates.height),
-        visible: true,
-      }),
-    );
-    const hide = Keyboard.addListener(hideEvent, () =>
-      setFrame((current) => ({ ...current, visible: false })),
-    );
-
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-
-  return frame;
-}
-
 function WorkoutHistoryRow({
   workout,
   copying,
@@ -1854,13 +1378,14 @@ function WorkoutHistoryRow({
           <Pressable
             accessibilityLabel={`Copy ${workout.name} into a new workout`}
             accessibilityRole="button"
+            hitSlop={COMPACT_HIT_SLOP}
             style={styles.iconButtonSmall}
             testID={`home-copy-workout-${workout.id}`}
             onPress={onCopy}
             disabled={copying}
           >
             {copying ? (
-              <Text style={styles.iconButtonTextSmall}>...</Text>
+              <ActivityIndicator color={palette.muted} size="small" />
             ) : (
               <Icon name="copy-outline" size={20} />
             )}
@@ -1868,13 +1393,14 @@ function WorkoutHistoryRow({
           <Pressable
             accessibilityLabel={`Edit ${workout.name}`}
             accessibilityRole="button"
+            hitSlop={COMPACT_HIT_SLOP}
             style={styles.iconButtonSmall}
             testID={`home-edit-workout-${workout.id}`}
             onPress={onEdit}
             disabled={editing}
           >
             {editing ? (
-              <Text style={styles.iconButtonTextSmall}>...</Text>
+              <ActivityIndicator color={palette.muted} size="small" />
             ) : (
               <Icon name="pencil-outline" size={20} />
             )}
@@ -1882,13 +1408,14 @@ function WorkoutHistoryRow({
           <Pressable
             accessibilityLabel={`Delete ${workout.name}`}
             accessibilityRole="button"
+            hitSlop={COMPACT_HIT_SLOP}
             style={styles.iconButtonSmall}
             testID={`home-delete-workout-${workout.id}`}
             onPress={onDelete}
             disabled={deleting}
           >
             {deleting ? (
-              <Text style={styles.iconButtonTextSmall}>...</Text>
+              <ActivityIndicator color={palette.muted} size="small" />
             ) : (
               <Icon name="trash-outline" size={20} />
             )}
@@ -1909,7 +1436,9 @@ function WorkoutHistoryRow({
         return (
           <View key={summary} style={styles.historySummaryRow}>
             <Text style={styles.historySummaryName}>{exerciseName}</Text>
-            <Text style={styles.historySummarySets}>{sets}</Text>
+            <Text style={styles.historySummarySets}>
+              {formatCompactHistorySets(sets)}
+            </Text>
           </View>
         );
       })}
@@ -1927,6 +1456,13 @@ function splitExerciseSummary(summary: string) {
   };
 }
 
+function formatCompactHistorySets(sets: string) {
+  return sets
+    .replace(/\s*x\s*/g, "x")
+    .replace(/\s*\+\s*/g, "+")
+    .replace(/,\s*/g, ",");
+}
+
 function WorkoutScreen({
   api,
   prepared,
@@ -1939,6 +1475,8 @@ function WorkoutScreen({
   contextLabel,
   onBack,
   onActiveDraftSaved,
+  initialState,
+  initialNowMs,
 }: {
   api: WorkoutApiClient;
   prepared: PreparedWorkout;
@@ -1951,6 +1489,8 @@ function WorkoutScreen({
   contextLabel?: string;
   onBack: () => void;
   onActiveDraftSaved?: (draft: StoredWorkoutDraft) => void;
+  initialState?: MobileWorkoutInitialState;
+  initialNowMs?: number;
 }) {
   const insets = useSafeAreaInsets();
   const presentDialog = useAppDialog();
@@ -1964,19 +1504,27 @@ function WorkoutScreen({
   const isPastReview = viewMode === "past-review";
   const isPastEdit = viewMode === "past-edit";
   const canEditWorkout = isActiveWorkout || isPastEdit;
-  const [session, setSession] = useState(() =>
-    createWorkoutSession(
-      draftWorkout
-        ? ensureWorkoutSetIds(draftWorkout)
-        : createWorkoutState(prepared, {
-            startedAt,
-            notes: workoutNote,
-            isInProgress: !isEditingPastWorkout,
-            preservePreparedValues: isEditingPastWorkout,
-          }),
-    ),
-  );
+  const [session, setSession] = useState(() => {
+    const initialWorkout = draftWorkout
+      ? ensureWorkoutSetIds(draftWorkout)
+      : createWorkoutState(prepared, {
+          startedAt,
+          notes: workoutNote,
+          isInProgress: !isEditingPastWorkout,
+          preservePreparedValues: isEditingPastWorkout,
+        });
+    return createWorkoutSession(
+      isActiveWorkout
+        ? normalizeActiveWorkoutRestDefaults(initialWorkout)
+        : initialWorkout,
+    );
+  });
   const workout = session.present;
+  const initialPrimarySetId =
+    workout.exercises[0]?.sets[1]?.clientId ??
+    workout.exercises[0]?.sets[0]?.clientId ??
+    null;
+  const initialPauseSetId = workout.exercises[0]?.sets[3]?.clientId ?? null;
   const canUndo =
     session.past.length > 0 || Boolean(session.pendingHistoryBase);
   const canRedo = session.future.length > 0;
@@ -1985,52 +1533,119 @@ function WorkoutScreen({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newExerciseName, setNewExerciseName] = useState("");
+  const [newExerciseName, setNewExerciseName] = useState(
+    initialState?.workout?.newExerciseName ?? "",
+  );
   const [addingExercise, setAddingExercise] = useState(false);
   const [exerciseSuggestions, setExerciseSuggestions] = useState<
     ExerciseSuggestion[]
   >([]);
   const [exerciseSuggestionsLoaded, setExerciseSuggestionsLoaded] =
     useState(false);
-  const [setEditor, setSetEditor] = useState<SetEditTarget | null>(null);
-  const [noteEditor, setNoteEditor] = useState<NoteEditTarget | null>(null);
-  const [inlineNoteDraft, setInlineNoteDraft] = useState<string | null>(null);
-  const [exercisePlanOpen, setExercisePlanOpen] = useState(false);
-  const [workoutMenuOpen, setWorkoutMenuOpen] = useState(false);
+  const [setEditor, setSetEditor] = useState<SetEditTarget | null>(() => {
+    const initialEditor = initialState?.workout?.setEditor;
+    if (
+      initialPrimarySetId &&
+      initialEditor &&
+      initialEditor !== "pause-reps"
+    ) {
+      return {
+        exerciseIndex: 0,
+        setId: initialPrimarySetId,
+        field: initialEditor === "reps" ? "reps" : "weight",
+      };
+    }
+    if (initialPauseSetId && initialEditor === "pause-reps") {
+      return { exerciseIndex: 0, setId: initialPauseSetId, field: "reps" };
+    }
+    return null;
+  });
+  const [noteEditor, setNoteEditor] = useState<NoteEditTarget | null>(() => {
+    const initialEditor = initialState?.workout?.noteEditor;
+    if (initialEditor === "pinned")
+      return { kind: "exercise", exerciseIndex: 0 };
+    if (initialEditor === "workout-exercise")
+      return { kind: "workout-exercise", exerciseIndex: 0 };
+    if (initialEditor === "set" && initialPrimarySetId) {
+      return {
+        kind: "set",
+        exerciseIndex: 0,
+        setId: initialPrimarySetId,
+      };
+    }
+    return null;
+  });
+  const [inlineNoteDraft, setInlineNoteDraft] = useState<string | null>(
+    initialState?.workout?.noteDraft ?? null,
+  );
+  const [exercisePlanOpen, setExercisePlanOpen] = useState(
+    initialState?.workout?.exercisePlanOpen ?? false,
+  );
+  const [workoutMenuOpen, setWorkoutMenuOpen] = useState(
+    initialState?.workout?.workoutMenuOpen ?? false,
+  );
   const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<MenuAnchor | null>(
     null,
   );
-  const [workoutNameEditing, setWorkoutNameEditing] = useState(false);
-  const [workoutNameDraft, setWorkoutNameDraft] = useState<string | null>(null);
-  const [workoutNoteEditing, setWorkoutNoteEditing] = useState(false);
-  const [workoutNoteDraft, setWorkoutNoteDraft] = useState<string | null>(null);
-  const [workoutTimeAdjustOpen, setWorkoutTimeAdjustOpen] = useState(false);
-  const [workoutRestTimesOpen, setWorkoutRestTimesOpen] = useState(false);
+  const [workoutNameEditing, setWorkoutNameEditing] = useState(
+    initialState?.workout?.workoutNameEditing ?? false,
+  );
+  const [workoutNameDraft, setWorkoutNameDraft] = useState<string | null>(
+    initialState?.workout?.workoutNameEditing ? workout.name : null,
+  );
+  const [workoutNoteEditing, setWorkoutNoteEditing] = useState(
+    initialState?.workout?.workoutNoteDraft != null,
+  );
+  const [workoutNoteDraft, setWorkoutNoteDraft] = useState<string | null>(
+    initialState?.workout?.workoutNoteDraft ?? null,
+  );
+  const [workoutTimeAdjustOpen, setWorkoutTimeAdjustOpen] = useState(
+    initialState?.workout?.timingOpen ?? false,
+  );
+  const [workoutRestTimesOpen, setWorkoutRestTimesOpen] = useState(
+    initialState?.workout?.workoutRestTimesOpen ?? false,
+  );
   const [exerciseRestTimesTarget, setExerciseRestTimesTarget] = useState<
     number | null
-  >(null);
-  const [timeEditor, setTimeEditor] = useState<TimeEditTarget | null>(null);
-  const [finishPreviewOpen, setFinishPreviewOpen] = useState(false);
+  >(initialState?.workout?.exerciseRestTimesOpen ? 0 : null);
+  const [timeEditor, setTimeEditor] = useState<TimeEditTarget | null>(
+    initialState?.workout?.timeEditor ?? null,
+  );
+  const [finishPreviewOpen, setFinishPreviewOpen] = useState(
+    initialState?.workout?.finishPreviewOpen ?? false,
+  );
   const [watchSnapshotRequestNonce, setWatchSnapshotRequestNonce] = useState(0);
   const [bodyWeightEntry, setBodyWeightEntry] = useState<string | null>(null);
-  const [bodyWeightDialogOpen, setBodyWeightDialogOpen] = useState(false);
+  const [bodyWeightDialogOpen, setBodyWeightDialogOpen] = useState(
+    initialState?.workout?.bodyWeightDialog != null,
+  );
   const [bodyWeightDialogError, setBodyWeightDialogError] = useState<
     string | null
-  >(null);
-  const [bodyWeightHealthLoading, setBodyWeightHealthLoading] = useState(false);
+  >(initialState?.workout?.bodyWeightDialog?.error ?? null);
+  const [bodyWeightHealthLoading, setBodyWeightHealthLoading] = useState(
+    initialState?.workout?.bodyWeightDialog?.loading ?? false,
+  );
   const [healthWorkout, setHealthWorkout] = useState<HealthWorkoutState>({
     saving: false,
     message: null,
   });
   const [timerStatus, setTimerStatus] = useState<string | null>(null);
-  const [restTimerDurationSeconds, setRestTimerDurationSeconds] =
-    useState(REST_TIMER_SECONDS);
-  const [restTimerEndsAt, setRestTimerEndsAt] = useState<number | null>(null);
-  const [restTimerDurationOpen, setRestTimerDurationOpen] = useState(false);
+  const [restTimerDurationSeconds, setRestTimerDurationSeconds] = useState(
+    initialState?.workout?.restTimer?.durationSeconds ?? REST_TIMER_SECONDS,
+  );
+  const [restTimerEndsAt, setRestTimerEndsAt] = useState<number | null>(
+    initialState?.workout?.restTimer?.runningSeconds != null
+      ? (initialNowMs ?? Date.now()) +
+          initialState.workout.restTimer.runningSeconds * 1000
+      : null,
+  );
+  const [restTimerDurationOpen, setRestTimerDurationOpen] = useState(
+    initialState?.workout?.restTimer?.picker != null,
+  );
   const [restTimerDurationAnchor, setRestTimerDurationAnchor] =
     useState<MenuAnchor | null>(null);
   const [planDragging, setPlanDragging] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => initialNowMs ?? Date.now());
   const draftWriteGenerationRef = useRef(0);
   const draftWritePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const draftWritesSuppressedRef = useRef(false);
@@ -2058,12 +1673,82 @@ function WorkoutScreen({
     number | null
   >(null);
   const [setEditorCoveredHeight, setSetEditorCoveredHeight] = useState(0);
+  const initialDialogPresentedRef = useRef(false);
 
   useEffect(() => {
+    const initialDialog = initialState?.workout?.dialog;
+    if (initialDialogPresentedRef.current || !initialDialog) return;
+    const dialog =
+      initialDialog === "delete-set"
+        ? {
+            title: "Delete set?",
+            message: "The set and its pause segments will be removed.",
+            actions: [
+              { label: "cancel", variant: "cancel" as const },
+              { label: "delete", variant: "danger" as const },
+            ],
+          }
+        : initialDialog === "delete-pause"
+          ? {
+              title: "Delete pause reps?",
+              message: "Only this reps-after-pause segment will be removed.",
+              actions: [
+                { label: "cancel", variant: "cancel" as const },
+                { label: "delete", variant: "danger" as const },
+              ],
+            }
+          : initialDialog === "incomplete-sets"
+            ? {
+                title: "Incomplete sets",
+                message:
+                  "Pull-ups: set 2\nRows: set 2\nDumbbell bicep curl: set 1, set 2",
+                actions: [
+                  { label: "return", variant: "cancel" as const },
+                  { label: "complete all", variant: "default" as const },
+                  { label: "continue", variant: "primary" as const },
+                ],
+              }
+            : initialDialog === "remove-exercise"
+              ? {
+                  title: "Remove Pull-ups?",
+                  message: "Its sets and workout note will be removed.",
+                  actions: [
+                    { label: "cancel", variant: "cancel" as const },
+                    { label: "remove", variant: "danger" as const },
+                  ],
+                }
+              : initialDialog === "close-workout"
+                ? {
+                    title: "Close workout?",
+                    message:
+                      "This workout draft will stay saved on this device.",
+                    actions: [
+                      { label: "keep editing", variant: "cancel" as const },
+                      { label: "close", variant: "primary" as const },
+                      { label: "discard", variant: "danger" as const },
+                    ],
+                  }
+                : initialDialog === "change-set-kind"
+                  ? {
+                      title: "Change set 1?",
+                      message: "Make this warm-up set?",
+                      actions: [
+                        { label: "cancel", variant: "cancel" as const },
+                        { label: "change", variant: "primary" as const },
+                      ],
+                    }
+                  : null;
+    if (!dialog) return;
+    initialDialogPresentedRef.current = true;
+    presentDialog(dialog);
+  }, [initialState, presentDialog]);
+
+  useEffect(() => {
+    if (initialState?.freezeEffects) return undefined;
     const tickMs = restTimerEndsAt == null && completedAt ? 30_000 : 1_000;
     const timer = setInterval(() => setNow(Date.now()), tickMs);
     return () => clearInterval(timer);
-  }, [completedAt, restTimerEndsAt]);
+  }, [initialState?.freezeEffects, completedAt, restTimerEndsAt]);
 
   useEffect(
     () => () => {
@@ -2075,6 +1760,7 @@ function WorkoutScreen({
   );
 
   useEffect(() => {
+    if (initialState?.freezeEffects) return;
     if (isEditingPastWorkout || workout.exercises.length === 0) return;
 
     const generation = draftWriteGenerationRef.current + 1;
@@ -2111,7 +1797,7 @@ function WorkoutScreen({
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [completedAt, isEditingPastWorkout, workout]);
+  }, [initialState?.freezeEffects, completedAt, isEditingPastWorkout, workout]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2168,11 +1854,16 @@ function WorkoutScreen({
   }, [dispatch]);
 
   useEffect(() => {
+    if (initialState?.freezeEffects) return;
     if (isEditingPastWorkout) return;
     if (Platform.OS !== "ios" || !isHealthAvailable()) return;
 
     void applyLatestHealthBodyWeight().catch(() => undefined);
-  }, [applyLatestHealthBodyWeight, isEditingPastWorkout]);
+  }, [
+    applyLatestHealthBodyWeight,
+    initialState?.freezeEffects,
+    isEditingPastWorkout,
+  ]);
 
   const moveExerciseTo = useCallback(
     (exerciseIndex: number, targetIndex: number) => {
@@ -2196,9 +1887,20 @@ function WorkoutScreen({
         preparedExercise.exercises as PreviousExerciseData[],
       );
       if (!exercise) return;
+      const exerciseRestTimes = {
+        warmupSeconds:
+          exercise.restTimes?.warmupSeconds ??
+          normalizeRestTimes(workout.restTimes).warmupSeconds,
+        workingSeconds:
+          exercise.restTimes?.workingSeconds ??
+          normalizeRestTimes(workout.restTimes).workingSeconds,
+      };
       dispatch({
         type: "ADD_EXERCISE",
-        exercise: resetExerciseCompletion(exercise),
+        exercise: applyDefaultRestBoundaries(
+          resetExerciseCompletion(exercise),
+          exerciseRestTimes,
+        ),
       });
       setNewExerciseName("");
     } catch (addError) {
@@ -2898,10 +2600,16 @@ function WorkoutScreen({
     startRestTimer();
   };
   const startRestTimerRef = useRef(startRestTimer);
+  const startRestTimerIfIdle = (durationSeconds?: number) => {
+    if (restTimerEndsAt != null || restTimerTimeoutRef.current) return;
+    startRestTimer(durationSeconds);
+  };
+  const startRestTimerIfIdleRef = useRef(startRestTimerIfIdle);
 
   useEffect(() => {
     startRestTimerRef.current = startRestTimer;
-  }, [startRestTimer]);
+    startRestTimerIfIdleRef.current = startRestTimerIfIdle;
+  }, [startRestTimer, startRestTimerIfIdle]);
 
   const restTimerRemainingSeconds =
     restTimerEndsAt == null ? null : Math.ceil((restTimerEndsAt - now) / 1000);
@@ -2935,6 +2643,7 @@ function WorkoutScreen({
     workout.exercises.length,
   );
   useEffect(() => {
+    if (initialState?.freezeEffects) return;
     if (Platform.OS !== "ios") return;
 
     const subscription = addWatchWorkoutCommandListener(
@@ -3030,11 +2739,11 @@ function WorkoutScreen({
           });
           if (command.field === "weight") {
             dispatch({
-              type: "UPDATE_SET_WEIGHT",
+              type: "REPLACE_EXERCISE_SETS",
               exerciseIndex: target.exerciseIndex,
-              setIndex,
-              weight: value,
-              preserveCompleted: true,
+              sets: materializeEditedExerciseSets(exercise, setIndex, {
+                weight: value,
+              }),
             });
           } else {
             dispatch({
@@ -3064,7 +2773,7 @@ function WorkoutScreen({
             getEffectiveExerciseRestTimes(workout, exercise),
           );
           if (restSeconds != null) {
-            startRestTimerRef.current(restSeconds);
+            startRestTimerIfIdleRef.current(restSeconds);
           }
           const nextTarget = getNextWatchSetTargetAfterCompletion(
             workout.exercises,
@@ -3143,7 +2852,11 @@ function WorkoutScreen({
     void updateWatchWorkoutSnapshot(watchWorkoutSnapshot).catch(
       () => undefined,
     );
-  }, [watchSnapshotRequestNonce, watchWorkoutSnapshot]);
+  }, [
+    initialState?.freezeEffects,
+    watchSnapshotRequestNonce,
+    watchWorkoutSnapshot,
+  ]);
 
   const showExerciseTabs = workout.exercises.length > 0;
   const setKeyboardOpen = canEditWorkout && Boolean(setEditor);
@@ -3218,6 +2931,7 @@ function WorkoutScreen({
       >
         <View style={styles.exercisePagerPageBody}>
           <ExerciseSection
+            initialState={initialState}
             exercise={exercise}
             exerciseIndex={exerciseIndex}
             inlineNoteDraft={inlineNoteDraft}
@@ -3258,7 +2972,7 @@ function WorkoutScreen({
             onStartInlineNoteEdit={startInlineNoteEdit}
             onStartTextEdit={beginTextEditing}
             onStartRestTimer={(durationSeconds) => {
-              startRestTimer(durationSeconds);
+              startRestTimerIfIdle(durationSeconds);
             }}
             onOpenRestTimes={(targetExerciseIndex) => {
               setExerciseRestTimesTarget(targetExerciseIndex);
@@ -3340,6 +3054,10 @@ function WorkoutScreen({
             onUndo={() => setSession(undoWorkoutSession)}
           />
         )}
+
+        {contextLabel ? (
+          <Text style={styles.workoutModeLabel}>{contextLabel}</Text>
+        ) : null}
 
         <WorkoutTitleSection
           canEditWorkout={canEditWorkout}
@@ -3424,21 +3142,25 @@ function WorkoutScreen({
               {workout.exercises.map(renderExercisePage)}
             </ScrollView>
           </View>
-        ) : (
+        ) : canEditWorkout ? (
           <Pressable
-            accessibilityLabel="Add an exercise"
+            accessibilityLabel="Add exercise"
             accessibilityRole="button"
-            disabled={!canEditWorkout}
             hitSlop={8}
+            style={styles.emptyExerciseButton}
+            testID="workout-add-first-exercise"
             onPress={() => setExercisePlanOpen(true)}
           >
-            <Text style={styles.metaText}>+ add an exercise</Text>
+            <Text style={styles.metaText}>+ add exercise</Text>
           </Pressable>
+        ) : (
+          <Text style={styles.metaText}>no exercises</Text>
         )}
       </ScrollView>
 
       {canEditWorkout ? (
         <SetEditorModal
+          initialState={initialState}
           workout={workout}
           target={setEditor}
           onClose={() => {
@@ -3451,7 +3173,7 @@ function WorkoutScreen({
             setSetEditor(nextTarget);
           }}
           onStartRestTimer={(durationSeconds) => {
-            startRestTimer(durationSeconds);
+            startRestTimerIfIdle(durationSeconds);
           }}
           onDispatch={dispatch}
           onKeyboardHeightChange={updateSetEditorCoveredHeight}
@@ -3557,6 +3279,7 @@ function WorkoutScreen({
         />
       ) : null}
       <ExercisePlanModal
+        autoFocusSearch={initialState?.workout?.exercisePlanAutoFocus ?? false}
         visible={canEditWorkout && exercisePlanOpen}
         exercises={workout.exercises}
         newExerciseName={newExerciseName}
@@ -3575,6 +3298,7 @@ function WorkoutScreen({
         onDelete={deleteExercise}
       />
       <WorkoutTimingEditorModal
+        initialState={initialState}
         visible={canEditWorkout && workoutTimeAdjustOpen}
         completedAt={completedAt}
         now={now}
@@ -4247,7 +3971,12 @@ function WorkoutTitleCommandMenu({
         onDismiss={onClose}
         style={styles.commandMenuShade}
       >
-        <View style={[styles.commandMenuPanel, { top: menuTop }]}>
+        <View
+          accessible={false}
+          accessibilityRole="menu"
+          accessibilityViewIsModal
+          style={[styles.commandMenuPanel, { top: menuTop }]}
+        >
           <CommandMenuItem
             icon="pencil-outline"
             label="Edit Workout Name"
@@ -4338,13 +4067,11 @@ function BodyWeightEditorModal({
               keyboardType="decimal-pad"
               placeholder="add"
               placeholderTextColor={palette.muted}
-              returnKeyType="done"
               selectTextOnFocus
               style={styles.bodyWeightDialogInput}
               testID="body-weight-dialog-input"
               value={bodyWeightEntry}
               onChangeText={onChangeBodyWeightEntry}
-              onSubmitEditing={onSave}
             />
             <Text style={styles.bodyWeightDialogUnit}>lb</Text>
           </View>
@@ -4358,9 +4085,18 @@ function BodyWeightEditorModal({
               testID="body-weight-dialog-reset-health"
               onPress={onResetToHealth}
             >
-              <Text style={styles.confirmDialogActionText}>
-                {loadingHealth ? "checking health" : "reset to apple health"}
-              </Text>
+              {loadingHealth ? (
+                <View style={styles.inlinePendingAction}>
+                  <ActivityIndicator color={palette.muted} size="small" />
+                  <Text style={styles.confirmDialogActionText}>
+                    checking health
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.confirmDialogActionText}>
+                  reset to apple health
+                </Text>
+              )}
             </Pressable>
             <View style={styles.bodyWeightDialogActionRow}>
               <Pressable
@@ -4428,18 +4164,14 @@ function RestTimesEditorModal({
   }, [visible, restTimes.warmupSeconds, restTimes.workingSeconds]);
 
   const changeValue = (key: keyof RestTimes, direction: 1 | -1 = 1) => {
-    const options = [null, ...REST_TIMER_PRESET_SECONDS] as Array<
-      number | null
-    >;
+    const options = REST_TIMER_PRESET_SECONDS;
     setDraft((currentDraft) => ({
       ...currentDraft,
       [key]:
         options[
           (Math.max(
             0,
-            options.findIndex(
-              (option) => option === (currentDraft[key] ?? null),
-            ),
+            options.findIndex((option) => option === currentDraft[key]),
           ) +
             direction +
             options.length) %
@@ -4590,7 +4322,12 @@ function ExerciseCommandMenu({
         onDismiss={onClose}
         style={styles.commandMenuShade}
       >
-        <View style={[styles.commandMenuPanel, { top: menuTop }]}>
+        <View
+          accessible={false}
+          accessibilityRole="menu"
+          accessibilityViewIsModal
+          style={[styles.commandMenuPanel, { top: menuTop }]}
+        >
           <CommandMenuItem
             icon="document-outline"
             label="Add Note"
@@ -4629,13 +4366,19 @@ function ExerciseCommandMenu({
 }
 
 function CommandMenuItem({
+  busy = false,
+  compact = false,
   danger = false,
+  detail,
   icon,
   label,
   onPress,
   testID,
 }: {
+  busy?: boolean;
+  compact?: boolean;
   danger?: boolean;
+  detail?: string;
   icon: IconName;
   label: string;
   onPress: () => void;
@@ -4645,7 +4388,10 @@ function CommandMenuItem({
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
-      style={styles.commandMenuItem}
+      style={[
+        styles.commandMenuItem,
+        compact ? styles.commandMenuItemCompact : null,
+      ]}
       testID={testID}
       onPress={onPress}
     >
@@ -4654,19 +4400,27 @@ function CommandMenuItem({
         size={21}
         color={danger ? palette.danger : palette.muted}
       />
-      <Text
-        style={[
-          styles.commandMenuItemText,
-          danger ? styles.commandMenuItemTextDanger : null,
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={styles.commandMenuItemCopy}>
+        <Text
+          style={[
+            styles.commandMenuItemText,
+            compact ? styles.commandMenuItemTextCompact : null,
+            danger ? styles.commandMenuItemTextDanger : null,
+          ]}
+        >
+          {label}
+        </Text>
+        {detail ? (
+          <Text style={styles.commandMenuItemDetail}>{detail}</Text>
+        ) : null}
+      </View>
+      {busy ? <ActivityIndicator color={palette.muted} size="small" /> : null}
     </Pressable>
   );
 }
 
 function WorkoutTimingEditorModal({
+  initialState,
   visible,
   completedAt,
   now,
@@ -4674,6 +4428,7 @@ function WorkoutTimingEditorModal({
   onClose,
   onSave,
 }: {
+  initialState?: MobileWorkoutInitialState;
   visible: boolean;
   completedAt: Date | null;
   now: number;
@@ -4687,15 +4442,15 @@ function WorkoutTimingEditorModal({
     () => completedAt,
   );
   const [selectedField, setSelectedField] = useState<"start" | "end" | null>(
-    null,
+    initialState?.workout?.timingField ?? null,
   );
 
   useEffect(() => {
     if (!visible) return;
     setDraftStart(new Date(startTime));
     setDraftCompleted(completedAt);
-    setSelectedField(null);
-  }, [completedAt, startTime, visible]);
+    setSelectedField(initialState?.workout?.timingField ?? null);
+  }, [initialState, completedAt, startTime, visible]);
 
   const automaticTiming = draftCompleted == null;
   const durationEnd = draftCompleted ?? new Date(now);
@@ -4760,7 +4515,14 @@ function WorkoutTimingEditorModal({
             >
               <Icon name="close-outline" size={26} color={palette.ink} />
             </Pressable>
-            <Text style={styles.adjustTimeTitle}>Adjust Start/End Time</Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.9}
+              numberOfLines={1}
+              style={styles.adjustTimeTitle}
+            >
+              Adjust Start/End Time
+            </Text>
             <Pressable
               accessibilityLabel="Save workout timing"
               accessibilityRole="button"
@@ -4914,6 +4676,7 @@ function PastReviewWorkoutHeader({
       <Pressable
         accessibilityLabel="Close workout"
         accessibilityRole="button"
+        hitSlop={COMPACT_HIT_SLOP}
         style={styles.iconButton}
         testID="workout-close"
         onPress={onBack}
@@ -4923,6 +4686,7 @@ function PastReviewWorkoutHeader({
       <Pressable
         accessibilityLabel="Edit workout"
         accessibilityRole="button"
+        hitSlop={COMPACT_HIT_SLOP}
         style={styles.textButton}
         testID="workout-enter-edit-mode"
         onPress={onEdit}
@@ -5009,6 +4773,7 @@ function WorkoutHeaderActions({
       <Pressable
         accessibilityLabel="Close workout"
         accessibilityRole="button"
+        hitSlop={COMPACT_HIT_SLOP}
         style={styles.iconButton}
         testID="workout-close"
         onPress={onBack}
@@ -5020,6 +4785,7 @@ function WorkoutHeaderActions({
           accessibilityLabel="Undo workout edit"
           accessibilityRole="button"
           disabled={!canUndo}
+          hitSlop={COMPACT_HIT_SLOP}
           style={[
             styles.iconButton,
             !canUndo ? styles.iconButtonDisabled : null,
@@ -5039,6 +4805,7 @@ function WorkoutHeaderActions({
           accessibilityLabel="Redo workout edit"
           accessibilityRole="button"
           disabled={!canRedo}
+          hitSlop={COMPACT_HIT_SLOP}
           style={[
             styles.iconButton,
             !canRedo ? styles.iconButtonDisabled : null,
@@ -5057,6 +4824,7 @@ function WorkoutHeaderActions({
         <Pressable
           accessibilityLabel="Delete workout"
           accessibilityRole="button"
+          hitSlop={COMPACT_HIT_SLOP}
           style={styles.iconButton}
           testID="workout-delete"
           onPress={onDelete}
@@ -5068,6 +4836,7 @@ function WorkoutHeaderActions({
         accessibilityLabel={saveLabel}
         accessibilityRole="button"
         disabled={saving}
+        hitSlop={COMPACT_HIT_SLOP}
         style={saveKind === "finish" ? styles.finishButton : styles.iconButton}
         testID="workout-save"
         onPress={onSave}
@@ -5085,6 +4854,7 @@ function WorkoutHeaderActions({
 }
 
 function ExercisePlan({
+  autoFocusSearch = false,
   exercises,
   newExerciseName,
   addingExercise,
@@ -5097,6 +4867,7 @@ function ExercisePlan({
   onTextInputFocus,
   onDelete,
 }: {
+  autoFocusSearch?: boolean;
   exercises: WorkoutExercise[];
   newExerciseName: string;
   addingExercise: boolean;
@@ -5216,6 +4987,7 @@ function ExercisePlan({
       })}
       <View style={styles.addExerciseRow}>
         <TextInput
+          autoFocus={autoFocusSearch}
           value={newExerciseName}
           onChangeText={onNewExerciseNameChange}
           onFocus={onTextInputFocus}
@@ -5273,6 +5045,7 @@ function ExercisePlan({
 }
 
 function ExercisePlanModal({
+  autoFocusSearch = false,
   visible,
   exercises,
   newExerciseName,
@@ -5287,6 +5060,7 @@ function ExercisePlanModal({
   onTextInputFocus,
   onDelete,
 }: {
+  autoFocusSearch?: boolean;
   visible: boolean;
   exercises: WorkoutExercise[];
   newExerciseName: string;
@@ -5309,6 +5083,9 @@ function ExercisePlanModal({
       onRequestClose={onClose}
     >
       <DismissibleModalShade
+        contentStyle={styles.centeredModalContent}
+        keyboardAvoiding
+        keyboardAvoidingStyle={styles.keyboardAvoidingModalCenter}
         onDismiss={onClose}
         style={styles.exercisePlanShade}
       >
@@ -5327,12 +5104,14 @@ function ExercisePlanModal({
             <View style={styles.exercisePlanHeaderSpacer} />
           </View>
           <ScrollView
+            keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             style={styles.exercisePlanScroll}
             contentContainerStyle={styles.exercisePlanScrollContent}
           >
             <ExercisePlan
+              autoFocusSearch={autoFocusSearch}
               exercises={exercises}
               newExerciseName={newExerciseName}
               addingExercise={addingExercise}
@@ -5532,6 +5311,7 @@ function ExerciseNextHint({
 }
 
 function ExerciseSection({
+  initialState,
   exercise,
   exerciseIndex,
   inlineNoteDraft,
@@ -5554,6 +5334,7 @@ function ExerciseSection({
   onDeleteExercise,
   onSaveUserExerciseSettings,
 }: {
+  initialState?: MobileWorkoutInitialState;
   exercise: WorkoutExercise;
   exerciseIndex: number;
   inlineNoteDraft: string | null;
@@ -5581,10 +5362,18 @@ function ExerciseSection({
     settings: UserExerciseSettings,
   ) => void;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [detailsTab, setDetailsTab] = useState<ExerciseDetailsTab>("history");
-  const [detailsEditRequest, setDetailsEditRequest] = useState(0);
-  const [exerciseMenuOpen, setExerciseMenuOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(
+    exerciseIndex === 0 && (initialState?.workout?.details?.open ?? false),
+  );
+  const [detailsTab, setDetailsTab] = useState<ExerciseDetailsTab>(
+    initialState?.workout?.details?.tab ?? "history",
+  );
+  const [detailsEditRequest, setDetailsEditRequest] = useState(
+    exerciseIndex === 0 && initialState?.workout?.details?.editing ? 1 : 0,
+  );
+  const [exerciseMenuOpen, setExerciseMenuOpen] = useState(
+    exerciseIndex === 0 && (initialState?.workout?.exerciseMenuOpen ?? false),
+  );
   const [exerciseMenuAnchor, setExerciseMenuAnchor] =
     useState<MenuAnchor | null>(null);
   const exerciseMenuButtonRef = useRef<View | null>(null);
@@ -5781,6 +5570,7 @@ function ExerciseSection({
       ) : null}
 
       <ExerciseDetailsSheet
+        initialState={initialState}
         exercise={exercise}
         editRequest={detailsEditRequest}
         open={detailsOpen}
@@ -5814,6 +5604,7 @@ function ExerciseSection({
         />
       ) : editable ? (
         <ExerciseSetLedgerView
+          initialState={initialState}
           exercise={exercise}
           exerciseIndex={exerciseIndex}
           inlineNoteDraft={inlineNoteDraft}
@@ -5855,6 +5646,7 @@ function ExerciseSection({
 }
 
 function ExerciseSetLedgerView({
+  initialState,
   exercise,
   exerciseIndex,
   restTimes,
@@ -5871,6 +5663,7 @@ function ExerciseSetLedgerView({
   onStartRestTimer,
   onStartInlineNoteEdit,
 }: {
+  initialState?: MobileWorkoutInitialState;
   exercise: WorkoutExercise;
   exerciseIndex: number;
   restTimes: RestTimes;
@@ -5907,6 +5700,7 @@ function ExerciseSetLedgerView({
 
   return (
     <NotebookSetLedger
+      initialState={initialState}
       exercise={exercise}
       exerciseIndex={exerciseIndex}
       groups={groups}
@@ -5930,6 +5724,7 @@ function ExerciseSetLedgerView({
 }
 
 function NotebookSetLedger({
+  initialState,
   exercise,
   exerciseIndex,
   groups,
@@ -5949,6 +5744,7 @@ function NotebookSetLedger({
   onStartRestTimer,
   onStartInlineNoteEdit,
 }: {
+  initialState?: MobileWorkoutInitialState;
   exercise: WorkoutExercise;
   exerciseIndex: number;
   groups: IndexedWorkoutSet[][];
@@ -5973,7 +5769,7 @@ function NotebookSetLedger({
   const presentDialog = useAppDialog();
   const [revealedPreviousGroupIndex, setRevealedPreviousGroupIndex] = useState<
     number | null
-  >(null);
+  >(initialState?.workout?.previousGroupIndex ?? null);
 
   const addSet = () => {
     onSelectExercise();
@@ -6055,7 +5851,7 @@ function NotebookSetLedger({
   const deleteSetGroup = (group: IndexedWorkoutSet[], logicalLabel: string) => {
     presentDialog({
       title: "Delete set?",
-      message: `${logicalLabel} and any short-rest reps`,
+      message: `${logicalLabel} and any reps after a pause`,
       actions: [
         { label: "cancel", variant: "cancel" },
         {
@@ -6069,8 +5865,8 @@ function NotebookSetLedger({
 
   const deleteShortRestSegment = (indexedSet: IndexedWorkoutSet) => {
     presentDialog({
-      title: "Delete short-rest reps?",
-      message: formatSetInline(exercise, indexedSet) || "short-rest reps",
+      title: "Delete reps after pause?",
+      message: formatSetInline(exercise, indexedSet) || "reps after pause",
       actions: [
         { label: "cancel", variant: "cancel" },
         {
@@ -6148,14 +5944,18 @@ function NotebookSetLedger({
           onPress: () => {
             triggerSelectionHaptic();
             const groupIndexes = new Set(group.map(({ index }) => index));
-            onDispatch({
-              type: "REPLACE_EXERCISE_SETS",
-              exerciseIndex,
+            const updatedExercise = {
+              ...exercise,
               sets: exercise.sets.map((set, setIndex) =>
                 groupIndexes.has(setIndex)
                   ? { ...set, modifier: nextModifier }
                   : set,
               ),
+            };
+            onDispatch({
+              type: "REPLACE_EXERCISE_SETS",
+              exerciseIndex,
+              sets: applyDefaultRestBoundaries(updatedExercise, restTimes).sets,
             });
           },
         },
@@ -6193,22 +5993,18 @@ function NotebookSetLedger({
     const standardRestLabel = formatRestTimeSetting(
       getRestSecondsForSet(standardSet, restTimes),
     );
-    const standardLabel =
-      standardRestLabel === "none"
-        ? "standard"
-        : `standard ${standardRestLabel}`;
+    const standardLabel = `standard ${standardRestLabel}`;
 
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          cancelButtonIndex: 3,
-          options: [standardLabel, "short", "none", "cancel"],
+          cancelButtonIndex: 2,
+          options: [standardLabel, formatRestChoiceLabel("short"), "cancel"],
           title: `rest before ${label}`,
         },
         (buttonIndex) => {
           if (buttonIndex === 0) applyRestChoice(setIndex, "standard");
           if (buttonIndex === 1) applyRestChoice(setIndex, "short");
-          if (buttonIndex === 2) applyRestChoice(setIndex, undefined);
         },
       );
       return;
@@ -6221,12 +6017,45 @@ function NotebookSetLedger({
           label: standardLabel,
           onPress: () => applyRestChoice(setIndex, "standard"),
         },
-        { label: "short", onPress: () => applyRestChoice(setIndex, "short") },
-        { label: "none", onPress: () => applyRestChoice(setIndex, undefined) },
+        {
+          label: formatRestChoiceLabel("short"),
+          onPress: () => applyRestChoice(setIndex, "short"),
+        },
         { label: "cancel", variant: "cancel" },
       ],
     });
   };
+
+  const initialActionSheetPresentedRef = useRef(false);
+  useEffect(() => {
+    const initialActionSheet = initialState?.workout?.actionSheet;
+    if (
+      Platform.OS !== "ios" ||
+      initialActionSheetPresentedRef.current ||
+      !initialActionSheet
+    ) {
+      return undefined;
+    }
+
+    initialActionSheetPresentedRef.current = true;
+    const timer = setTimeout(() => {
+      if (initialActionSheet === "set-command") {
+        openSetCommandMenu(groups[1] ?? groups[0] ?? [], "set 1");
+        return;
+      }
+
+      const targetGroup = groups[1] ?? groups[0];
+      const targetSet = targetGroup?.[0];
+      if (!targetSet) return;
+      openRestChoicePicker(
+        targetSet.index,
+        setLabel(exercise, targetSet.index),
+        targetSet.set,
+      );
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [initialState?.workout?.actionSheet]);
 
   if (groups.length === 0) {
     return (
@@ -6327,6 +6156,18 @@ function NotebookSetLedger({
                     canComplete={segmentIndex === 0}
                     completed={Boolean(indexedSet.set.completed)}
                     hasNote={Boolean(indexedSet.set.notes?.trim())}
+                    initialOpenSide={
+                      exerciseIndex === 0 &&
+                      initialState?.workout?.swipe === "base" &&
+                      groupIndex === 0 &&
+                      segmentIndex === 0
+                        ? "right"
+                        : exerciseIndex === 0 &&
+                            initialState?.workout?.swipe === "pause" &&
+                            segmentIndex > 0
+                          ? "right"
+                          : null
+                    }
                     onComplete={() => {
                       if (segmentIndex !== 0) return;
                       const wasCompleted = Boolean(indexedSet.set.completed);
@@ -6492,7 +6333,7 @@ function NotebookSetLedger({
                             >
                               <Icon
                                 name="checkmark"
-                                size={16}
+                                size={18}
                                 color={palette.ink}
                               />
                             </Pressable>
@@ -6588,6 +6429,7 @@ function SwipeActionSetRow({
   onDelete,
   onNote,
   onSwipeStart,
+  initialOpenSide = null,
 }: {
   children:
     | React.ReactNode
@@ -6599,11 +6441,22 @@ function SwipeActionSetRow({
   onDelete: () => void;
   onNote: () => void;
   onSwipeStart: () => void;
+  initialOpenSide?: "left" | "right" | null;
 }) {
   const leftOpenX = 72;
   const rightOpenX = -96;
-  const translateX = useMemo(() => new Animated.Value(0), []);
-  const openSideRef = useRef<"left" | "right" | null>(null);
+  const translateX = useMemo(
+    () =>
+      new Animated.Value(
+        initialOpenSide === "left"
+          ? leftOpenX
+          : initialOpenSide === "right"
+            ? rightOpenX
+            : 0,
+      ),
+    [initialOpenSide],
+  );
+  const openSideRef = useRef<"left" | "right" | null>(initialOpenSide);
   const didExecuteRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDeltaXRef = useRef(0);
@@ -6665,10 +6518,6 @@ function SwipeActionSetRow({
 
   const settleSwipe = useCallback(
     (dx: number, vx = 0) => {
-      if (dx <= -118 || (dx <= -68 && vx < -1)) {
-        executeDelete();
-        return;
-      }
       if (canComplete && (dx >= 92 || (dx >= 56 && vx > 1))) {
         executeComplete();
         return;
@@ -6683,14 +6532,7 @@ function SwipeActionSetRow({
       }
       resetPosition();
     },
-    [
-      canComplete,
-      executeComplete,
-      executeDelete,
-      openLeft,
-      openRight,
-      resetPosition,
-    ],
+    [canComplete, executeComplete, openLeft, openRight, resetPosition],
   );
 
   const getTouchPoint = useCallback((event: GestureResponderEvent) => {
@@ -6810,6 +6652,7 @@ function SwipeActionSetRow({
               completed ? "Mark set incomplete" : "Complete set"
             }
             accessibilityRole="button"
+            hitSlop={COMPACT_HIT_SLOP}
             style={[
               styles.notebookSwipeActionButton,
               styles.notebookSwipeCompleteButton,
@@ -6828,6 +6671,7 @@ function SwipeActionSetRow({
         <Pressable
           accessibilityLabel={hasNote ? "Edit set note" : "Add set note"}
           accessibilityRole="button"
+          hitSlop={COMPACT_HIT_SLOP}
           style={[
             styles.notebookSwipeActionButton,
             hasNote ? styles.notebookSwipeNoteButtonActive : null,
@@ -6842,6 +6686,7 @@ function SwipeActionSetRow({
         <Pressable
           accessibilityLabel="Delete set"
           accessibilityRole="button"
+          hitSlop={COMPACT_HIT_SLOP}
           style={[
             styles.notebookSwipeActionButton,
             styles.notebookSwipeDeleteButton,
@@ -6923,8 +6768,7 @@ function formatRestDurationLabel(set: WorkoutSet, restTimes: RestTimes) {
 }
 
 function formatRestSeparatorLabel(set: WorkoutSet, restTimes: RestTimes) {
-  if (set.restBefore === "short") return "short";
-  if (!set.restBefore) return "none";
+  if (set.restBefore === "short") return formatRestChoiceLabel("short");
   return formatRestDurationLabel(set, restTimes);
 }
 
@@ -7236,8 +7080,8 @@ function ExerciseSetCards({
   };
   const deleteShortRestSegment = (indexedSet: IndexedWorkoutSet) => {
     presentDialog({
-      title: "Delete short-rest reps?",
-      message: formatSetInline(exercise, indexedSet) || "short-rest reps",
+      title: "Delete reps after pause?",
+      message: formatSetInline(exercise, indexedSet) || "reps after pause",
       actions: [
         { label: "cancel", variant: "cancel" },
         {
@@ -7260,7 +7104,7 @@ function ExerciseSetCards({
   const deleteSetGroup = (group: IndexedWorkoutSet[], logicalLabel: string) => {
     presentDialog({
       title: "Delete set?",
-      message: `${logicalLabel} and any short-rest reps`,
+      message: `${logicalLabel} and any reps after a pause`,
       actions: [
         { label: "cancel", variant: "cancel" },
         {
@@ -7545,7 +7389,7 @@ function ExerciseSetCards({
                             }}
                           >
                             <Text style={styles.exerciseSetCardRestLabelText}>
-                              short rest
+                              pause
                             </Text>
                           </Pressable>
                         ) : null}
@@ -7617,7 +7461,7 @@ function ExerciseSetCards({
                           ) : null}
                           {segmentIndex > 0 ? (
                             <Pressable
-                              accessibilityLabel={`Delete ${segmentLabel} short-rest reps`}
+                              accessibilityLabel={`Delete ${segmentLabel} reps after pause`}
                               accessibilityRole="button"
                               hitSlop={8}
                               style={styles.exerciseSetCardDelete}
@@ -7780,6 +7624,7 @@ function PreviousSetReference({
 }
 
 function ExerciseDetailsSheet({
+  initialState,
   exercise,
   editRequest,
   open,
@@ -7789,6 +7634,7 @@ function ExerciseDetailsSheet({
   onTextInputFocus,
   onSelectTab,
 }: {
+  initialState?: MobileWorkoutInitialState;
   exercise: WorkoutExercise;
   editRequest: number;
   open: boolean;
@@ -7823,7 +7669,13 @@ function ExerciseDetailsSheet({
   useEffect(() => {
     if (!open || editRequest === 0) return;
     startEditing();
-  }, [editRequest, open, startEditing]);
+    if (initialState?.workout?.details?.startingWeightPicker) {
+      setStartingWeightMenuOpen(true);
+    }
+    if (initialState?.workout?.details?.startingWeight != null) {
+      setDraftStartingWeight(initialState.workout.details.startingWeight);
+    }
+  }, [initialState, editRequest, open, startEditing]);
 
   const closeSheet = () => {
     setEditing(false);
@@ -7911,6 +7763,9 @@ function ExerciseDetailsSheet({
           >
             {editing ? (
               <ExerciseDetailsEditContent
+                autoFocusNote={
+                  initialState?.workout?.details?.autoFocusNote ?? false
+                }
                 exercise={exercise}
                 draftLoadMode={draftLoadMode}
                 draftNote={draftNote}
@@ -7941,6 +7796,7 @@ function ExerciseDetailsSheet({
 }
 
 function ExerciseDetailsEditContent({
+  autoFocusNote = false,
   exercise,
   draftLoadMode,
   draftNote,
@@ -7952,6 +7808,7 @@ function ExerciseDetailsEditContent({
   onTextInputFocus,
   onToggleStartingWeightMenu,
 }: {
+  autoFocusNote?: boolean;
   exercise: WorkoutExercise;
   draftLoadMode: PlateLoadMode;
   draftNote: string;
@@ -7986,6 +7843,7 @@ function ExerciseDetailsEditContent({
         </Text>
         <TextInput
           accessibilityLabel={`${exercise.name} pinned exercise note`}
+          autoFocus={autoFocusNote}
           autoCapitalize="sentences"
           autoCorrect={false}
           blurOnSubmit={false}
@@ -8123,6 +7981,18 @@ function ExerciseDetailsTabContent({
 function ExerciseDetailsAbout({ exercise }: { exercise: WorkoutExercise }) {
   const pinnedNote = exercise.exerciseNotes?.trim();
   const workoutExerciseNote = exercise.notes[0]?.text?.trim();
+  const startingWeight =
+    exercise.plateStartingWeight == null
+      ? null
+      : exercise.plateStartingWeight === 0
+        ? "none"
+        : getStartingWeightLabel(exercise.plateStartingWeight);
+  const loadMode =
+    exercise.plateLoadMode === "total"
+      ? "total load"
+      : exercise.plateLoadMode === "equal-sides"
+        ? "per side"
+        : null;
 
   return (
     <View style={styles.exerciseDetailsSection}>
@@ -8132,12 +8002,17 @@ function ExerciseDetailsAbout({ exercise }: { exercise: WorkoutExercise }) {
       {workoutExerciseNote ? (
         <ExerciseDetailsNoteRow value={workoutExerciseNote} />
       ) : null}
+      {startingWeight ? (
+        <ExerciseDetailsInfoRow
+          label="starting weight"
+          value={startingWeight}
+        />
+      ) : null}
+      {loadMode ? (
+        <ExerciseDetailsInfoRow label="load mode" value={loadMode} />
+      ) : null}
       <ExerciseDetailsInfoRow
-        label="Load helper"
-        value={formatExercisePlateSettings(exercise)}
-      />
-      <ExerciseDetailsInfoRow
-        label="History"
+        label="history"
         value={`${exercise.history?.length ?? 0} ${
           exercise.history?.length === 1 ? "workout" : "workouts"
         }`}
@@ -8178,22 +8053,6 @@ function ExerciseDetailsInfoRow({
   );
 }
 
-function formatExercisePlateSettings(exercise: WorkoutExercise) {
-  const start =
-    exercise.plateStartingWeight == null
-      ? "start unset"
-      : exercise.plateStartingWeight === 0
-        ? "no starting weight"
-        : `${formatNumber(exercise.plateStartingWeight)}lb start`;
-  const mode =
-    exercise.plateLoadMode === "total"
-      ? "total load"
-      : exercise.plateLoadMode === "equal-sides"
-        ? "equal sides"
-        : "load mode unset";
-  return `${start} . ${mode}`;
-}
-
 function formatExerciseStartingWeightChoice(weight: number | null) {
   if (weight == null) return "not set";
   return getStartingWeightLabel(weight);
@@ -8205,7 +8064,9 @@ function ExerciseDetailsHistory({ exercise }: { exercise: WorkoutExercise }) {
   if (entries.length === 0) {
     return (
       <View style={styles.exerciseDetailsEmpty}>
-        <Text style={styles.metaText}>no history yet</Text>
+        <Text style={styles.metaText}>
+          Finish this exercise in a workout to create history.
+        </Text>
       </View>
     );
   }
@@ -8362,7 +8223,9 @@ function ExerciseDetailsCharts({ exercise }: { exercise: WorkoutExercise }) {
   if (chartCount === 0) {
     return (
       <View style={styles.exerciseDetailsEmpty}>
-        <Text style={styles.metaText}>more data soon</Text>
+        <Text style={styles.metaText}>
+          Complete this exercise in two workouts to see progress charts.
+        </Text>
       </View>
     );
   }
@@ -8384,7 +8247,9 @@ function ExerciseDetailsRecords({ exercise }: { exercise: WorkoutExercise }) {
   if (records.length === 0) {
     return (
       <View style={styles.exerciseDetailsEmpty}>
-        <Text style={styles.metaText}>more data soon</Text>
+        <Text style={styles.metaText}>
+          Complete a working set to create exercise records.
+        </Text>
       </View>
     );
   }
@@ -8410,31 +8275,6 @@ function ExerciseDetailsRecords({ exercise }: { exercise: WorkoutExercise }) {
   );
 }
 
-type HistoryChartPoint = {
-  xValue: number;
-  value: number;
-  displayValue: string;
-};
-
-type ParsedHistoryStats = {
-  e1rm: number | null;
-  bestSetVolume: number | null;
-  volume: number | null;
-  maxConsecutiveReps: number | null;
-};
-
-type ExerciseDetailsChart = {
-  key: string;
-  title: string;
-  points: HistoryChartPoint[];
-};
-
-type ExerciseDetailsRecord = {
-  label: string;
-  value: string;
-  detail?: string;
-};
-
 function HistoryTinyChart({
   title,
   points,
@@ -8451,346 +8291,79 @@ function HistoryTinyChart({
     <View style={styles.historyChartBlock}>
       <Text style={styles.subtleTitle}>{title}</Text>
       {points.length > 0 ? (
-        <View
-          accessibilityLabel={`${title}: ${points
-            .map((point) => point.displayValue)
-            .join(", ")}`}
-          style={[styles.historyChart, { height: chartHeight }]}
-        >
-          {positions.slice(1).map((position, index) => {
-            const previous = positions[index];
-            const dx = position.x - previous.x;
-            const dy = position.y - previous.y;
-            const length = Math.hypot(dx, dy);
-            const angle = `${Math.atan2(dy, dx)}rad`;
+        <>
+          <View
+            accessibilityLabel={`${title}: ${points
+              .map((point) => point.displayValue)
+              .join(", ")}`}
+            style={[styles.historyChart, { height: chartHeight }]}
+          >
+            {positions.slice(1).map((position, index) => {
+              const previous = positions[index];
+              const dx = position.x - previous.x;
+              const dy = position.y - previous.y;
+              const length = Math.hypot(dx, dy);
+              const angle = `${Math.atan2(dy, dx)}rad`;
 
-            return (
-              <View
-                key={`line-${index}`}
-                style={[
-                  styles.historyChartLine,
-                  {
-                    left: previous.x,
-                    top: previous.y,
-                    transform: [{ rotateZ: angle }],
-                    width: length,
-                  },
-                ]}
-              />
-            );
-          })}
-          {positions.map((position, index) => (
-            <React.Fragment key={`${points[index].displayValue}-${index}`}>
-              <Text
-                style={[
-                  styles.historyChartValue,
-                  {
-                    left: Math.max(
-                      0,
-                      Math.min(chartWidth - 56, position.x - 22),
-                    ),
-                    top: Math.max(
-                      0,
-                      position.y - labelOffsets[index % labelOffsets.length],
-                    ),
-                  },
-                ]}
-              >
-                {points[index].displayValue}
+              return (
+                <View
+                  key={`line-${index}`}
+                  style={[
+                    styles.historyChartLine,
+                    {
+                      left: previous.x,
+                      top: previous.y,
+                      transform: [{ rotateZ: angle }],
+                      width: length,
+                    },
+                  ]}
+                />
+              );
+            })}
+            {positions.map((position, index) => (
+              <React.Fragment key={`${points[index].displayValue}-${index}`}>
+                <Text
+                  style={[
+                    styles.historyChartValue,
+                    {
+                      left: Math.max(
+                        0,
+                        Math.min(chartWidth - 56, position.x - 22),
+                      ),
+                      top: Math.max(
+                        0,
+                        position.y - labelOffsets[index % labelOffsets.length],
+                      ),
+                    },
+                  ]}
+                >
+                  {points[index].displayValue}
+                </Text>
+                <View
+                  style={[
+                    styles.historyChartDot,
+                    { left: position.x - 2.5, top: position.y - 2.5 },
+                  ]}
+                />
+              </React.Fragment>
+            ))}
+          </View>
+          <View style={styles.historyChartDateRow}>
+            <Text style={styles.historyChartDate}>
+              {points[0]?.dateLabel ?? ""}
+            </Text>
+            {points.length > 1 ? (
+              <Text style={styles.historyChartDate}>
+                {points[points.length - 1]?.dateLabel ?? ""}
               </Text>
-              <View
-                style={[
-                  styles.historyChartDot,
-                  { left: position.x - 2.5, top: position.y - 2.5 },
-                ]}
-              />
-            </React.Fragment>
-          ))}
-        </View>
+            ) : null}
+          </View>
+        </>
       ) : (
-        <Text style={styles.metaText}>more data soon</Text>
+        <Text style={styles.metaText}>No qualifying working sets yet.</Text>
       )}
     </View>
   );
-}
-
-function getChartPositions(
-  points: HistoryChartPoint[],
-  width: number,
-  height: number,
-) {
-  if (points.length === 0) return [];
-  const xValues = points.map((point) => point.xValue);
-  const yValues = points.map((point) => point.value);
-  const minX = Math.min(...xValues);
-  const maxX = Math.max(...xValues);
-  const minY = Math.min(...yValues);
-  const maxY = Math.max(...yValues);
-  const xSpan = maxX - minX || 1;
-  const ySpan = maxY - minY || 1;
-  const xPadding = 20;
-  const yPadding = 44;
-
-  return points.map((point) => ({
-    x: xPadding + ((point.xValue - minX) / xSpan) * (width - xPadding * 2),
-    y: yPadding + (1 - (point.value - minY) / ySpan) * (height - yPadding - 8),
-  }));
-}
-
-function buildExerciseDetailsCharts(history: WorkoutExercise["history"]): {
-  chartCount: number;
-  charts: ExerciseDetailsChart[];
-} {
-  if (!history || history.length === 0) {
-    return { chartCount: 0, charts: [] };
-  }
-
-  const recentChronological = history
-    .slice(0, 5)
-    .map((entry) => ({ entry, stats: getHistoryWorkoutStats(entry) }))
-    .reverse();
-  const xValues = getHistoryChartXValues(
-    recentChronological.map(({ entry }) => entry),
-  );
-  let currentPr: number | null = null;
-
-  const e1rmPoints: HistoryChartPoint[] = [];
-  const bestSetVolumePoints: HistoryChartPoint[] = [];
-  const totalVolumePoints: HistoryChartPoint[] = [];
-  const prPoints: HistoryChartPoint[] = [];
-  const maxRepPoints: HistoryChartPoint[] = [];
-
-  recentChronological.forEach(({ stats }, index) => {
-    const xValue = xValues[index] ?? index;
-    if (stats.e1rm != null) {
-      e1rmPoints.push(toHistoryChartPoint(stats.e1rm, xValue));
-      currentPr =
-        currentPr == null ? stats.e1rm : Math.max(currentPr, stats.e1rm);
-    }
-    if (currentPr != null) {
-      prPoints.push(toHistoryChartPoint(currentPr, xValue));
-    }
-    if (stats.bestSetVolume != null) {
-      bestSetVolumePoints.push(
-        toHistoryChartPoint(stats.bestSetVolume, xValue),
-      );
-    }
-    if (stats.volume != null) {
-      totalVolumePoints.push(toHistoryChartPoint(stats.volume, xValue));
-    }
-    if (stats.maxConsecutiveReps != null) {
-      maxRepPoints.push(
-        toHistoryChartPoint(stats.maxConsecutiveReps, xValue, "reps"),
-      );
-    }
-  });
-
-  return {
-    chartCount: recentChronological.length,
-    charts: [
-      {
-        key: "best-set-e1rm",
-        title: "best set (est 1rm)",
-        points: e1rmPoints,
-      },
-      {
-        key: "best-set-volume",
-        title: "best set (max volume)",
-        points: bestSetVolumePoints,
-      },
-      {
-        key: "total-volume",
-        title: "total volume",
-        points: totalVolumePoints,
-      },
-      {
-        key: "pr-progression-e1rm",
-        title: "PR progression (1rm)",
-        points: prPoints,
-      },
-      {
-        key: "max-consecutive-reps",
-        title: "max consecutive reps",
-        points: maxRepPoints,
-      },
-    ],
-  };
-}
-
-function buildExerciseDetailsRecords(
-  history: WorkoutExercise["history"],
-): ExerciseDetailsRecord[] {
-  if (!history || history.length === 0) return [];
-
-  const entries = history.map((entry) => ({
-    entry,
-    stats: getHistoryWorkoutStats(entry),
-  }));
-  const records: ExerciseDetailsRecord[] = [];
-
-  const bestE1rm = getBestHistoryMetric(entries, (item) => item.stats.e1rm);
-  if (bestE1rm) {
-    records.push({
-      label: "best set (est 1rm)",
-      value: `${formatNumber(bestE1rm.value)}lb`,
-      detail: `${bestE1rm.entry.relation} . ${bestE1rm.entry.date}`,
-    });
-  }
-
-  const bestSetVolume = getBestHistoryMetric(
-    entries,
-    (item) => item.stats.bestSetVolume,
-  );
-  if (bestSetVolume) {
-    records.push({
-      label: "best set (max volume)",
-      value: `${formatNumber(bestSetVolume.value)}lb`,
-      detail: `${bestSetVolume.entry.relation} . ${bestSetVolume.entry.date}`,
-    });
-  }
-
-  const bestTotalVolume = getBestHistoryMetric(
-    entries,
-    (item) => item.stats.volume,
-  );
-  if (bestTotalVolume) {
-    records.push({
-      label: "total volume",
-      value: `${formatNumber(bestTotalVolume.value)}lb`,
-      detail: `${bestTotalVolume.entry.relation} . ${bestTotalVolume.entry.date}`,
-    });
-  }
-
-  const maxReps = getBestHistoryMetric(
-    entries,
-    (item) => item.stats.maxConsecutiveReps,
-  );
-  if (maxReps) {
-    records.push({
-      label: "max consecutive reps",
-      value: formatNumber(maxReps.value),
-      detail: `${maxReps.entry.relation} . ${maxReps.entry.date}`,
-    });
-  }
-
-  return records;
-}
-
-function getBestHistoryMetric<T extends { entry: ExerciseHistoryEntry }>(
-  entries: T[],
-  selector: (entry: T) => number | null,
-) {
-  return entries.reduce<{
-    entry: ExerciseHistoryEntry;
-    value: number;
-  } | null>((best, item) => {
-    const value = selector(item);
-    if (value == null || !Number.isFinite(value)) return best;
-    if (!best || value > best.value) {
-      return { entry: item.entry, value };
-    }
-    return best;
-  }, null);
-}
-
-function toHistoryChartPoint(
-  value: number,
-  xValue: number,
-  unit: "lb" | "reps" = "lb",
-): HistoryChartPoint {
-  return {
-    xValue,
-    value,
-    displayValue:
-      unit === "lb" ? `${formatNumber(value)}lb` : formatNumber(value),
-  };
-}
-
-function getHistoryChartXValues(
-  history: NonNullable<WorkoutExercise["history"]>,
-) {
-  const daysAgoValues = history.map((item) =>
-    parseHistoryRelativeDaysAgo(item.relativeDate),
-  );
-
-  if (
-    daysAgoValues.every((value): value is number => value != null) &&
-    new Set(daysAgoValues).size > 1
-  ) {
-    const oldestDaysAgo = Math.max(...daysAgoValues);
-    return daysAgoValues.map((daysAgo) => oldestDaysAgo - daysAgo);
-  }
-
-  return history.map((_, index) => index);
-}
-
-function parseHistoryRelativeDaysAgo(relativeDate: string) {
-  const normalized = relativeDate.trim().toLowerCase();
-  if (normalized === "today") return 0;
-  if (normalized === "yesterday") return 1;
-
-  const match = /^(\d+)\s+(day|week|month|year)s?\s+ago$/.exec(normalized);
-  if (!match) return null;
-
-  const value = Number(match[1]);
-  const unit = match[2];
-  if (!Number.isFinite(value)) return null;
-
-  if (unit === "day") return value;
-  if (unit === "week") return value * 7;
-  if (unit === "month") return value * 30;
-  if (unit === "year") return value * 365;
-  return null;
-}
-
-function getHistoryWorkoutStats(
-  entry: NonNullable<WorkoutExercise["history"]>[number],
-): ParsedHistoryStats {
-  let bestE1rm: number | null = null;
-  let bestSetVolume: number | null = null;
-  let maxConsecutiveReps: number | null = null;
-  let volume = 0;
-
-  for (const set of entry.sets) {
-    if (set.modifier === "warmup") continue;
-
-    const weight = getHistorySetLoad(entry, set);
-    const reps = Number(set.reps);
-    if (weight == null || !Number.isFinite(reps) || reps <= 0) continue;
-
-    maxConsecutiveReps =
-      maxConsecutiveReps == null ? reps : Math.max(maxConsecutiveReps, reps);
-
-    if (weight > 0) {
-      const setVolume = weight * reps;
-      volume += setVolume;
-      bestSetVolume =
-        bestSetVolume == null ? setVolume : Math.max(bestSetVolume, setVolume);
-    }
-
-    const e1rm = weight > 0 ? estimate1RM(weight, reps) : null;
-    if (e1rm != null && (bestE1rm == null || e1rm > bestE1rm)) {
-      bestE1rm = e1rm;
-    }
-  }
-
-  return {
-    e1rm: bestE1rm,
-    bestSetVolume,
-    volume: volume > 0 ? volume : null,
-    maxConsecutiveReps,
-  };
-}
-
-function getHistorySetLoad(
-  entry: NonNullable<WorkoutExercise["history"]>[number],
-  set: NonNullable<WorkoutExercise["history"]>[number]["sets"][number],
-) {
-  if (set.weightModifier === "bodyweight") {
-    const offset = set.weight ?? 0;
-    return entry.bodyWeightLb == null ? offset : entry.bodyWeightLb + offset;
-  }
-  return set.weight;
 }
 
 function SetLedger({
@@ -8854,7 +8427,7 @@ function SetLedger({
               >
                 <Text style={styles.setLedgerRestText}>
                   {leadingSet.set.restBefore === "short"
-                    ? "short rest"
+                    ? "pause"
                     : formatRestDurationLabel(leadingSet.set, restTimes)}
                 </Text>
               </Pressable>
@@ -8965,7 +8538,11 @@ function groupLedgerSets(sets: IndexedWorkoutSet[]) {
   const groups: IndexedWorkoutSet[][] = [];
   for (const indexedSet of sets) {
     const currentGroup = groups[groups.length - 1];
-    if (indexedSet.set.restBefore === "short" && currentGroup) {
+    if (
+      indexedSet.set.restBefore === "short" &&
+      indexedSet.set.modifier !== "warmup" &&
+      currentGroup
+    ) {
       currentGroup.push(indexedSet);
     } else {
       groups.push([indexedSet]);
@@ -8983,22 +8560,6 @@ function getLogicalSetGroupIndex(exercise: WorkoutExercise, setIndex: number) {
   return getLogicalSetGroups(exercise).findIndex((group) =>
     group.some((indexedSet) => indexedSet.index === setIndex),
   );
-}
-
-function getRestTimerSecondsAfterSet(
-  exercise: WorkoutExercise,
-  setIndex: number,
-  restTimes: RestTimes,
-) {
-  const groups = getLogicalSetGroups(exercise);
-  const groupIndex = groups.findIndex((group) =>
-    group.some((indexedSet) => indexedSet.index === setIndex),
-  );
-  const nextSet = groupIndex < 0 ? null : groups[groupIndex + 1]?.[0]?.set;
-  if (!nextSet || nextSet.restBefore !== "standard") return null;
-
-  const seconds = getRestSecondsForSet(nextSet, restTimes);
-  return seconds != null && seconds > 0 ? seconds : null;
 }
 
 function buildWatchWorkoutSnapshot({
@@ -9669,7 +9230,7 @@ function LogicalSetComposer({
                 style={styles.logicalSetRestLabel}
                 onPress={() => onToggleRest(indexedSet.index)}
               >
-                <Text style={styles.logicalSetRestLabelText}>short rest</Text>
+                <Text style={styles.logicalSetRestLabelText}>pause</Text>
               </Pressable>
             ) : null}
             <View style={styles.logicalSetSegment}>
@@ -9711,6 +9272,7 @@ function LogicalSetComposer({
 }
 
 function SetEditorModal({
+  initialState,
   workout,
   target,
   onClose,
@@ -9719,6 +9281,7 @@ function SetEditorModal({
   onDispatch,
   onKeyboardHeightChange,
 }: {
+  initialState?: MobileWorkoutInitialState;
   workout: Workout;
   target: SetEditTarget | null;
   onClose: () => void;
@@ -9728,17 +9291,13 @@ function SetEditorModal({
   onKeyboardHeightChange: (height: number) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const presentDialog = useAppDialog();
-  const nativeKeyboard = useNativeKeyboardFrame();
   const [field, setField] = useState<"weight" | "reps">("weight");
   const [entry, setEntryState] = useState("");
   const entryRef = useRef("");
   const firstPressRef = useRef(true);
   const [helperMode, setHelperMode] = useState<"increase" | "plates" | null>(
-    null,
+    initialState?.workout?.helper?.kind ?? null,
   );
-  const [noteEditing, setNoteEditing] = useState(false);
-  const [noteValue, setNoteValue] = useState("");
   const sheetHeightRef = useRef(0);
   const exercise = target ? workout.exercises[target.exerciseIndex] : undefined;
   const setIndex =
@@ -9777,17 +9336,9 @@ function SetEditorModal({
         return;
       }
 
-      const nativeKeyboardHeight =
-        noteEditing && nativeKeyboard.visible ? nativeKeyboard.height : 0;
-      onKeyboardHeightChange(sheetHeight + nativeKeyboardHeight);
+      onKeyboardHeightChange(sheetHeight);
     },
-    [
-      nativeKeyboard.height,
-      nativeKeyboard.visible,
-      noteEditing,
-      onKeyboardHeightChange,
-      target,
-    ],
+    [onKeyboardHeightChange, target],
   );
 
   useEffect(() => {
@@ -9815,9 +9366,9 @@ function SetEditorModal({
   }, [field, target?.exerciseIndex, target?.setId]);
 
   useEffect(() => {
+    if (initialState?.freezeEffects) return;
     setHelperMode(null);
-    setNoteEditing(false);
-  }, [target?.exerciseIndex, target?.setId]);
+  }, [initialState?.freezeEffects, target?.exerciseIndex, target?.setId]);
 
   if (!target || !exercise || setIndex == null || !set) return null;
 
@@ -9984,111 +9535,6 @@ function SetEditorModal({
     setField("reps");
   };
 
-  const addSet = () => {
-    const baseSet =
-      [...exercise.sets]
-        .reverse()
-        .find((candidate) => candidate.modifier !== "warmup") ??
-      exercise.sets[exercise.sets.length - 1] ??
-      set;
-    const nextSetIndex = exercise.sets.length;
-    const nextSet: WorkoutSet = {
-      clientId: makeClientId(),
-      weight: baseSet.weight,
-      reps: baseSet.reps,
-      completed: false,
-      weightExplicit: baseSet.weight !== null,
-      repsExplicit: baseSet.reps !== null,
-      prevWeight: baseSet.weight,
-      prevReps: baseSet.reps,
-      weightModifier: baseSet.weightModifier,
-    };
-
-    onDispatch({
-      type: "REPLACE_EXERCISE_SETS",
-      exerciseIndex: target.exerciseIndex,
-      sets: [...exercise.sets, nextSet],
-    });
-    onRetarget({
-      exerciseIndex: target.exerciseIndex,
-      setId: getSetTargetId(nextSet, nextSetIndex),
-      field: "reps",
-    });
-    setField("reps");
-  };
-
-  const deleteSet = () => {
-    presentDialog({
-      title: "Delete set?",
-      message: formatSetInline(exercise, { set, index: setIndex }),
-      actions: [
-        { label: "cancel", variant: "cancel" },
-        {
-          label: "delete",
-          variant: "danger",
-          onPress: () => {
-            const remainingSets = exercise.sets.filter(
-              (_candidate, candidateIndex) => candidateIndex !== setIndex,
-            );
-            const nextSet =
-              remainingSets[Math.min(setIndex, remainingSets.length - 1)];
-            const nextSetIndex = Math.min(setIndex, remainingSets.length - 1);
-            onDispatch({
-              type: "DELETE_SET",
-              exerciseIndex: target.exerciseIndex,
-              setIndex,
-            });
-            if (nextSet) {
-              onRetarget({
-                exerciseIndex: target.exerciseIndex,
-                setId: getSetTargetId(nextSet, nextSetIndex),
-                field,
-              });
-            } else {
-              onClose();
-            }
-          },
-        },
-      ],
-    });
-  };
-
-  const openSetNote = () => {
-    setHelperMode(null);
-    setNoteValue(set.notes ?? "");
-    setNoteEditing(true);
-  };
-
-  const saveSetNote = (notes: string) => {
-    onDispatch({
-      type: "UPDATE_SET_NOTE",
-      exerciseIndex: target.exerciseIndex,
-      setIndex,
-      notes,
-    });
-    setNoteEditing(false);
-  };
-
-  const deleteSetNote = () => {
-    if (!set.notes?.trim()) {
-      saveSetNote("");
-      return;
-    }
-
-    presentDialog({
-      title: "Delete note?",
-      message: `${setLabel(exercise, setIndex)} note`,
-      actions: [
-        { label: "cancel", variant: "cancel" },
-        {
-          label: "delete",
-          variant: "danger",
-          onPress: () => saveSetNote(""),
-        },
-      ],
-    });
-  };
-
   const values = getSetDisplayValues(exercise, set, setIndex);
   const helperWeight =
     values.weight != null && Number.isFinite(values.weight) && values.weight > 0
@@ -10142,10 +9588,7 @@ function SetEditorModal({
             style={[
               styles.keyboardSheet,
               {
-                paddingBottom:
-                  noteEditing && nativeKeyboard.visible
-                    ? 6
-                    : Math.max(6, insets.bottom + 6),
+                paddingBottom: Math.max(6, insets.bottom + 6),
               },
             ]}
             onLayout={(event) => {
@@ -10153,218 +9596,154 @@ function SetEditorModal({
               reportCoveredHeight(event.nativeEvent.layout.height);
             }}
           >
-            {noteEditing ? (
-              <>
-                <Text style={styles.subtleTitle}>
-                  {setLabel(exercise, setIndex)} note
-                </Text>
-                <TextInput
-                  accessibilityLabel={`${setLabel(exercise, setIndex)} note`}
-                  autoFocus
-                  blurOnSubmit={false}
-                  multiline
-                  style={styles.noteInput}
-                  testID="set-note-input"
-                  value={noteValue}
-                  onChangeText={setNoteValue}
-                />
-                <View style={styles.noteActions}>
-                  <Pressable
-                    accessibilityLabel={`Delete ${setLabel(exercise, setIndex)} note`}
-                    accessibilityRole="button"
-                    style={styles.iconButton}
-                    testID="set-note-delete"
-                    onPress={deleteSetNote}
-                  >
-                    <Icon name="trash-outline" size={24} />
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel={`Save ${setLabel(exercise, setIndex)} note`}
-                    accessibilityRole="button"
-                    style={[styles.textButton, styles.sheetActionFill]}
-                    testID="set-note-done"
-                    onPress={() => saveSetNote(noteValue)}
-                  >
-                    <Text style={styles.textButtonText}>done</Text>
-                  </Pressable>
-                </View>
-                {nativeKeyboard.visible ? (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.nativeKeyboardBackgroundFill,
-                      {
-                        bottom: -nativeKeyboard.height,
-                        height: nativeKeyboard.height,
-                      },
-                    ]}
-                  />
-                ) : null}
-              </>
-            ) : (
-              <>
-                <View style={styles.keypad}>
-                  <View style={styles.keypadRow}>
-                    <KeypadButton onPress={() => handleKey("1")}>
-                      1
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("2")}>
-                      2
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("3")}>
-                      3
-                    </KeypadButton>
-                    {field === "weight" ? (
-                      <View style={styles.keypadSplitCell}>
-                        <KeypadButton
-                          accessibilityLabel="Open increase weight helper"
-                          icon="trending-up-outline"
-                          onPress={() => setHelperMode("increase")}
-                        />
-                        <KeypadButton
-                          accessibilityLabel="Open plate calculator"
-                          icon="barbell-outline"
-                          onPress={() => setHelperMode("plates")}
-                        />
-                      </View>
-                    ) : (
-                      <KeypadButton
-                        accessibilityLabel="Close set keyboard"
-                        onPress={onClose}
-                      >
-                        <View style={styles.keyIconPair}>
-                          <Icon
-                            name="keypad-outline"
-                            size={21}
-                            color={palette.ink}
-                          />
-                          <Icon
-                            name="chevron-down-circle-outline"
-                            size={16}
-                            color={palette.ink}
-                          />
-                        </View>
-                      </KeypadButton>
-                    )}
-                  </View>
-                  <View style={styles.keypadRow}>
-                    <KeypadButton onPress={() => handleKey("4")}>
-                      4
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("5")}>
-                      5
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("6")}>
-                      6
-                    </KeypadButton>
-                    <View style={styles.keypadSplitCell}>
-                      <KeypadButton onPress={() => stepValue(-1)}>
-                        -
-                      </KeypadButton>
-                      <KeypadButton onPress={() => stepValue(1)}>
-                        +
-                      </KeypadButton>
-                    </View>
-                  </View>
-                  <View style={styles.keypadRow}>
-                    <KeypadButton onPress={() => handleKey("7")}>
-                      7
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("8")}>
-                      8
-                    </KeypadButton>
-                    <KeypadButton onPress={() => handleKey("9")}>
-                      9
-                    </KeypadButton>
-                    {field === "weight" ? (
-                      <View style={styles.keypadSplitCell}>
-                        <KeypadButton
-                          accessibilityLabel="Toggle body weight"
-                          active={set.weightModifier === "bodyweight"}
-                          icon="person-outline"
-                          onPress={() => {
-                            onDispatch({
-                              type: "FOCUS_FIELD",
-                              exerciseIndex: target.exerciseIndex,
-                              setIndex,
-                              field: "weight",
-                            });
-                            onDispatch({ type: "TOGGLE_BODYWEIGHT" });
-                            setField("weight");
-                          }}
-                        />
-                        <KeypadButton
-                          accessibilityLabel="Toggle body weight sign"
-                          disabled={set.weightModifier !== "bodyweight"}
-                          onPress={toggleSign}
-                        >
-                          +/-
-                        </KeypadButton>
-                      </View>
-                    ) : (
-                      <KeypadButton
-                        accessibilityLabel="Add short-rest reps"
-                        onPress={addShortRestSet}
-                      >
-                        <View style={styles.keyIconPair}>
-                          <Icon
-                            name="timer-outline"
-                            size={20}
-                            color={palette.ink}
-                          />
-                          <Icon
-                            name="add-outline"
-                            size={15}
-                            color={palette.ink}
-                          />
-                        </View>
-                      </KeypadButton>
-                    )}
-                  </View>
-                  <View style={styles.keypadRow}>
-                    {field === "weight" ? (
-                      <KeypadButton onPress={() => handleKey(".")}>
-                        .
-                      </KeypadButton>
-                    ) : (
-                      <View style={styles.keyBlank} />
-                    )}
-                    <KeypadButton onPress={() => handleKey("0")}>
-                      0
-                    </KeypadButton>
+            <View style={styles.keypad}>
+              <View style={styles.keypadRow}>
+                <KeypadButton onPress={() => handleKey("1")}>1</KeypadButton>
+                <KeypadButton onPress={() => handleKey("2")}>2</KeypadButton>
+                <KeypadButton onPress={() => handleKey("3")}>3</KeypadButton>
+                {field === "weight" ? (
+                  <View style={styles.keypadSplitCell}>
                     <KeypadButton
-                      icon="backspace-outline"
-                      onPress={backspace}
-                    />
-                    <KeypadButton
-                      primary
-                      accessibilityLabel={
-                        field === "reps" ? "Complete set" : "Next field"
-                      }
-                      onPress={
-                        field === "reps"
-                          ? completeAndAdvanceSetEditor
-                          : advanceSetEditor
-                      }
+                      accessibilityLabel="Open increase weight helper"
+                      onPress={() => setHelperMode("increase")}
                     >
-                      {field === "reps" ? (
+                      <View style={styles.keyIconStack}>
                         <Icon
-                          name="checkmark"
-                          size={22}
-                          color={palette.raised}
+                          name="trending-up-outline"
+                          size={17}
+                          color={palette.ink}
                         />
-                      ) : (
-                        "Next"
-                      )}
+                        <Text style={styles.keyActionLabel}>1RM</Text>
+                      </View>
+                    </KeypadButton>
+                    <KeypadButton
+                      accessibilityLabel="Open plate calculator"
+                      onPress={() => setHelperMode("plates")}
+                    >
+                      <View style={styles.keyIconStack}>
+                        <Icon
+                          name="barbell-outline"
+                          size={17}
+                          color={palette.ink}
+                        />
+                        <Text style={styles.keyActionLabel}>plates</Text>
+                      </View>
                     </KeypadButton>
                   </View>
+                ) : (
+                  <KeypadButton
+                    accessibilityLabel="Close set keyboard"
+                    onPress={onClose}
+                  >
+                    <View style={styles.keyIconPair}>
+                      <Icon
+                        name="keypad-outline"
+                        size={21}
+                        color={palette.ink}
+                      />
+                      <Icon
+                        name="chevron-down-circle-outline"
+                        size={16}
+                        color={palette.ink}
+                      />
+                    </View>
+                  </KeypadButton>
+                )}
+              </View>
+              <View style={styles.keypadRow}>
+                <KeypadButton onPress={() => handleKey("4")}>4</KeypadButton>
+                <KeypadButton onPress={() => handleKey("5")}>5</KeypadButton>
+                <KeypadButton onPress={() => handleKey("6")}>6</KeypadButton>
+                <View style={styles.keypadSplitCell}>
+                  <KeypadButton onPress={() => stepValue(-1)}>-</KeypadButton>
+                  <KeypadButton onPress={() => stepValue(1)}>+</KeypadButton>
                 </View>
-              </>
-            )}
+              </View>
+              <View style={styles.keypadRow}>
+                <KeypadButton onPress={() => handleKey("7")}>7</KeypadButton>
+                <KeypadButton onPress={() => handleKey("8")}>8</KeypadButton>
+                <KeypadButton onPress={() => handleKey("9")}>9</KeypadButton>
+                {field === "weight" ? (
+                  <View style={styles.keypadSplitCell}>
+                    <KeypadButton
+                      accessibilityLabel="Toggle body weight"
+                      active={set.weightModifier === "bodyweight"}
+                      onPress={() => {
+                        onDispatch({
+                          type: "FOCUS_FIELD",
+                          exerciseIndex: target.exerciseIndex,
+                          setIndex,
+                          field: "weight",
+                        });
+                        onDispatch({ type: "TOGGLE_BODYWEIGHT" });
+                        setField("weight");
+                      }}
+                    >
+                      <View style={styles.keyIconPair}>
+                        <Icon
+                          name="person-outline"
+                          size={17}
+                          color={palette.ink}
+                        />
+                        <Text style={styles.keyActionLabel}>BW</Text>
+                      </View>
+                    </KeypadButton>
+                    <KeypadButton
+                      accessibilityLabel="Toggle body weight sign"
+                      disabled={set.weightModifier !== "bodyweight"}
+                      onPress={toggleSign}
+                    >
+                      +/-
+                    </KeypadButton>
+                  </View>
+                ) : (
+                  <KeypadButton
+                    accessibilityLabel="Add reps after pause"
+                    onPress={addShortRestSet}
+                  >
+                    <View style={styles.keyIconStack}>
+                      <Icon
+                        name="timer-outline"
+                        size={17}
+                        color={palette.ink}
+                      />
+                      <Text style={styles.keyActionLabel}>pause +</Text>
+                    </View>
+                  </KeypadButton>
+                )}
+              </View>
+              <View style={styles.keypadRow}>
+                {field === "weight" ? (
+                  <KeypadButton onPress={() => handleKey(".")}>.</KeypadButton>
+                ) : (
+                  <View style={styles.keyBlank} />
+                )}
+                <KeypadButton onPress={() => handleKey("0")}>0</KeypadButton>
+                <KeypadButton icon="backspace-outline" onPress={backspace} />
+                <KeypadButton
+                  primary
+                  accessibilityLabel={
+                    field === "reps" ? "Complete set" : "Next field"
+                  }
+                  onPress={
+                    field === "reps"
+                      ? completeAndAdvanceSetEditor
+                      : advanceSetEditor
+                  }
+                >
+                  {field === "reps" ? (
+                    <Icon name="checkmark" size={22} color={palette.raised} />
+                  ) : (
+                    "Next"
+                  )}
+                </KeypadButton>
+              </View>
+            </View>
           </View>
         </View>
 
         <IncreaseWeightHelperModal
+          initialState={initialState}
           visible={helperMode === "increase"}
           defaultWeight={helperWeight}
           defaultReps={helperReps}
@@ -10373,6 +9752,7 @@ function SetEditorModal({
           onUse={useWeightSuggestion}
         />
         <PlateCalculatorHelperModal
+          initialState={initialState}
           visible={helperMode === "plates"}
           defaultWeight={helperWeight}
           defaultStartingWeight={exercise.plateStartingWeight}
@@ -10416,53 +9796,6 @@ function formatKeyboardWeightLabel(
 ) {
   if (weight == null) return weightModifier === "bodyweight" ? "BW" : "-lb";
   return formatWeightLabel(weight, weightModifier);
-}
-
-function formatKeyboardWeightEntryLabel(
-  entry: string,
-  weightModifier?: "bodyweight",
-) {
-  const trimmed = entry.trim();
-  if (!trimmed) return weightModifier === "bodyweight" ? "BW" : "-lb";
-  if (weightModifier !== "bodyweight") return `${trimmed}lb`;
-
-  const numericValue = Number(trimmed);
-  if (!Number.isFinite(numericValue) || numericValue === 0) return "BW";
-  return `BW${numericValue > 0 ? "+" : ""}${trimmed}lb`;
-}
-
-function materializeEditedExerciseSets(
-  exercise: WorkoutExercise,
-  editedSetIndex: number,
-  updates: {
-    weight?: number | null;
-    reps?: number | null;
-    weightModifier?: WorkoutSet["weightModifier"];
-  },
-) {
-  return exercise.sets.map((set, setIndex) => {
-    const displayed = getSetDisplayValues(exercise, set, setIndex);
-    const isEditedSet = setIndex === editedSetIndex;
-    const hasWeightUpdate = isEditedSet && "weight" in updates;
-    const hasRepsUpdate = isEditedSet && "reps" in updates;
-    const nextWeight = hasWeightUpdate ? updates.weight! : displayed.weight;
-    const nextReps = hasRepsUpdate ? updates.reps! : displayed.reps;
-    const nextWeightModifier =
-      isEditedSet && "weightModifier" in updates
-        ? updates.weightModifier
-        : displayed.weightModifier;
-
-    return {
-      ...set,
-      weight: nextWeight,
-      reps: nextReps,
-      weightModifier: nextWeightModifier,
-      weightExplicit:
-        set.weightExplicit || nextWeight !== null || hasWeightUpdate,
-      repsExplicit: set.repsExplicit || nextReps !== null || hasRepsUpdate,
-      completed: set.completed,
-    };
-  });
 }
 
 function KeypadButton({
@@ -10513,598 +9846,6 @@ function KeypadButton({
       )}
     </Pressable>
   );
-}
-
-function IncreaseWeightHelperModal({
-  visible,
-  defaultWeight,
-  defaultReps,
-  defaultLoadMode,
-  onClose,
-  onUse,
-}: {
-  visible: boolean;
-  defaultWeight: number;
-  defaultReps: number;
-  defaultLoadMode?: PlateLoadMode | null;
-  onClose: () => void;
-  onUse: (suggestion: WeightSuggestion) => void;
-}) {
-  const [mode, setMode] = useState<PlateLoadMode>(
-    parsePlateMode(defaultLoadMode),
-  );
-  const [addedWeight, setAddedWeight] = useState(5);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!visible) return;
-    setMode(parsePlateMode(defaultLoadMode));
-    setAddedWeight(5);
-    setSelectedKey(null);
-  }, [defaultLoadMode, visible]);
-
-  const oneRepMax = estimate1RM(defaultWeight, defaultReps);
-  const rows = buildAddedWeightRepRows(
-    defaultWeight,
-    oneRepMax,
-    addedWeight,
-    mode,
-  );
-  const targetWeight =
-    defaultWeight + (mode === "equal-sides" ? addedWeight * 2 : addedWeight);
-
-  const adjustAddedWeight = (direction: 1 | -1) => {
-    setSelectedKey(null);
-    setAddedWeight((current) =>
-      Math.max(2.5, roundToHalf(current + direction * 2.5)),
-    );
-  };
-
-  return (
-    <AppModal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <DismissibleModalShade onDismiss={onClose} style={styles.helperShade}>
-        <View style={styles.helperDialog}>
-          <View style={styles.helperHeader}>
-            <Text style={styles.helperTitle}>increase weight</Text>
-            <Pressable
-              accessibilityLabel="Close increase weight helper"
-              accessibilityRole="button"
-              style={styles.helperDoneButton}
-              testID="increase-weight-helper-close"
-              onPress={onClose}
-            >
-              <Text style={styles.helperDoneText}>done</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.helperSection}>
-            <Text style={styles.subtleTitle}>current</Text>
-            <Text style={styles.helperLargeText}>
-              {formatSetSummary(defaultWeight, defaultReps)} .{" "}
-              {formatOneRepMax(oneRepMax)}
-            </Text>
-          </View>
-
-          <View style={styles.helperSection}>
-            <Text style={styles.subtleTitle}>add weight</Text>
-            <View style={styles.segmentedRow}>
-              <SegmentedChoice
-                active={mode === "equal-sides"}
-                accessibilityLabel="Use equal sides for increase weight"
-                testID="increase-weight-mode-equal-sides"
-                onPress={() => setMode("equal-sides")}
-              >
-                equal sides
-              </SegmentedChoice>
-              <SegmentedChoice
-                active={mode === "total"}
-                accessibilityLabel="Use total load for increase weight"
-                testID="increase-weight-mode-total"
-                onPress={() => setMode("total")}
-              >
-                total load
-              </SegmentedChoice>
-            </View>
-            <View style={styles.addWeightRow}>
-              <Text style={styles.addWeightValue}>
-                +{formatNumber(addedWeight)}lb
-              </Text>
-              <View style={styles.addWeightButtons}>
-                <Pressable
-                  accessible
-                  accessibilityLabel="Increase added weight"
-                  accessibilityRole="button"
-                  style={styles.addWeightStepButton}
-                  testID="increase-weight-added-weight-increase"
-                  onPress={() => adjustAddedWeight(1)}
-                >
-                  <Text style={styles.addWeightStepText}>+</Text>
-                </Pressable>
-                <Pressable
-                  accessible
-                  accessibilityLabel="Decrease added weight"
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: addedWeight <= 2.5 }}
-                  style={[
-                    styles.addWeightStepButton,
-                    addedWeight <= 2.5 ? styles.keyDisabled : null,
-                  ]}
-                  testID="increase-weight-added-weight-decrease"
-                  onPress={() => {
-                    if (addedWeight > 2.5) {
-                      adjustAddedWeight(-1);
-                    }
-                  }}
-                >
-                  <Text style={styles.addWeightStepText}>-</Text>
-                </Pressable>
-              </View>
-            </View>
-            <Text style={styles.helperMutedLine}>
-              {mode === "equal-sides"
-                ? `per side . ${formatSignedCompactPounds(
-                    targetWeight - defaultWeight,
-                  )} . ${formatNumber(targetWeight)}lb total`
-                : `${formatNumber(targetWeight)}lb total`}
-            </Text>
-          </View>
-
-          <View style={styles.helperSection}>
-            {rows.map((row) => (
-              <View key={row.key} style={styles.suggestionBlock}>
-                <Text style={styles.subtleTitle}>{row.label}</Text>
-                <View
-                  style={[
-                    styles.suggestionRow,
-                    selectedKey === row.key ? styles.suggestionRowActive : null,
-                  ]}
-                >
-                  <Text style={styles.suggestionText}>
-                    {formatSetSummary(row.targetWeight, row.targetReps)} .{" "}
-                    {formatOneRepMax(row.targetOneRepMax)} .{" "}
-                    {formatPercentChangeNarrative(row.percentChange)}
-                  </Text>
-                  <Pressable
-                    accessibilityLabel={`Use ${row.label} increase weight suggestion`}
-                    accessibilityRole="button"
-                    style={styles.useButton}
-                    testID={`increase-weight-use-${row.label}`}
-                    onPress={() => {
-                      setSelectedKey(row.key);
-                      onUse({
-                        weight: row.targetWeight,
-                        reps: row.targetReps,
-                      });
-                    }}
-                  >
-                    <Icon name="checkmark-outline" size={18} />
-                  </Pressable>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          <Pressable
-            accessibilityLabel="Close increase weight helper"
-            accessibilityRole="button"
-            style={styles.helperDoneFooter}
-            testID="increase-weight-helper-done"
-            onPress={onClose}
-          >
-            <Text style={styles.helperDoneFooterText}>done</Text>
-          </Pressable>
-        </View>
-      </DismissibleModalShade>
-    </AppModal>
-  );
-}
-
-function PlateCalculatorHelperModal({
-  visible,
-  defaultWeight,
-  defaultStartingWeight,
-  defaultLoadMode,
-  onClose,
-  onSettingsChange,
-}: {
-  visible: boolean;
-  defaultWeight: number;
-  defaultStartingWeight?: number | null;
-  defaultLoadMode?: PlateLoadMode | null;
-  onClose: () => void;
-  onSettingsChange: (settings: {
-    startingWeight: number | null;
-    loadMode: PlateLoadMode;
-  }) => void;
-}) {
-  const [startingWeight, setStartingWeight] = useState(
-    defaultStartingWeight ?? 45,
-  );
-  const [mode, setMode] = useState<PlateLoadMode>(
-    parsePlateMode(defaultLoadMode),
-  );
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!visible) return;
-    setStartingWeight(defaultStartingWeight ?? 45);
-    setMode(parsePlateMode(defaultLoadMode));
-    setMenuOpen(false);
-  }, [defaultLoadMode, defaultStartingWeight, visible]);
-
-  const platePlan = calculatePlatePlan(defaultWeight, startingWeight, mode);
-
-  const updateStartingWeight = (nextStartingWeight: number) => {
-    setStartingWeight(nextStartingWeight);
-    setMenuOpen(false);
-    onSettingsChange({
-      startingWeight: nextStartingWeight,
-      loadMode: mode,
-    });
-  };
-
-  const updateMode = (nextMode: PlateLoadMode) => {
-    setMode(nextMode);
-    onSettingsChange({
-      startingWeight,
-      loadMode: nextMode,
-    });
-  };
-
-  return (
-    <AppModal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <DismissibleModalShade onDismiss={onClose} style={styles.helperShade}>
-        <View style={styles.helperDialog}>
-          <View style={styles.helperHeader}>
-            <Text style={styles.helperTitle}>plates</Text>
-            <Pressable
-              accessibilityLabel="Close plate calculator"
-              accessibilityRole="button"
-              style={styles.helperDoneButton}
-              testID="plate-calculator-close"
-              onPress={onClose}
-            >
-              <Text style={styles.helperDoneText}>done</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.plateTopRow}>
-            <View>
-              <Text style={styles.subtleTitle}>total weight</Text>
-              <Text style={styles.helperLargeText}>
-                {formatNumber(defaultWeight)}
-                <Text style={styles.helperUnit}>lb</Text>
-              </Text>
-            </View>
-            <View>
-              <Text style={styles.subtleTitle}>starting weight</Text>
-              <Pressable
-                accessibilityLabel="Choose plate starting weight"
-                accessibilityRole="button"
-                style={styles.helperSelect}
-                testID="plate-starting-weight-select"
-                onPress={() => setMenuOpen((open) => !open)}
-              >
-                <Text style={styles.helperSelectText}>
-                  {getStartingWeightLabel(startingWeight)}
-                </Text>
-                <Icon name="chevron-down-outline" size={18} />
-              </Pressable>
-            </View>
-          </View>
-
-          {menuOpen ? (
-            <View style={styles.helperMenu}>
-              {STARTING_WEIGHTS.map((choice) => (
-                <Pressable
-                  key={choice.weight}
-                  accessibilityLabel={`Use ${choice.label} starting weight`}
-                  accessibilityRole="button"
-                  style={styles.helperMenuItem}
-                  testID={`plate-starting-weight-${choice.weight}`}
-                  onPress={() => updateStartingWeight(choice.weight)}
-                >
-                  <Text style={styles.helperMenuItemText}>{choice.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-
-          <View style={styles.segmentedRow}>
-            <SegmentedChoice
-              active={mode === "equal-sides"}
-              accessibilityLabel="Use equal sides for plate calculator"
-              testID="plate-mode-equal-sides"
-              onPress={() => updateMode("equal-sides")}
-            >
-              equal sides
-            </SegmentedChoice>
-            <SegmentedChoice
-              active={mode === "total"}
-              accessibilityLabel="Use total load for plate calculator"
-              testID="plate-mode-total"
-              onPress={() => updateMode("total")}
-            >
-              total load
-            </SegmentedChoice>
-          </View>
-
-          <View style={styles.helperSection}>
-            {platePlan.error ? (
-              <>
-                <HelperLine
-                  left="start"
-                  right={
-                    startingWeight > 0
-                      ? `${formatNumber(startingWeight)}lb`
-                      : "none"
-                  }
-                />
-                <HelperLine
-                  left={mode === "equal-sides" ? "each" : "load"}
-                  right={platePlan.title}
-                />
-                <HelperLine left="-" right={platePlan.error} />
-              </>
-            ) : (
-              <PlatePlanDisplay plan={platePlan} />
-            )}
-          </View>
-
-          <Pressable
-            accessibilityLabel="Close plate calculator"
-            accessibilityRole="button"
-            style={styles.helperDoneFooter}
-            testID="plate-calculator-done"
-            onPress={onClose}
-          >
-            <Text style={styles.helperDoneFooterText}>done</Text>
-          </Pressable>
-        </View>
-      </DismissibleModalShade>
-    </AppModal>
-  );
-}
-
-function SegmentedChoice({
-  active,
-  accessibilityLabel,
-  children,
-  onPress,
-  testID,
-}: {
-  active: boolean;
-  accessibilityLabel?: string;
-  children: string;
-  onPress: () => void;
-  testID?: string;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={accessibilityLabel ?? children}
-      accessibilityRole="button"
-      style={[
-        styles.segmentedButton,
-        active ? styles.segmentedButtonActive : null,
-      ]}
-      onPress={onPress}
-      testID={testID}
-    >
-      <Text
-        style={[
-          styles.segmentedButtonText,
-          active ? styles.segmentedButtonTextActive : null,
-        ]}
-      >
-        {children}
-      </Text>
-    </Pressable>
-  );
-}
-
-function PlatePlanDisplay({
-  plan,
-}: {
-  plan: ReturnType<typeof calculatePlatePlan>;
-}) {
-  const plateBlocks = plan.plates.flatMap((plate) =>
-    Array.from({ length: plate.count }, (_, index) => ({
-      key: `${plate.weight}-${index}`,
-      weight: plate.weight,
-    })),
-  );
-
-  return (
-    <View style={styles.platePlan}>
-      <View style={styles.plateVisualRow}>
-        <BarVisual weight={plan.startingWeight} />
-        <View style={styles.plateBlockRow}>
-          {plateBlocks.length ? (
-            plateBlocks.map((plate) => (
-              <PlateBlock key={plate.key} weight={plate.weight} />
-            ))
-          ) : (
-            <Text style={styles.helperMutedLine}>no plates</Text>
-          )}
-        </View>
-      </View>
-      <Text style={styles.helperMutedLine}>{formatPlateSummary(plan)}</Text>
-      <View style={styles.plateLegendRow}>
-        {PLATES.map((plate) => {
-          const count =
-            plan.plates.find((candidate) => candidate.weight === plate)
-              ?.count ?? 0;
-          return (
-            <View key={plate} style={styles.plateLegendItem}>
-              <PlateChip weight={plate} active={count > 0} />
-              <Text style={styles.plateCountText}>
-                {count > 0 ? `x${count}` : " "}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
-function BarVisual({ weight }: { weight: number }) {
-  return (
-    <View style={styles.barVisual}>
-      <Text style={styles.barVisualText}>
-        {weight > 0 ? `${formatNumber(weight)}lb` : ""}
-      </Text>
-    </View>
-  );
-}
-
-function PlateBlock({ weight }: { weight: PlateWeight }) {
-  const colors = getPlateColor(weight);
-  return (
-    <View
-      style={[
-        styles.plateBlock,
-        {
-          backgroundColor: colors.background,
-          borderColor: colors.border,
-          height: getPlateHeight(weight),
-        },
-      ]}
-    >
-      <Text style={[styles.plateBlockText, { color: colors.text }]}>
-        {formatNumber(weight)}
-      </Text>
-    </View>
-  );
-}
-
-function PlateChip({
-  weight,
-  active,
-}: {
-  weight: PlateWeight;
-  active: boolean;
-}) {
-  const colors = getPlateColor(weight);
-  return (
-    <View
-      style={[
-        styles.plateChip,
-        {
-          backgroundColor: active ? colors.background : palette.raised,
-          borderColor: active ? colors.border : palette.line,
-        },
-      ]}
-    >
-      <Text
-        style={[
-          styles.plateChipText,
-          { color: active ? colors.text : palette.muted },
-        ]}
-      >
-        {formatNumber(weight)}
-      </Text>
-    </View>
-  );
-}
-
-function HelperLine({ left, right }: { left: string; right: string }) {
-  return (
-    <View style={styles.helperLine}>
-      <Text style={styles.helperLineLeft}>{left}</Text>
-      <Text style={styles.helperLineRight}>{right}</Text>
-    </View>
-  );
-}
-
-const STARTING_WEIGHTS = [
-  { label: "none", weight: 0 },
-  { label: "45lb bar", weight: 45 },
-  { label: "25lb bar", weight: 25 },
-  { label: "15lb bar", weight: 15 },
-] as const;
-
-function parsePlateMode(
-  value: PlateLoadMode | null | undefined,
-): PlateLoadMode {
-  return value === "total" ? "total" : "equal-sides";
-}
-
-function getStartingWeightLabel(weight: number) {
-  return (
-    STARTING_WEIGHTS.find((choice) => choice.weight === weight)?.label ??
-    `${formatNumber(weight)}lb`
-  );
-}
-
-function formatSetSummary(weight: number, reps: number) {
-  return `${formatNumber(weight)}lb×${formatNumber(reps)}`;
-}
-
-function formatOneRepMax(oneRepMax: number) {
-  return `${formatNumber(oneRepMax)}lb 1rm`;
-}
-
-function formatSignedCompactPounds(value: number) {
-  if (value > 0) return `+${formatNumber(value)}lb`;
-  if (value < 0) return `-${formatNumber(Math.abs(value))}lb`;
-  return "0lb";
-}
-
-function formatPercentChangeNarrative(value: number) {
-  const rounded = Number(value.toFixed(1));
-  const absolute = formatNumber(Math.abs(rounded));
-  if (rounded > 0) return `+${absolute}% increase`;
-  if (rounded < 0) return `-${absolute}% decrease`;
-  return "same";
-}
-
-function formatPlateSummary(plan: ReturnType<typeof calculatePlatePlan>) {
-  return `${formatPlateWeight(plan.startingWeight)}lb start . ${formatPlateWeight(
-    plan.loadWeight,
-  )}lb ${plan.mode === "equal-sides" ? "per side" : "total"}`;
-}
-
-function roundToHalf(value: number) {
-  return Math.round(value * 2) / 2;
-}
-
-function getPlateHeight(weight: PlateWeight) {
-  if (weight === 45) return 64;
-  if (weight === 35) return 56;
-  if (weight === 25) return 52;
-  if (weight === 10) return 44;
-  if (weight === 5) return 40;
-  return 34;
-}
-
-function getPlateColor(weight: PlateWeight) {
-  if (weight === 45) {
-    return { background: "#ff3347", border: "#4b5563", text: "#fffefa" };
-  }
-  if (weight === 35) {
-    return { background: "#eef1f6", border: "#c8ced8", text: "#7a7468" };
-  }
-  if (weight === 25) {
-    return { background: "#dbe4f1", border: "#9aa7b8", text: "#383225" };
-  }
-  if (weight === 10) {
-    return { background: "#f7b91e", border: "#4b5563", text: "#1f1c17" };
-  }
-  if (weight === 5) {
-    return { background: "#a855f7", border: "#4b5563", text: "#fffefa" };
-  }
-  return { background: "#e8dfce", border: "#a99f8e", text: "#383225" };
 }
 
 function WorkoutStartTimeEditor({
@@ -11381,46 +10122,52 @@ function FinishPreviewModal({
             {workout.exercises.length} exercises .{" "}
             {countWorkoutWorkingSets(workout)} sets
           </Text>
-          <View style={styles.timeInlineRow}>
-            <Text style={styles.metaText}>
-              {formatDateTime(workout.startedAt)} -{" "}
-            </Text>
-            <Pressable
-              accessibilityLabel="Edit finish end date"
-              accessibilityRole="button"
-              style={styles.timeTextButton}
-              testID="finish-preview-end-date"
-              onPress={onEditEndDate}
-            >
-              <Text style={styles.timeTextButtonText}>
-                {formatWorkoutStartDate(workout.completedAt)}
-              </Text>
-            </Pressable>
-            <Text style={styles.metaText}> </Text>
-            <Pressable
-              accessibilityLabel="Edit finish end time"
-              accessibilityRole="button"
-              style={styles.timeTextButton}
-              testID="finish-preview-end-time"
-              onPress={onEditEndTime}
-            >
-              <Text style={styles.timeTextButtonText}>
-                {formatTime(workout.completedAt)}
-              </Text>
-            </Pressable>
-            <Text style={styles.metaText}> (</Text>
-            <Pressable
-              accessibilityLabel="Edit finish duration"
-              accessibilityRole="button"
-              style={styles.timeTextButton}
-              testID="finish-preview-duration"
-              onPress={onEditDuration}
-            >
-              <Text style={styles.timeTextButtonText}>
-                {formatDuration(workout.startedAt, workout.completedAt)}
-              </Text>
-            </Pressable>
-            <Text style={styles.metaText}>)</Text>
+          <View style={styles.previewMetaRows}>
+            <PreviewMetaRow
+              label="start"
+              value={formatDateTime(workout.startedAt)}
+            />
+            <View style={styles.previewMetaRow}>
+              <Text style={styles.previewMetaLabel}>finish</Text>
+              <View style={styles.previewMetaValues}>
+                <Pressable
+                  accessibilityLabel="Edit finish end date"
+                  accessibilityRole="button"
+                  style={styles.timeTextButton}
+                  testID="finish-preview-end-date"
+                  onPress={onEditEndDate}
+                >
+                  <Text style={styles.timeTextButtonText}>
+                    {formatWorkoutStartDate(workout.completedAt)}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Edit finish end time"
+                  accessibilityRole="button"
+                  style={styles.timeTextButton}
+                  testID="finish-preview-end-time"
+                  onPress={onEditEndTime}
+                >
+                  <Text style={styles.timeTextButtonText}>
+                    {formatTime(workout.completedAt)}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.previewMetaRow}>
+              <Text style={styles.previewMetaLabel}>duration</Text>
+              <Pressable
+                accessibilityLabel="Edit finish duration"
+                accessibilityRole="button"
+                style={styles.timeTextButton}
+                testID="finish-preview-duration"
+                onPress={onEditDuration}
+              >
+                <Text style={styles.timeTextButtonText}>
+                  {formatDuration(workout.startedAt, workout.completedAt)}
+                </Text>
+              </Pressable>
+            </View>
           </View>
           <ScrollView
             contentContainerStyle={styles.previewScrollContent}
@@ -11436,16 +10183,11 @@ function FinishPreviewModal({
                   {exercise.name} .{" "}
                   {countCompletedExerciseWorkingSets(exercise)} sets
                 </Text>
-                <Text style={styles.historySummary}>
-                  {summarizeCompletedExerciseSetGroup(
-                    exercise.sets.filter((set) => set.modifier === "warmup"),
-                  ) ?? ""}
-                </Text>
-                <Text style={styles.historySummary}>
-                  {summarizeCompletedExerciseSetGroup(
-                    exercise.sets.filter((set) => set.modifier !== "warmup"),
-                  ) ?? ""}
-                </Text>
+                {buildCompletedExercisePreviewLines(exercise).map((line) => (
+                  <Text key={line} style={styles.historySummary}>
+                    {line}
+                  </Text>
+                ))}
               </View>
             ))}
           </ScrollView>
@@ -11453,6 +10195,7 @@ function FinishPreviewModal({
             <Pressable
               accessibilityLabel="Go back to workout"
               accessibilityRole="button"
+              hitSlop={COMPACT_HIT_SLOP}
               style={styles.iconButton}
               testID="finish-preview-back"
               onPress={onBack}
@@ -11475,6 +10218,15 @@ function FinishPreviewModal({
         </View>
       </DismissibleModalShade>
     </AppModal>
+  );
+}
+
+function PreviewMetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.previewMetaRow}>
+      <Text style={styles.previewMetaLabel}>{label}</Text>
+      <Text style={styles.metaText}>{value}</Text>
+    </View>
   );
 }
 
@@ -11556,94 +10308,6 @@ function parseSetTargetId(setId: string) {
   if (!setId.startsWith("index:")) return null;
   const index = Number(setId.slice("index:".length));
   return Number.isInteger(index) && index >= 0 ? index : null;
-}
-
-function formatWorkoutStartDate(date: Date) {
-  return date
-    .toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
-    .toLowerCase();
-}
-
-function formatTitleDate(date: Date) {
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatElapsedClock(startedAt: Date, endedAt: Date) {
-  const seconds = Math.max(
-    0,
-    Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
-  );
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-
-  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}`;
-  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
-}
-
-function formatAdjustDateTime(date: Date, now: Date) {
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  const time = date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-  if (sameDay) return `Today, ${time}`;
-  const day = date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-  return `${day}, ${time}`;
-}
-
-function defaultCompletedAtForStartTime(startTime: number) {
-  const startDate = new Date(startTime);
-  const now = new Date();
-  const completedAt = mergeTimePart(startDate, now);
-  const minimumCompletedAt = startTime + 60_000;
-  return new Date(Math.max(minimumCompletedAt, completedAt.getTime()));
-}
-
-function completedAtForDuration(startTime: number, durationMinutes: number) {
-  const safeMinutes = Math.max(1, Math.trunc(durationMinutes));
-  return new Date(startTime + safeMinutes * 60_000);
-}
-
-function durationMinutesBetween(startTime: number, completedAt: Date) {
-  return Math.max(1, Math.round((completedAt.getTime() - startTime) / 60_000));
-}
-
-function isDurationEditTarget(
-  target: TimeEditTarget | null,
-): target is DurationEditTarget {
-  return target === "end-duration" || target === "finish-duration";
-}
-
-function mergeDatePart(startDate: Date, selectedDate: Date) {
-  const nextDate = new Date(startDate);
-  nextDate.setFullYear(
-    selectedDate.getFullYear(),
-    selectedDate.getMonth(),
-    selectedDate.getDate(),
-  );
-  return nextDate;
-}
-
-function mergeTimePart(startDate: Date, selectedDate: Date) {
-  const nextDate = new Date(startDate);
-  nextDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
-  return nextDate;
 }
 
 function getNoteValue(workout: Workout, target: NoteEditTarget) {

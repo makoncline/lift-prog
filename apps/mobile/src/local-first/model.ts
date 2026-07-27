@@ -4,7 +4,6 @@ import {
   type PlateLoadMode,
   type PreviousExerciseData,
 } from "@lift-prog/workout-core";
-import type { ExportCurrentUserDataResult } from "@lift-prog/workout-sdk";
 import { z } from "zod";
 
 export type LocalId = string;
@@ -68,8 +67,6 @@ export type LocalWorkoutDetails = LocalPreparedWorkout & {
   completedAt: Date | null;
   notes?: string | null;
 };
-
-export type ProductionExport = ExportCurrentUserDataResult;
 
 export type LocalWorkoutDataClient = {
   listRecent(input?: { limit?: number }): Promise<LocalRecentWorkout[]>;

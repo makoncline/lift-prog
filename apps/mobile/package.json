@@ -33,6 +33,7 @@
     "react-native-safe-area-context": "^5.8.0"
   },
   "devDependencies": {
+    "@libsql/client": "^0.15.4",
     "@types/react": "^19.0.0",
     "vitest": "^3.1.2"
   }
