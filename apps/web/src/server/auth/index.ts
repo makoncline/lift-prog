@@ -77,10 +77,9 @@ export const auth = betterAuth({
   verification: {
     modelName: "authVerification",
   },
-  rateLimit: {
-    enabled: true,
-    storage: "database",
-  },
+  // Use Better Auth's built-in production rate limiter with its default
+  // in-memory storage. Do not switch to database storage unless we explicitly
+  // choose to add and apply the Better Auth-generated rate-limit schema.
   databaseHooks: {
     user: {
       create: {
