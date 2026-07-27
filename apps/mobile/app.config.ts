@@ -40,13 +40,6 @@ const workoutApiBaseUrl =
   cleanBaseUrl(fallbackWorkoutApiBaseUrl) ?? "https://lift.makon.dev";
 const authBaseUrl =
   cleanBaseUrl(process.env.EXPO_PUBLIC_AUTH_BASE_URL) ?? workoutApiBaseUrl;
-const localDevUserId =
-  process.env.EXPO_PUBLIC_MOBILE_LOCAL_DEV_USER_ID ??
-  process.env.LOCAL_DEV_USER_ID;
-const productionImportUrl =
-  process.env.NODE_ENV === "production"
-    ? undefined
-    : process.env.EXPO_PUBLIC_PRODUCTION_IMPORT_URL;
 
 const config: ExpoConfig = {
   name: "Lift Prog",
@@ -76,8 +69,6 @@ const config: ExpoConfig = {
   extra: {
     workoutApiBaseUrl,
     authBaseUrl,
-    localDevUserId,
-    productionImportUrl,
   },
 };
 

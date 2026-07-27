@@ -85,4 +85,19 @@ describe("weight helper added-weight rows", () => {
     expect(rows[0]?.targetOneRepMax).toBeLessThanOrEqual(currentOneRepMax);
     expect(rows[1]?.targetOneRepMax).toBeGreaterThan(currentOneRepMax);
   });
+
+  it("supports lowering weight to find higher-rep equivalents", () => {
+    const currentOneRepMax = 144;
+    const rows = buildAddedWeightRepRows(
+      100,
+      currentOneRepMax,
+      -5,
+      "equal-sides",
+    );
+
+    expect(rows.every((row) => row.targetWeight === 90)).toBe(true);
+    expect(rows[0]?.targetReps).toBeGreaterThan(10);
+    expect(rows[0]?.targetOneRepMax).toBeLessThanOrEqual(currentOneRepMax);
+    expect(rows[1]?.targetOneRepMax).toBeGreaterThan(currentOneRepMax);
+  });
 });

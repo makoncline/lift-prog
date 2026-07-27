@@ -54,6 +54,17 @@ model UserSyncDatabase {
   @@index([status])
 }
 
+model UserSyncDatabaseDeletion {
+  databaseName  String    @id
+  userId        String
+  requestedAt   DateTime  @default(now())
+  lastAttemptAt DateTime?
+  attempts      Int       @default(0)
+  lastError     String?
+
+  @@index([requestedAt])
+}
+
 model AuthUser {
   id            String        @id
   name          String

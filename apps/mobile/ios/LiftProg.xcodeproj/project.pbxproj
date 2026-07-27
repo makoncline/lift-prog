@@ -15,6 +15,7 @@
 		4B9B160D31BE000100A10001 /* LiftProgWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B9B160431BE000100A10001 /* LiftProgWatchApp.swift */; };
 		4B9B160E31BE000100A10001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B9B160531BE000100A10001 /* ContentView.swift */; };
 		4B9B160F31BE000100A10001 /* WatchWorkoutSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B9B160631BE000100A10001 /* WatchWorkoutSnapshot.swift */; };
+		4B9B161B31BE000100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4B9B161A31BE000100A10001 /* Assets.xcassets */; };
 		4B9B170A31BE000100A10001 /* LiftProgRestTimerLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 4B9B170931BE000100A10001 /* LiftProgRestTimerLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4B9B170B31BE000100A10001 /* LiftProgRestTimerLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B9B170431BE000100A10001 /* LiftProgRestTimerLiveActivityBundle.swift */; };
 		4B9B170C31BE000100A10001 /* RestTimerLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B9B170531BE000100A10001 /* RestTimerLiveActivity.swift */; };
@@ -77,6 +78,7 @@
 		4B9B160631BE000100A10001 /* WatchWorkoutSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWorkoutSnapshot.swift; sourceTree = "<group>"; };
 		4B9B160731BE000100A10001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		4B9B160931BE000100A10001 /* LiftProgWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LiftProgWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4B9B161A31BE000100A10001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4B9B170431BE000100A10001 /* LiftProgRestTimerLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiftProgRestTimerLiveActivityBundle.swift; sourceTree = "<group>"; };
 		4B9B170531BE000100A10001 /* RestTimerLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerLiveActivity.swift; sourceTree = "<group>"; };
 		4B9B170631BE000100A10001 /* RestTimerActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerActivityAttributes.swift; sourceTree = "<group>"; };
@@ -174,6 +176,7 @@
 				4B9B160431BE000100A10001 /* LiftProgWatchApp.swift */,
 				4B9B160531BE000100A10001 /* ContentView.swift */,
 				4B9B160631BE000100A10001 /* WatchWorkoutSnapshot.swift */,
+				4B9B161A31BE000100A10001 /* Assets.xcassets */,
 				4B9B160731BE000100A10001 /* Info.plist */,
 			);
 			path = LiftProgWatch;
@@ -356,6 +359,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4B9B161B31BE000100A10001 /* Assets.xcassets in Resources */,
 				031B324ABF02477323CC7550 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -556,7 +560,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = LiftProg/LiftProg.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -596,7 +599,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = LiftProg/LiftProg.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -629,8 +631,8 @@
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -659,8 +661,8 @@
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -689,7 +691,6 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -720,7 +721,6 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4PL22H8UY3;
@@ -772,7 +772,6 @@
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				COPY_PHASE_STRIP = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -838,7 +837,6 @@
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				COPY_PHASE_STRIP = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

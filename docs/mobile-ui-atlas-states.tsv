@@ -1,0 +1,140 @@
+id	group	name	capture	notes
+01-launch-loading	startup	Launch loading	simulator	Cold launch before the local database opens.
+02-local-data-loading	startup	Local data loading	simulator	Local-first database is opening.
+03-local-data-error	startup	Local data error	simulator	Local database failed to open; retry is available.
+04-auth-email	startup	Cloud sign-in email	simulator	Email-only step before a code is requested.
+05-auth-email-error	startup	Cloud sign-in email error	simulator	Send-code request failed.
+06-auth-code	startup	Cloud sign-in code	simulator	Code-only step after the email is sent.
+07-auth-code-error	startup	Cloud sign-in code error	simulator	Code verification failed.
+08-root-error	startup	Root error boundary	simulator	Unexpected app-level render failure.
+09-home-populated	home	Workout history	simulator	Normal home screen with saved workouts.
+10-home-empty	home	Empty workout history	simulator	No saved workouts and no active draft.
+11-home-loading	home	Workout history loading	simulator	Remote or local history refresh is pending.
+12-home-error	home	Workout history error	simulator	History failed to load; retry remains available.
+13-home-refreshing	home	Workout history refreshing	simulator	Existing history stays visible during refresh.
+14-home-active-workout	home	Active workout drawer	simulator	A draft workout continues behind the home screen.
+15-settings-local	settings	Local-only settings	simulator	No cloud account is connected.
+16-settings-connected	settings	Connected settings	simulator	Cloud backup is connected and up to date.
+17-settings-syncing	settings	Settings while syncing	simulator	Cloud backup is in progress.
+18-settings-offline	settings	Settings while offline	simulator	Cloud backup is connected but unavailable.
+19-delete-workout-confirm	settings	Delete workout confirmation	simulator	Destructive confirmation from workout history.
+20-delete-account-confirm	settings	Delete account confirmation	simulator	Destructive account confirmation.
+21-workout-empty	workout	Empty active workout	simulator	New workout before an exercise is added.
+22-workout-active	workout	Active workout	simulator	Normal active workout with sets.
+23-workout-past-review	workout	Past workout review	simulator	Read-only review of a completed workout.
+24-workout-past-edit	workout	Past workout edit	simulator	Editable draft of a completed workout.
+25-workout-menu	workout	Workout command menu	simulator	Workout-level actions.
+26-workout-title-edit	workout	Inline workout title edit	simulator	Native text keyboard edits the title in place.
+27-workout-note-edit	workout	Inline workout note edit	simulator	Native text keyboard edits the workout note in place.
+28-body-weight-edit	workout	Body weight editor	simulator	Edit manually or reset to Apple Health.
+29-workout-rest-times	workout	Workout rest times	simulator	Warm-up and working-set defaults.
+30-exercise-plan	workout	Exercise plan editor	simulator	Add, remove, and reorder exercises.
+31-exercise-search	workout	Exercise search results	simulator	Filtered user and catalog exercise results.
+32-exercise-create	workout	Create custom exercise	simulator	Search term does not match an existing exercise.
+33-time-automatic	workout	Automatic workout timing	simulator	Active workout has no editable end time.
+34-time-manual	workout	Manual workout timing	simulator	Start, end, and duration are editable.
+35-start-time-picker	workout	Start date and time picker	simulator	Native Apple date and time control.
+36-end-time-picker	workout	End date and time picker	simulator	Native Apple date and time control.
+37-rest-timer-presets	workout	Rest timer presets	simulator	Preset wheel with current duration centered.
+38-rest-timer-custom	workout	Custom rest timer	simulator	Ten-second increment picker.
+39-rest-timer-running	workout	Running rest timer	simulator	Timer button shows remaining-time progress.
+40-exercise-menu	workout	Exercise command menu	simulator	Notes, preferences, rest times, and removal.
+41-pinned-note-edit	workout	Inline pinned exercise note	simulator	Native keyboard; pin remains visible.
+42-workout-exercise-note-edit	workout	Inline workout exercise note	simulator	Note applies only to this workout exercise.
+43-set-note-edit	workout	Inline set note	simulator	Note stays below its set.
+44-previous-set-peek	workout	Previous set peek	simulator	Press-and-hold reveals matching prior performance.
+45-set-swipe-actions	workout	Set swipe actions	simulator	Note and delete controls are exposed.
+46-delete-set-confirm	workout	Delete set confirmation	simulator	Parent-set removal confirmation.
+47-delete-pause-confirm	workout	Delete pause segment confirmation	simulator	Extension removal confirmation.
+48-weight-keyboard	keyboards	Weight keypad	simulator	Weight field is the only selected value.
+49-reps-keyboard	keyboards	Reps keypad	simulator	Reps field is the only selected value.
+51-incomplete-sets	workout	Incomplete sets warning	simulator	Return, complete all, or continue.
+52-finish-preview	workout	Finish workout preview	simulator	Scrollable workout summary before final save.
+53-duration-edit	workout	Workout duration editor	simulator	Duration updates the end time.
+54-end-date-edit	workout	Workout end date editor	simulator	End date uses the workout date.
+55-end-time-edit	workout	Workout end time editor	simulator	End time updates the duration.
+56-workout-error	workout	Workout error boundary	simulator	Workout-level failure preserves a route back.
+57-exercise-about	exercise-details	Exercise details: About	simulator	Pinned and workout notes plus preferences.
+58-exercise-history	exercise-details	Exercise details: History	simulator	Workout, exercise, and set notes with prior sets.
+59-exercise-charts	exercise-details	Exercise details: Charts	simulator	Progress charts and selectable values.
+60-exercise-records	exercise-details	Exercise details: Records	simulator	Exercise records.
+61-exercise-edit	exercise-details	Edit user exercise	simulator	Starting weight and load mode.
+62-starting-weight-picker	exercise-details	Starting weight picker	simulator	Known bars, machines, none, and custom.
+63-increase-total	calculators	Increase weight: total load	simulator	Positive or negative total-load adjustment.
+64-increase-equal	calculators	Increase weight: equal sides	simulator	Per-side change and new total.
+65-increase-negative	calculators	Decrease weight suggestion	simulator	Negative load change with higher reps.
+66-plates-total	calculators	Plate calculator: total load	simulator	Total plates with no side split.
+67-plates-equal	calculators	Plate calculator: equal sides	simulator	One bar side and matching plates.
+68-plates-starting-weight	calculators	Plate starting weight menu	simulator	Bar or custom starting weight selection.
+69-plates-impossible	calculators	Plate load not representable	simulator	Equal-side minimum increment cannot make the target.
+70-watch-idle	watch	Watch: no active workout	watch-simulator	Companion app base state.
+71-watch-active	watch	Watch: active exercise and set	watch-simulator	Current phone workout is synchronized.
+72-watch-edit	watch	Watch: Digital Crown edit	watch-simulator	Weight and reps controls fit on screen.
+73-watch-timer-idle	watch	Watch: timer idle	watch-simulator	Default rest can be started.
+74-watch-timer-running	watch	Watch: timer running	watch-simulator	Remaining time and progress are current.
+75-watch-ended	watch	Watch: workout ended	watch-simulator	Companion returns to the idle state.
+76-health-permission	system	Apple Health permission	device	Apple-controlled permission sheet.
+77-notification-permission	system	Notification permission	device	Apple-controlled permission sheet.
+78-dynamic-island	system	Rest timer Dynamic Island	device	Live Activity while a rest timer runs.
+79-lock-screen-rest	system	Rest timer lock screen	device	Single current rest notification.
+80-lock-screen-unfinished	system	Unfinished workout reminder	device	Inactivity reminder routes back to the workout.
+81-testflight-install	system	TestFlight install and launch	device	External distribution surface.
+82-auth-email-sending	startup	Cloud sign-in: sending code	simulator	Email screen while the code request is pending.
+83-auth-code-verifying	startup	Cloud sign-in: checking code	simulator	Code screen while verification is pending.
+84-auth-code-resending	startup	Cloud sign-in: resending code	simulator	Code screen while a replacement code is requested.
+85-home-copying	home	Workout copy in progress	simulator	A history row shows that its copy action is pending.
+86-home-opening-edit	home	Opening a past workout	simulator	A history row shows that its edit action is pending.
+87-home-show-more	home	Expanded workout history	simulator	More than the initial history page is visible.
+88-settings-deleting-account	settings	Account deletion in progress	simulator	Settings disables the destructive action while deletion runs.
+89-body-weight-health-loading	workout	Body weight: reading Apple Health	simulator	Health value is pending and manual input remains visible.
+90-body-weight-error	workout	Body weight validation or Health error	simulator	The body-weight dialog shows a recoverable error.
+91-workout-menu-past	workout	Past workout command menu	simulator	Workout actions appropriate to a completed workout.
+92-workout-note-new	workout	New inline workout note	simulator	Empty note field has focus and the native keyboard is visible.
+93-workout-note-existing	workout	Edit existing workout note	simulator	Existing multiline note is edited in place.
+94-exercise-plan-empty	workout	Empty exercise plan editor	simulator	Plan sheet before an exercise is added.
+95-exercise-search-empty	workout	Exercise search: no matches	simulator	Search can create a custom exercise from the entered name.
+96-exercise-plan-reordering	workout	Exercise plan reorder	simulator	A dragged exercise row shows its live destination.
+97-remove-exercise-confirm	workout	Remove exercise confirmation	simulator	Removing an exercise warns that its sets are removed.
+98-start-time-expanded	workout	Manual timing: start picker expanded	simulator	Start date and time wheel is visible inside the timing dialog.
+99-end-time-expanded	workout	Manual timing: end picker expanded	simulator	End date and time wheel is visible inside the timing dialog.
+100-exercise-rest-times	workout	Exercise rest times	simulator	Exercise-specific warm-up and working-set defaults.
+101-exercise-preferences	workout	Exercise preferences	simulator	Starting weight and total or equal-side load mode.
+102-pinned-note-visible	workout	Pinned exercise note visible	simulator	Pin icon and note appear below the exercise title.
+103-workout-exercise-note-visible	workout	Workout exercise note visible	simulator	Workout-only note appears without a label.
+104-set-note-visible	workout	Set note visible	simulator	Set note appears directly below its owning set.
+105-set-incomplete	workout	Incomplete set row	simulator	No trailing completion icon is shown.
+106-set-complete	workout	Completed set row	simulator	A plain trailing check shows completion.
+107-set-warm-up	workout	Warm-up set row	simulator	WU label distinguishes the warm-up set.
+108-set-pause-segment	workout	Pause segment	simulator	Pause separator and additional load or reps remain one logical set.
+109-previous-set-peek-notes	workout	Previous set peek with notes	simulator	Press-and-hold shows previous set data and its notes.
+110-base-set-swipe-actions	workout	Base set swipe actions	simulator	Note and delete actions are exposed for the logical set.
+111-pause-swipe-actions	workout	Pause segment swipe actions	simulator	Delete action is exposed for only the pause segment.
+112-weight-keyboard-external	keyboards	Weight keypad: external load	simulator	Decimal external weight entry and helper buttons.
+113-weight-keyboard-bodyweight	keyboards	Weight keypad: body weight	simulator	BW mode with positive, zero, or negative offset.
+114-reps-keyboard-pause	keyboards	Reps keypad: pause segment	simulator	Additional reps after a pause are edited independently.
+115-finish-preview-scrolled	workout	Finish preview: scrolled	simulator	Later exercises remain reachable in a long summary.
+116-past-workout-finish-preview	workout	Past edit save preview	simulator	A past workout still shows a review before changes are saved.
+117-exercise-about-empty	exercise-details	Exercise details: About empty	simulator	No pinned or workout note exists.
+118-exercise-history-empty	exercise-details	Exercise details: History empty	simulator	No previous performance exists.
+119-exercise-charts-empty	exercise-details	Exercise details: Charts empty	simulator	Insufficient history explains why charts are empty.
+120-exercise-records-empty	exercise-details	Exercise details: Records empty	simulator	No records exist for the exercise.
+121-starting-weight-custom	exercise-details	Custom starting weight	simulator	Custom bar or machine starting load is editable.
+122-increase-adjusted	calculators	Increase weight: adjusted suggestion	simulator	Changed load shows under, exact, and over rep suggestions.
+123-plates-adjusted	calculators	Plate calculator: adjusted target	simulator	Minus, plus, and reset controls update the plate plan.
+124-watch-active-warm-up	watch	Watch: active warm-up set	watch-simulator	Warm-up identity, load, reps, and completion fit on screen.
+125-watch-active-working	watch	Watch: active working set	watch-simulator	Working-set identity, load, reps, and completion fit on screen.
+126-watch-next-set	watch	Watch: snapped to next set	watch-simulator	Horizontal navigation centers the next set.
+127-watch-next-exercise	watch	Watch: snapped to next exercise	watch-simulator	Vertical navigation centers the next exercise.
+128-watch-completed-set	watch	Watch: completed set	watch-simulator	Completion advances to the next set and starts rest when applicable.
+129-watch-timer-reset	watch	Watch: timer reset	watch-simulator	A running timer returns to its default idle duration.
+130-health-save-success	system	Apple Health workout saved	device	Native success result after a finished workout is written.
+131-health-save-error	system	Apple Health workout save error	device	Recoverable native Health write failure.
+132-notification-rest-active	system	Active rest notification	device	Exactly one rest notification is scheduled.
+133-notification-rest-cancelled	system	Cancelled rest notification	device	The prior rest notification is removed.
+134-close-workout-confirm	workout	Close active workout confirmation	simulator	Keep editing, close with draft saved, or discard the draft.
+135-auth-email-keyboard	startup	Cloud sign-in: email keyboard	simulator	Email input remains visible above the native keyboard.
+136-auth-code-keyboard	startup	Cloud sign-in: code keyboard	simulator	OTP input remains visible above the native numeric keyboard.
+137-exercise-note-keyboard	exercise-details	Edit pinned exercise note with keyboard	simulator	The full-screen exercise editor remains usable above the native keyboard.
+138-set-command-sheet	workout	Set command sheet	simulator	Native set actions expose note editing, pause extension, and delete.
+139-rest-choice-sheet	workout	Rest choice sheet	simulator	Native rest choices expose standard rest and pause.
+140-change-set-kind-confirm	workout	Change set kind confirmation	simulator	Changing a working set to a warm-up requires confirmation.

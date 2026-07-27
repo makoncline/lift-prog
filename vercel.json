@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/maintenance/sync-database-deletions",
+      "schedule": "15 3 * * *"
+    }
+  ]
+}

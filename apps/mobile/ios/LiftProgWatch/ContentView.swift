@@ -18,6 +18,14 @@ private enum WatchSwipeDirection {
   case nextExercise
 }
 
+private enum WatchTheme {
+  static let controlRadius: CGFloat = 8
+  static let controlFill = Color.white.opacity(0.08)
+  static let controlLine = Color.white.opacity(0.16)
+  static let completeFill = Color(red: 0.30, green: 0.42, blue: 0.32).opacity(0.42)
+  static let completeLine = Color(red: 0.55, green: 0.68, blue: 0.57).opacity(0.75)
+}
+
 struct ContentView: View {
   @EnvironmentObject private var store: WatchWorkoutStore
   @State private var focusedField: WatchSetField = .reps
@@ -86,6 +94,11 @@ struct ContentView: View {
       isHapticFeedbackEnabled: true
     )
     .onAppear {
+#if DEBUG
+      if store.atlasState == 72 {
+        focusedField = .weight
+      }
+#endif
       store.requestSnapshot()
       syncEditorValues(from: store.snapshot)
     }
@@ -181,12 +194,12 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, compact ? 5 : 6)
         .background(
-          RoundedRectangle(cornerRadius: 8)
-            .fill(store.snapshot.setCompleted ? Color.green.opacity(0.22) : Color.white.opacity(0.08))
+          RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
+            .fill(store.snapshot.setCompleted ? WatchTheme.completeFill : WatchTheme.controlFill)
         )
         .overlay(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(store.snapshot.setCompleted ? Color.green.opacity(0.65) : Color.white.opacity(0.16), lineWidth: 1)
+          RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
+            .stroke(store.snapshot.setCompleted ? WatchTheme.completeLine : WatchTheme.controlLine, lineWidth: 1)
         )
       }
       .buttonStyle(.plain)
@@ -234,8 +247,8 @@ struct ContentView: View {
       .frame(maxWidth: .infinity)
       .padding(.vertical, compact ? 5 : 6)
       .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color.white.opacity(0.08))
+        RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
+          .fill(WatchTheme.controlFill)
       )
 
       HStack(spacing: 5) {
@@ -272,7 +285,7 @@ struct ContentView: View {
     .padding(.vertical, compact ? 4 : 5)
     .padding(.horizontal, 6)
     .background(
-      RoundedRectangle(cornerRadius: 8)
+      RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
         .fill(Color.white.opacity(0.06))
     )
   }
@@ -355,11 +368,11 @@ struct ContentView: View {
       .padding(.vertical, compact ? 4 : 5)
       .padding(.horizontal, 6)
       .background(
-        RoundedRectangle(cornerRadius: 8)
+        RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
           .fill(field == focusedField ? Color.white.opacity(0.18) : Color.white.opacity(0.06))
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 8)
+        RoundedRectangle(cornerRadius: WatchTheme.controlRadius)
           .stroke(field == focusedField ? Color.white.opacity(0.75) : Color.white.opacity(0.14), lineWidth: 1)
       )
     }

@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  Linking,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -8,7 +9,15 @@ import {
 } from "react-native";
 
 import { reportMobileError } from "../lib/error-reporting";
-import { palette } from "./theme";
+import {
+  controlSize,
+  layout,
+  monoFont,
+  palette,
+  radius,
+  space,
+  typeScale,
+} from "./theme";
 
 type MobileErrorBoundaryProps = {
   children: React.ReactNode;
@@ -18,6 +27,7 @@ type MobileErrorBoundaryProps = {
   getHeaders?: () => Promise<Record<string, string>>;
   recoverLabel?: string;
   onRecover?: () => void;
+  initialErrorMessage?: string;
 };
 
 type MobileErrorBoundaryState = {
@@ -30,7 +40,9 @@ export class MobileErrorBoundary extends React.Component<
   MobileErrorBoundaryState
 > {
   state: MobileErrorBoundaryState = {
-    error: null,
+    error: this.props.initialErrorMessage
+      ? new Error(this.props.initialErrorMessage)
+      : null,
   };
 
   static getDerivedStateFromError(error: Error) {
@@ -60,8 +72,7 @@ export class MobileErrorBoundary extends React.Component<
             {this.props.title ?? "something broke"}
           </Text>
           <Text style={boundaryStyles.meta} selectable>
-            error reported
-            {this.state.reportId ? ` · ${this.state.reportId.slice(0, 8)}` : ""}
+            reference {this.state.reportId?.slice(0, 8) ?? this.props.scope}
           </Text>
           <Text style={boundaryStyles.message} selectable>
             {this.state.error.message || "Unknown error"}
@@ -90,6 +101,15 @@ export class MobileErrorBoundary extends React.Component<
                 </Text>
               </Pressable>
             ) : null}
+            <Pressable
+              accessibilityRole="link"
+              style={boundaryStyles.action}
+              onPress={() => {
+                void Linking.openURL("https://lift.makon.dev/support");
+              }}
+            >
+              <Text style={boundaryStyles.actionText}>support</Text>
+            </Pressable>
           </View>
         </View>
       </SafeAreaView>
@@ -105,47 +125,48 @@ const boundaryStyles = StyleSheet.create({
   content: {
     flex: 1,
     justifyContent: "center",
-    padding: 20,
-    gap: 10,
+    paddingHorizontal: layout.pageGutter,
+    paddingBottom: 64,
+    gap: space.md,
   },
   title: {
     color: palette.ink,
-    fontFamily: "Menlo",
-    fontSize: 28,
+    fontFamily: monoFont,
+    fontSize: typeScale.title,
     fontWeight: "800",
   },
   meta: {
-    color: palette.muted,
-    fontFamily: "Menlo",
-    fontSize: 13,
+    color: palette.tertiary,
+    fontFamily: monoFont,
+    fontSize: typeScale.caption,
   },
   message: {
     alignSelf: "flex-start",
-    borderRadius: 6,
+    borderRadius: radius.field,
     backgroundColor: palette.soft,
     color: palette.ink,
-    fontFamily: "Menlo",
-    fontSize: 15,
+    fontFamily: monoFont,
+    fontSize: typeScale.metadata,
     lineHeight: 21,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
   },
   actions: {
     flexDirection: "row",
-    gap: 8,
-    paddingTop: 4,
+    gap: space.sm,
+    paddingTop: space.xs,
   },
   action: {
-    minHeight: 34,
+    minHeight: controlSize.row,
     justifyContent: "center",
     borderWidth: 1,
     borderColor: palette.line,
-    borderRadius: 7,
-    paddingHorizontal: 10,
+    borderRadius: radius.field,
+    paddingHorizontal: space.lg,
   },
   actionText: {
     color: palette.ink,
-    fontFamily: "Menlo",
-    fontSize: 14,
+    fontFamily: monoFont,
+    fontSize: typeScale.metadata,
   },
 });
