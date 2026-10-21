@@ -60,6 +60,7 @@ import {
   type WorkoutSet,
   type WeightModifier,
   type SetModifier,
+  CompletedWorkoutSchema,
   type CompletedWorkout,
 } from "@lift-prog/workout-core";
 import { api } from "@/trpc/react";
@@ -374,7 +375,7 @@ export default function WorkoutComponent({
     onSuccess: (_data, variables) => {
       toast.success("Workout saved successfully!");
       localStorage.removeItem(LOCAL_STORAGE_WORKOUT_KEY);
-      setFinishedWorkout(variables);
+      setFinishedWorkout(CompletedWorkoutSchema.parse(variables));
     },
     onError: (error) => {
       console.error("Failed to save workout:", error);

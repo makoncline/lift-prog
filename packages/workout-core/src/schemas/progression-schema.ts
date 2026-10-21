@@ -4,29 +4,31 @@ export const progressionSchema = z
   .object({
     minReps: z
       .number({
-        invalid_type_error: "Min reps must be a number.",
-        required_error: "Min reps is required.",
+        error: (issue) => issue.input === undefined
+          ? "Min reps is required."
+          : "Min reps must be a number.",
       })
       .int("Min reps must be a whole number.")
       .positive("Min reps must be positive.")
       .default(8),
     maxReps: z
       .number({
-        invalid_type_error: "Max reps must be a number.",
-        required_error: "Max reps is required.",
+        error: (issue) => issue.input === undefined
+          ? "Max reps is required."
+          : "Max reps must be a number.",
       })
       .int("Max reps must be a whole number.")
       .positive("Max reps must be positive.")
       .default(12),
     prevWeight: z
       .number({
-        invalid_type_error: "Previous weight must be a number.",
+        error: "Previous weight must be a number.",
       })
       .nullable()
       .optional(),
     prevReps: z
       .number({
-        invalid_type_error: "Previous reps must be a number.",
+        error: "Previous reps must be a number.",
       })
       .int("Previous reps must be a whole number.")
       .positive("Previous reps must be positive.")
@@ -34,8 +36,9 @@ export const progressionSchema = z
       .optional(),
     targetReps: z
       .number({
-        invalid_type_error: "Target reps must be a number.",
-        required_error: "Target reps is required.",
+        error: (issue) => issue.input === undefined
+          ? "Target reps is required."
+          : "Target reps must be a number.",
       })
       .int("Target reps must be a whole number.")
       .positive("Target reps must be positive.")
@@ -43,26 +46,27 @@ export const progressionSchema = z
       .optional(), // Make optional initially, set default later
     target1RMIncrement: z
       .number({
-        invalid_type_error: "1RM increment must be a number.",
-        required_error: "1RM increment is required.",
+        error: (issue) => issue.input === undefined
+          ? "1RM increment is required."
+          : "1RM increment must be a number.",
       })
       .default(-5),
   })
   .refine((data) => data.maxReps >= data.minReps, {
-    message: "Max reps cannot be less than min reps.",
+    error: "Max reps cannot be less than min reps.",
     path: ["maxReps"], // Point error to maxReps field
   })
   .refine(
     (data) => data.targetReps === undefined || data.targetReps >= data.minReps,
     {
-      message: "Target reps cannot be less than min reps.",
+      error: "Target reps cannot be less than min reps.",
       path: ["targetReps"],
     },
   )
   .refine(
     (data) => data.targetReps === undefined || data.targetReps <= data.maxReps,
     {
-      message: "Target reps cannot be greater than max reps.",
+      error: "Target reps cannot be greater than max reps.",
       path: ["targetReps"],
     },
   );
