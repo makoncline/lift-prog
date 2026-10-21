@@ -29,8 +29,34 @@
     "@types/node": "^20.14.10",
     "prettier": "^3.5.3",
     "prettier-plugin-tailwindcss": "^0.6.11",
-    "prisma": "^6.5.0",
-    "typescript": "^5.8.2"
+    "prisma": "6.6.0",
+    "typescript": "^5.8.2",
+    "@prisma/client": "6.6.0"
   },
-  "packageManager": "npm@11.3.0"
+  "packageManager": "npm@11.21.1",
+  "overrides": {
+    "sharp": "0.35.5",
+    "postcss": "8.5.31",
+    "js-yaml@>=3.0.0 <3.15.2": "3.15.2",
+    "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
+    "ws@>=7.0.0 <7.5.11": "7.5.11",
+    "ws@>=8.0.0 <8.21.0": "8.21.0",
+    "@xmldom/xmldom@>=0.8.0 <0.8.15": "0.8.15",
+    "browserslist@>=4.0.0 <4.28.7": "4.28.7",
+    "compression@>=1.0.0 <1.8.2": "1.8.2",
+    "flatted@>=3.0.0 <3.4.2": "3.4.2",
+    "minimatch@>=3.0.0 <3.1.4": "3.1.4",
+    "minimatch@>=9.0.0 <9.0.7": "9.0.7",
+    "picomatch@>=2.0.0 <2.3.2": "2.3.2",
+    "rollup@>=4.0.0 <4.59.0": "4.59.0",
+    "vite@>=6.0.0 <6.4.4": "6.4.4",
+    "brace-expansion@>=1.0.0 <1.1.21": "1.1.21",
+    "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
+    "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
+    "lodash@>=4.0.0 <4.18.1": "4.18.1"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": "^24.22.1"
+  }
 }

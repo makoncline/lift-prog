@@ -392,8 +392,7 @@ function getReadoutSegments(
     const previousSet = sets[startIndex - 1];
     if (
       !set ||
-      !previousSet ||
-      set.kind !== previousSet.kind ||
+      set.kind !== previousSet?.kind ||
       !isCompoundRest(set.restBefore, restTypes)
     ) {
       break;
@@ -407,8 +406,7 @@ function getReadoutSegments(
     const nextSet = sets[endIndex + 1];
     if (
       !set ||
-      !nextSet ||
-      nextSet.kind !== set.kind ||
+      nextSet?.kind !== set.kind ||
       !isCompoundRest(nextSet.restBefore, restTypes)
     ) {
       break;

@@ -12,14 +12,14 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
-    "@better-auth/expo": "^1.6.20",
+    "@better-auth/expo": "1.6.22",
     "@lift-prog/workout-core": "file:../../packages/workout-core",
     "@lift-prog/workout-sdk": "file:../../packages/workout-sdk",
     "@react-native-community/datetimepicker": "8.6.0",
     "@react-native-picker/picker": "^2.11.4",
     "@tursodatabase/sync-react-native": "^0.6.1",
-    "better-auth": "^1.6.20",
-    "expo": "^55.0.8",
+    "better-auth": "1.6.22",
+    "expo": "^55.0.31",
     "expo-constants": "~55.0.9",
     "expo-dev-client": "~55.0.35",
     "expo-haptics": "~55.0.14",
@@ -30,10 +30,11 @@
     "invariant": "^2.2.4",
     "react": "19.2.4",
     "react-native": "0.83.2",
-    "react-native-safe-area-context": "^5.8.0"
+    "react-native-safe-area-context": "^5.8.0",
+    "@better-auth/core": "1.6.22"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
-    "vitest": "^3.1.2"
+    "vitest": "4.1.11"
   }
 }
