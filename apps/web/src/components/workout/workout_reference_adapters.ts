@@ -95,7 +95,7 @@ export function normalizeCurrentSetOrder(sets: CurrentExerciseSet[]) {
 
   return groupedSets.map((set, index, allSets) => {
     const previousSet = allSets[index - 1];
-    if (!previousSet || previousSet.kind !== set.kind) {
+    if (previousSet?.kind !== set.kind) {
       return { ...set, restBefore: undefined };
     }
     return set;

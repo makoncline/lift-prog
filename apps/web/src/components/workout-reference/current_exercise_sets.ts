@@ -49,7 +49,7 @@ export function normalizeRestBlocks(
 
   return sets.map((set, index) => {
     const previousSet = sets[index - 1];
-    const startsNewSetGroup = !previousSet || previousSet.kind !== set.kind;
+    const startsNewSetGroup = previousSet?.kind !== set.kind;
 
     return {
       ...set,
