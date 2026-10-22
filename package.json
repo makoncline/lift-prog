@@ -35,5 +35,8 @@
   "packageManager": "npm@11.3.0",
   "engines": {
     "node": "^22.23.4"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
   }
 }
